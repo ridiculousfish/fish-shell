@@ -1387,7 +1387,7 @@ parse_execution_result_t parse_execution_context_t::eval_node_at_offset(
     // Currently, we only expect to execute the top level job list, or a block node. Assert that.
     assert(node.type == symbol_job_list || specific_statement_type_is_redirectable_block(node));
 
-    enum parse_execution_result_t status = parse_execution_success;
+    future_status_t status;
     switch (node.type) {
         case symbol_job_list: {
             // We should only get a job list if it's the very first node. This is because this is
@@ -1429,7 +1429,7 @@ parse_execution_result_t parse_execution_context_t::eval_node_at_offset(
         }
     }
 
-    return status;
+    return status.value();
 }
 
 int parse_execution_context_t::line_offset_of_node_at_offset(node_offset_t requested_index) {

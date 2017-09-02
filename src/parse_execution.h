@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "common.h"
+#include "future.h"
 #include "io.h"
 #include "parse_constants.h"
 #include "parse_tree.h"
@@ -28,6 +29,7 @@ enum parse_execution_result_t {
 
 class parse_execution_context_t {
    private:
+    using future_status_t = future_t<parse_execution_result_t>;
     const parse_node_tree_t tree;
     const wcstring src;
     io_chain_t block_io;
