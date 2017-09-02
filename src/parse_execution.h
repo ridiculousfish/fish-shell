@@ -106,6 +106,9 @@ class parse_execution_context_t {
                                            const parse_node_t &block_end_command);
     future_status_t run_begin_statement(const parse_node_t &header, const parse_node_t &contents);
 
+    struct for_loop_context_t;
+    void iterate_for_loop(const std::shared_ptr<for_loop_context_t> &context);
+
     enum globspec_t { failglob, nullglob };
     future_status_t determine_arguments(const parse_node_t &parent, wcstring_list_t *out_arguments,
                                         globspec_t glob_behavior);

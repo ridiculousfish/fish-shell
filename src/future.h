@@ -71,6 +71,13 @@ class future_t {
         return std::move(future_fulfiller.first);
     }
 
+    future_t on_complete(std::function<void(void)> func) {
+        return then([func](T val) -> future_t<T> {
+            func();
+            return future_t<T>(val);
+        });
+    }
+
     using fulfiller_t = std::function<void(T)>;
 
     const T &value() const {

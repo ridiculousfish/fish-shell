@@ -453,27 +453,69 @@ bool parse_execution_context_t::is_function_context() const {
     return is_within_function_call;
 }
 
-fustat_t parse_execution_context_t::run_for_statement(const parse_node_t &header,
-                                                  const parse_node_t &block_contents) {
+struct parse_execution_context_t::for_loop_context_t {
+    wcstring_list_t argument_sequence;
+    size_t index = 0;
+    for_block_t *fb = nullptr;
+    future_t<parse_execution_result_t>::fulfiller_t fulfiller;
+    const parse_node_t *var_name_node = nullptr;
+    const parse_node_t *block_contents = nullptr;
+    wcstring for_var_name;
+};
+
+void parse_execution_context_t::iterate_for_loop(const std::shared_ptr<for_loop_context_t> &ctx) {
+    assert(ctx->index < ctx->argument_sequence.size() && "Index out of bounds");
+    const wcstring &val = ctx->argument_sequence.at(ctx->index++);
+    int retval = env_set_one(ctx->for_var_name, ENV_DEFAULT | ENV_USER, val);
+    assert(retval == ENV_OK && "for loop variable should have been successfully set");
+    (void)retval;
+    ctx->fb->loop_status = LOOP_NORMAL;
+    this->run_job_list(*ctx->block_contents, ctx->fb).on_complete([ctx, this]() {
+        bool process_next = true;
+        if (ctx->index == ctx->argument_sequence.size()) {
+            process_next = false;
+        } else if (this->cancellation_reason(ctx->fb) == execution_cancellation_loop_control) {
+            // Handle break or continue.
+            if (ctx->fb->loop_status == LOOP_CONTINUE) {
+                // Reset the loop state.
+                ctx->fb->loop_status = LOOP_NORMAL;
+            } else if (ctx->fb->loop_status == LOOP_BREAK) {
+                process_next = false;
+            }
+        }
+        if (process_next) {
+            this->iterate_for_loop(ctx);
+        } else {
+            ctx->fulfiller(parse_execution_success);
+        }
+    });
+}
+
+auto parse_execution_context_t::run_for_statement(const parse_node_t &header,
+                                                  const parse_node_t &block_contents)
+    -> fustat_t {
     assert(header.type == symbol_for_header);
     assert(block_contents.type == symbol_job_list);
+    auto flc = std::make_shared<for_loop_context_t>();
+    flc->block_contents = &block_contents;
 
     // Get the variable name: `for var_name in ...`. We expand the variable name. It better result
     // in just one.
-    const parse_node_t &var_name_node = *get_child(header, 1, parse_token_type_string);
-    wcstring for_var_name = get_source(var_name_node);
-    if (!expand_one(for_var_name, 0, NULL)) {
-        report_error(var_name_node, FAILED_EXPANSION_VARIABLE_NAME_ERR_MSG, for_var_name.c_str());
+    flc->var_name_node = get_child(header, 1, parse_token_type_string);
+    flc->for_var_name = get_source(*flc->var_name_node);
+    if (!expand_one(flc->for_var_name, 0, NULL)) {
+        report_error(*flc->var_name_node, FAILED_EXPANSION_VARIABLE_NAME_ERR_MSG,
+                     flc->for_var_name.c_str());
         return parse_execution_errored;
     }
-    auto var = env_get(for_var_name, ENV_LOCAL);
-    if (!var && !is_function_context()) var = env_get(for_var_name, ENV_DEFAULT);
+    auto var = env_get(flc->for_var_name, ENV_LOCAL);
+    if (!var && !is_function_context()) var = env_get(flc->for_var_name, ENV_DEFAULT);
     if (!var || var->read_only()) {
-        int retval = env_set_empty(for_var_name, ENV_LOCAL | ENV_USER);
+        int retval = env_set_empty(flc->for_var_name, ENV_LOCAL | ENV_USER);
         if (retval != ENV_OK) {
-            report_error(var_name_node,
+            report_error(*flc->var_name_node,
                          L"You cannot use read-only variable '%ls' in a for loop",
-                         for_var_name.c_str());
+                         flc->for_var_name.c_str());
             return parse_execution_errored;
         }
     }
@@ -481,48 +523,23 @@ fustat_t parse_execution_context_t::run_for_statement(const parse_node_t &header
 
     // Get the contents to iterate over.
     fustat_t future;
-    wcstring_list_t argument_sequence;
-
-    future = this->determine_arguments(header, &argument_sequence, nullglob);
-    future = future.then([&, this](parse_execution_result_t ret) -> fustat_t {
-        if (ret != parse_execution_success) {
-            return ret;
-        }
-
-        for_block_t *fb = parser->push_block<for_block_t>();
-
-        // Now drive the for loop.
-        const size_t arg_count = argument_sequence.size();
-        for (size_t i = 0; i < arg_count; i++) {
-            if (should_cancel_execution(fb)) {
-                ret = parse_execution_cancelled;
-                break;
+    return this->determine_arguments(header, &flc->argument_sequence, nullglob)
+        .then([flc, this](parse_execution_result_t ret) -> future_status_t {
+            if (ret != parse_execution_success) {
+                return ret;
+            }
+            if (flc->argument_sequence.empty()) {
+                return parse_execution_success;
             }
 
-            const wcstring &val = argument_sequence.at(i);
-            int retval = env_set_one(for_var_name, ENV_DEFAULT | ENV_USER, val);
-            assert(retval == ENV_OK && "for loop variable should have been successfully set");
-            (void)retval;
+            flc->fb = parser->push_block<for_block_t>();
+            auto for_loop_contents = future_status_t::create();
+            future_status_t loop_future = std::move(for_loop_contents.first);
+            flc->fulfiller = std::move(for_loop_contents.second);
+            this->iterate_for_loop(flc);
 
-            fb->loop_status = LOOP_NORMAL;
-            this->run_job_list(block_contents, fb);
-
-            if (this->cancellation_reason(fb) == execution_cancellation_loop_control) {
-                // Handle break or continue.
-                if (fb->loop_status == LOOP_CONTINUE) {
-                    // Reset the loop state.
-                    fb->loop_status = LOOP_NORMAL;
-                    continue;
-                } else if (fb->loop_status == LOOP_BREAK) {
-                    break;
-                }
-            }
-        }
-
-        parser->pop_block(fb);
-        return ret;
-    });
-    return future;
+            return loop_future.on_complete([flc, this] { parser->pop_block(flc->fb); });
+        });
 }
 
 fustat_t parse_execution_context_t::run_switch_statement(const parse_node_t &statement) {
