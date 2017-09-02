@@ -97,32 +97,27 @@ class parse_execution_context_t {
                                                     const parse_node_t &statement_node);
 
     // These encapsulate the actual logic of various (block) statements.
-    parse_execution_result_t run_block_statement(const parse_node_t &statement);
-    parse_execution_result_t run_for_statement(const parse_node_t &header,
-                                               const parse_node_t &contents);
-    parse_execution_result_t run_if_statement(const parse_node_t &statement);
-    parse_execution_result_t run_switch_statement(const parse_node_t &statement);
-    parse_execution_result_t run_while_statement(const parse_node_t &header,
-                                                 const parse_node_t &contents);
-    parse_execution_result_t run_function_statement(const parse_node_t &header,
-                                                    const parse_node_t &block_end_command);
-    parse_execution_result_t run_begin_statement(const parse_node_t &header,
-                                                 const parse_node_t &contents);
+    future_status_t run_block_statement(const parse_node_t &statement);
+    future_status_t run_for_statement(const parse_node_t &header, const parse_node_t &contents);
+    future_status_t run_if_statement(const parse_node_t &statement);
+    future_status_t run_switch_statement(const parse_node_t &statement);
+    future_status_t run_while_statement(const parse_node_t &header, const parse_node_t &contents);
+    future_status_t run_function_statement(const parse_node_t &header,
+                                           const parse_node_t &block_end_command);
+    future_status_t run_begin_statement(const parse_node_t &header, const parse_node_t &contents);
 
     enum globspec_t { failglob, nullglob };
-    parse_execution_result_t determine_arguments(const parse_node_t &parent,
-                                                 wcstring_list_t *out_arguments,
-                                                 globspec_t glob_behavior);
+    future_status_t determine_arguments(const parse_node_t &parent, wcstring_list_t *out_arguments,
+                                        globspec_t glob_behavior);
 
     // Determines the IO chain. Returns true on success, false on error.
     bool determine_io_chain(const parse_node_t &statement, io_chain_t *out_chain);
 
-    parse_execution_result_t run_1_job(const parse_node_t &job_node,
-                                       const block_t *associated_block);
-    parse_execution_result_t run_job_list(const parse_node_t &job_list_node,
-                                          const block_t *associated_block);
-    parse_execution_result_t populate_job_from_job_node(job_t *j, const parse_node_t &job_node,
-                                                        const block_t *associated_block);
+    future_status_t run_1_job(const parse_node_t &job_node, const block_t *associated_block);
+    future_status_t run_job_list(const parse_node_t &job_list_node,
+                                 const block_t *associated_block);
+    future_status_t populate_job_from_job_node(job_t *j, const parse_node_t &job_node,
+                                               const block_t *associated_block);
 
     // Returns the line number of the node at the given index, indexed from 0. Not const since it
     // touches cached_lineno_offset.

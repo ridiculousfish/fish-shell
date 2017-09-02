@@ -47,6 +47,8 @@
 #include "wildcard.h"
 #include "wutil.h"
 
+using fustat_t = future_t<parse_execution_result_t>;
+
 /// These are the specific statement types that support redirections.
 static bool specific_statement_type_is_redirectable_block(const parse_node_t &node) {
     return node.type == symbol_block_statement || node.type == symbol_if_statement ||
@@ -261,8 +263,7 @@ bool parse_execution_context_t::job_is_simple_block(const parse_node_t &job_node
     return true;
 }
 
-parse_execution_result_t parse_execution_context_t::run_if_statement(
-    const parse_node_t &statement) {
+fustat_t parse_execution_context_t::run_if_statement(const parse_node_t &statement) {
     assert(statement.type == symbol_if_statement);
 
     // Push an if block.
@@ -290,9 +291,9 @@ parse_execution_result_t parse_execution_context_t::run_if_statement(
 
         // Check the condition and the tail. We treat parse_execution_errored here as failure, in
         // accordance with historic behavior.
-        parse_execution_result_t cond_ret = run_1_job(condition_head, ib);
+        parse_execution_result_t cond_ret = run_1_job(condition_head, ib).value();
         if (cond_ret == parse_execution_success) {
-            cond_ret = run_job_list(condition_boolean_tail, ib);
+            cond_ret = run_job_list(condition_boolean_tail, ib).value();
         }
         const bool take_branch =
             (cond_ret == parse_execution_success) && proc_get_last_status() == EXIT_SUCCESS;
@@ -342,28 +343,29 @@ parse_execution_result_t parse_execution_context_t::run_if_statement(
     return result;
 }
 
-parse_execution_result_t parse_execution_context_t::run_begin_statement(
-    const parse_node_t &header, const parse_node_t &contents) {
+fustat_t parse_execution_context_t::run_begin_statement(const parse_node_t &header,
+                                                    const parse_node_t &contents) {
     assert(header.type == symbol_begin_header);
     assert(contents.type == symbol_job_list);
 
     // Basic begin/end block. Push a scope block, run jobs, pop it
     scope_block_t *sb = parser->push_block<scope_block_t>(BEGIN);
-    parse_execution_result_t ret = run_job_list(contents, sb);
+    fustat_t ret = run_job_list(contents, sb);
     parser->pop_block(sb);
 
     return ret;
 }
 
 // Define a function.
-parse_execution_result_t parse_execution_context_t::run_function_statement(
-    const parse_node_t &header, const parse_node_t &block_end_command) {
+fustat_t parse_execution_context_t::run_function_statement(const parse_node_t &header,
+                                                       const parse_node_t &block_end_command) {
     assert(header.type == symbol_function_header);
     assert(block_end_command.type == symbol_end_command);
 
     // Get arguments.
     wcstring_list_t argument_list;
-    parse_execution_result_t result = this->determine_arguments(header, &argument_list, failglob);
+    parse_execution_result_t result =
+        this->determine_arguments(header, &argument_list, failglob).value();
 
     if (result != parse_execution_success) {
         return result;
@@ -402,8 +404,7 @@ parse_execution_result_t parse_execution_context_t::run_function_statement(
     return result;
 }
 
-parse_execution_result_t parse_execution_context_t::run_block_statement(
-    const parse_node_t &statement) {
+fustat_t parse_execution_context_t::run_block_statement(const parse_node_t &statement) {
     assert(statement.type == symbol_block_statement);
 
     const parse_node_t &block_header =
@@ -412,7 +413,7 @@ parse_execution_result_t parse_execution_context_t::run_block_statement(
         *get_child(block_header, 0);  // specific header type (e.g. for loop)
     const parse_node_t &contents = *get_child(statement, 1, symbol_job_list);  // block contents
 
-    parse_execution_result_t ret = parse_execution_success;
+    fustat_t ret;
     switch (header.type) {
         case symbol_for_header: {
             ret = run_for_statement(header, contents);
@@ -451,8 +452,8 @@ bool parse_execution_context_t::is_function_context() const {
     return is_within_function_call;
 }
 
-parse_execution_result_t parse_execution_context_t::run_for_statement(
-    const parse_node_t &header, const parse_node_t &block_contents) {
+fustat_t parse_execution_context_t::run_for_statement(const parse_node_t &header,
+                                                  const parse_node_t &block_contents) {
     assert(header.type == symbol_for_header);
     assert(block_contents.type == symbol_job_list);
 
@@ -467,7 +468,8 @@ parse_execution_result_t parse_execution_context_t::run_for_statement(
 
     // Get the contents to iterate over.
     wcstring_list_t argument_sequence;
-    parse_execution_result_t ret = this->determine_arguments(header, &argument_sequence, nullglob);
+    parse_execution_result_t ret =
+        this->determine_arguments(header, &argument_sequence, nullglob).value();
     if (ret != parse_execution_success) {
         return ret;
     }
@@ -517,8 +519,7 @@ parse_execution_result_t parse_execution_context_t::run_for_statement(
     return ret;
 }
 
-parse_execution_result_t parse_execution_context_t::run_switch_statement(
-    const parse_node_t &statement) {
+fustat_t parse_execution_context_t::run_switch_statement(const parse_node_t &statement) {
     assert(statement.type == symbol_switch_statement);
 
     parse_execution_result_t result = parse_execution_success;
@@ -594,7 +595,7 @@ parse_execution_result_t parse_execution_context_t::run_switch_statement(
         // contains an unexpandable process will report and then fail to match.
         wcstring_list_t case_args;
         parse_execution_result_t case_result =
-            this->determine_arguments(arg_list, &case_args, failglob);
+            this->determine_arguments(arg_list, &case_args, failglob).value();
         if (case_result == parse_execution_success) {
             for (size_t i = 0; i < case_args.size(); i++) {
                 const wcstring &arg = case_args.at(i);
@@ -615,15 +616,15 @@ parse_execution_result_t parse_execution_context_t::run_switch_statement(
     if (result == parse_execution_success && matching_case_item != NULL) {
         // Success, evaluate the job list.
         const parse_node_t *job_list = get_child(*matching_case_item, 3, symbol_job_list);
-        result = this->run_job_list(*job_list, sb);
+        result = this->run_job_list(*job_list, sb).value();
     }
 
     parser->pop_block(sb);
     return result;
 }
 
-parse_execution_result_t parse_execution_context_t::run_while_statement(
-    const parse_node_t &header, const parse_node_t &block_contents) {
+fustat_t parse_execution_context_t::run_while_statement(const parse_node_t &header,
+                                                    const parse_node_t &block_contents) {
     assert(header.type == symbol_while_header);
     assert(block_contents.type == symbol_job_list);
 
@@ -640,9 +641,9 @@ parse_execution_result_t parse_execution_context_t::run_while_statement(
     // Run while the condition is true.
     for (;;) {
         // Check the condition.
-        parse_execution_result_t cond_ret = this->run_1_job(condition_head, wb);
+        parse_execution_result_t cond_ret = this->run_1_job(condition_head, wb).value();
         if (cond_ret == parse_execution_success) {
-            cond_ret = run_job_list(condition_boolean_tail, wb);
+            cond_ret = run_job_list(condition_boolean_tail, wb).value();
         }
 
         // We only continue on successful execution and EXIT_SUCCESS.
@@ -803,7 +804,7 @@ parse_execution_result_t parse_execution_context_t::handle_command_not_found(
         wcstring_list_t event_args;
         {
             parse_execution_result_t arg_result =
-                this->determine_arguments(statement_node, &event_args, failglob);
+                this->determine_arguments(statement_node, &event_args, failglob).value();
 
             if (arg_result != parse_execution_success) {
                 return arg_result;
@@ -901,7 +902,7 @@ parse_execution_result_t parse_execution_context_t::populate_plain_process(
         const globspec_t glob_behavior = (cmd == L"set" || cmd == L"count") ? nullglob : failglob;
         // Form the list of arguments. The command is the first argument.
         parse_execution_result_t arg_result =
-            this->determine_arguments(statement, &argument_list, glob_behavior);
+            this->determine_arguments(statement, &argument_list, glob_behavior).value();
         if (arg_result != parse_execution_success) {
             return arg_result;
         }
@@ -926,8 +927,9 @@ parse_execution_result_t parse_execution_context_t::populate_plain_process(
 
 // Determine the list of arguments, expanding stuff. Reports any errors caused by expansion. If we
 // have a wildcard that could not be expanded, report the error and continue.
-parse_execution_result_t parse_execution_context_t::determine_arguments(
-    const parse_node_t &parent, wcstring_list_t *out_arguments, globspec_t glob_behavior) {
+fustat_t parse_execution_context_t::determine_arguments(const parse_node_t &parent,
+                                                    wcstring_list_t *out_arguments,
+                                                    globspec_t glob_behavior) {
     // Get all argument nodes underneath the statement. We guess we'll have that many arguments (but
     // may have more or fewer, if there are wildcards involved).
     const parse_node_tree_t::parse_node_list_t argument_nodes =
@@ -1148,8 +1150,8 @@ parse_execution_result_t parse_execution_context_t::populate_job_process(
     return result;
 }
 
-parse_execution_result_t parse_execution_context_t::populate_job_from_job_node(
-    job_t *j, const parse_node_t &job_node, const block_t *associated_block) {
+fustat_t parse_execution_context_t::populate_job_from_job_node(job_t *j, const parse_node_t &job_node,
+                                                           const block_t *associated_block) {
     UNUSED(associated_block);
     assert(job_node.type == symbol_job);
 
@@ -1210,8 +1212,8 @@ parse_execution_result_t parse_execution_context_t::populate_job_from_job_node(
     return result;
 }
 
-parse_execution_result_t parse_execution_context_t::run_1_job(const parse_node_t &job_node,
-                                                              const block_t *associated_block) {
+fustat_t parse_execution_context_t::run_1_job(const parse_node_t &job_node,
+                                          const block_t *associated_block) {
     if (should_cancel_execution(associated_block)) {
         return parse_execution_cancelled;
     }
@@ -1242,7 +1244,7 @@ parse_execution_result_t parse_execution_context_t::run_1_job(const parse_node_t
     // However, if there are no redirections, then we can just jump into the block directly, which
     // is significantly faster.
     if (job_is_simple_block(job_node)) {
-        parse_execution_result_t result = parse_execution_success;
+        fustat_t result;
 
         const parse_node_t &statement = *get_child(job_node, 0, symbol_statement);
         const parse_node_t &specific_statement = *get_child(statement, 0);
@@ -1302,7 +1304,7 @@ parse_execution_result_t parse_execution_context_t::run_1_job(const parse_node_t
     // Populate the job. This may fail for reasons like command_not_found. If this fails, an error
     // will have been printed.
     parse_execution_result_t pop_result =
-        this->populate_job_from_job_node(job.get(), job_node, associated_block);
+        this->populate_job_from_job_node(job.get(), job_node, associated_block).value();
 
     // Clean up the job on failure or cancellation.
     bool populated_job = (pop_result == parse_execution_success);
@@ -1352,8 +1354,8 @@ parse_execution_result_t parse_execution_context_t::run_1_job(const parse_node_t
     return parse_execution_success;
 }
 
-parse_execution_result_t parse_execution_context_t::run_job_list(const parse_node_t &job_list_node,
-                                                                 const block_t *associated_block) {
+fustat_t parse_execution_context_t::run_job_list(const parse_node_t &job_list_node,
+                                             const block_t *associated_block) {
     assert(job_list_node.type == symbol_job_list || job_list_node.type == symbol_andor_job_list);
 
     parse_execution_result_t result = parse_execution_success;
@@ -1365,7 +1367,7 @@ parse_execution_result_t parse_execution_context_t::run_job_list(const parse_nod
         const parse_node_t *job = tree.next_node_in_node_list(*job_list, symbol_job, &job_list);
 
         if (job != NULL) {
-            result = this->run_1_job(*job, associated_block);
+            result = this->run_1_job(*job, associated_block).value();
         }
     }
 
@@ -1387,7 +1389,7 @@ parse_execution_result_t parse_execution_context_t::eval_node_at_offset(
     // Currently, we only expect to execute the top level job list, or a block node. Assert that.
     assert(node.type == symbol_job_list || specific_statement_type_is_redirectable_block(node));
 
-    future_status_t status;
+    fustat_t status;
     switch (node.type) {
         case symbol_job_list: {
             // We should only get a job list if it's the very first node. This is because this is
