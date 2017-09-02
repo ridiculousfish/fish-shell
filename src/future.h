@@ -1,8 +1,9 @@
 #ifndef FISH_FUTURE_T
 #define FISH_FUTURE_T
 
-#include "maybe.h"
 #include <cassert>
+#include <functional>
+#include "maybe.h"
 
 template<typename T>
 class future_t {
@@ -20,7 +21,17 @@ public:
         assert(value_ && "Value not ready");
         return *value_;
     }
-};
+
+    T acquire() {
+        assert(value_ && "Value not ready");
+        return value_.acquire();
+    }
+
+    template <typename Func>
+    typename std::result_of<Func(T)>::type then(Func func) {
+        return func(acquire());
+    }
+} __warn_unused;
 
 #endif
 

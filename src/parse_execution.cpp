@@ -364,44 +364,45 @@ fustat_t parse_execution_context_t::run_function_statement(const parse_node_t &h
 
     // Get arguments.
     wcstring_list_t argument_list;
-    parse_execution_result_t result =
-        this->determine_arguments(header, &argument_list, failglob).value();
+    return this->determine_arguments(header, &argument_list, failglob)
+        .then([&](parse_execution_result_t result) -> fustat_t {
+            if (result != parse_execution_success) {
+                return result;
+            }
 
-    if (result != parse_execution_success) {
-        return result;
-    }
+            // The function definition extends from the end of the header to the function end. It's
+            // not just the range of the contents because that loses comments - see issue #1710.
+            assert(block_end_command.has_source());
+            size_t contents_start = header.source_start + header.source_length;
+            size_t contents_end =
+                block_end_command
+                    .source_start;  // 1 past the last character in the function definition
+            assert(contents_end >= contents_start);
 
-    // The function definition extends from the end of the header to the function end. It's not
-    // just the range of the contents because that loses comments - see issue #1710.
-    assert(block_end_command.has_source());
-    size_t contents_start = header.source_start + header.source_length;
-    size_t contents_end =
-        block_end_command.source_start;  // 1 past the last character in the function definition
-    assert(contents_end >= contents_start);
+            // Swallow whitespace at both ends.
+            while (contents_start < contents_end && iswspace(this->src.at(contents_start))) {
+                contents_start++;
+            }
+            while (contents_start < contents_end && iswspace(this->src.at(contents_end - 1))) {
+                contents_end--;
+            }
 
-    // Swallow whitespace at both ends.
-    while (contents_start < contents_end && iswspace(this->src.at(contents_start))) {
-        contents_start++;
-    }
-    while (contents_start < contents_end && iswspace(this->src.at(contents_end - 1))) {
-        contents_end--;
-    }
+            assert(contents_end >= contents_start);
+            const wcstring contents_str =
+                wcstring(this->src, contents_start, contents_end - contents_start);
+            int definition_line_offset = this->line_offset_of_character_at_offset(contents_start);
+            io_streams_t streams(0);  // no limit on the amount of output from builtin_function()
+            int err = builtin_function(*parser, streams, argument_list, contents_str,
+                                       definition_line_offset);
+            proc_set_last_status(err);
 
-    assert(contents_end >= contents_start);
-    const wcstring contents_str =
-        wcstring(this->src, contents_start, contents_end - contents_start);
-    int definition_line_offset = this->line_offset_of_character_at_offset(contents_start);
-    io_streams_t streams(0);  // no limit on the amount of output from builtin_function()
-    int err =
-        builtin_function(*parser, streams, argument_list, contents_str, definition_line_offset);
-    proc_set_last_status(err);
+            if (!streams.err.empty()) {
+                this->report_error(header, L"%ls", streams.err.buffer().c_str());
+                result = parse_execution_errored;
+            }
 
-    if (!streams.err.empty()) {
-        this->report_error(header, L"%ls", streams.err.buffer().c_str());
-        result = parse_execution_errored;
-    }
-
-    return result;
+            return result;
+        });
 }
 
 fustat_t parse_execution_context_t::run_block_statement(const parse_node_t &statement) {
@@ -465,58 +466,63 @@ fustat_t parse_execution_context_t::run_for_statement(const parse_node_t &header
         report_error(var_name_node, FAILED_EXPANSION_VARIABLE_NAME_ERR_MSG, for_var_name.c_str());
         return parse_execution_errored;
     }
-
-    // Get the contents to iterate over.
-    wcstring_list_t argument_sequence;
-    parse_execution_result_t ret =
-        this->determine_arguments(header, &argument_sequence, nullglob).value();
-    if (ret != parse_execution_success) {
-        return ret;
-    }
-
     auto var = env_get(for_var_name, ENV_LOCAL);
     if (!var && !is_function_context()) var = env_get(for_var_name, ENV_DEFAULT);
     if (!var || var->read_only()) {
         int retval = env_set_empty(for_var_name, ENV_LOCAL | ENV_USER);
         if (retval != ENV_OK) {
-            report_error(var_name_node, L"You cannot use read-only variable '%ls' in a for loop",
+            report_error(var_name_node,
+                         L"You cannot use read-only variable '%ls' in a for loop",
                          for_var_name.c_str());
             return parse_execution_errored;
         }
     }
 
-    for_block_t *fb = parser->push_block<for_block_t>();
 
-    // Now drive the for loop.
-    const size_t arg_count = argument_sequence.size();
-    for (size_t i = 0; i < arg_count; i++) {
-        if (should_cancel_execution(fb)) {
-            ret = parse_execution_cancelled;
-            break;
+    // Get the contents to iterate over.
+    fustat_t future;
+    wcstring_list_t argument_sequence;
+
+    future = this->determine_arguments(header, &argument_sequence, nullglob);
+    future = future.then([&, this](parse_execution_result_t ret) -> fustat_t {
+        if (ret != parse_execution_success) {
+            return ret;
         }
 
-        const wcstring &val = argument_sequence.at(i);
-        int retval = env_set_one(for_var_name, ENV_DEFAULT | ENV_USER, val);
-        assert(retval == ENV_OK && "for loop variable should have been successfully set");
-        (void)retval;
+        for_block_t *fb = parser->push_block<for_block_t>();
 
-        fb->loop_status = LOOP_NORMAL;
-        this->run_job_list(block_contents, fb);
-
-        if (this->cancellation_reason(fb) == execution_cancellation_loop_control) {
-            // Handle break or continue.
-            if (fb->loop_status == LOOP_CONTINUE) {
-                // Reset the loop state.
-                fb->loop_status = LOOP_NORMAL;
-                continue;
-            } else if (fb->loop_status == LOOP_BREAK) {
+        // Now drive the for loop.
+        const size_t arg_count = argument_sequence.size();
+        for (size_t i = 0; i < arg_count; i++) {
+            if (should_cancel_execution(fb)) {
+                ret = parse_execution_cancelled;
                 break;
             }
-        }
-    }
 
-    parser->pop_block(fb);
-    return ret;
+            const wcstring &val = argument_sequence.at(i);
+            int retval = env_set_one(for_var_name, ENV_DEFAULT | ENV_USER, val);
+            assert(retval == ENV_OK && "for loop variable should have been successfully set");
+            (void)retval;
+
+            fb->loop_status = LOOP_NORMAL;
+            this->run_job_list(block_contents, fb);
+
+            if (this->cancellation_reason(fb) == execution_cancellation_loop_control) {
+                // Handle break or continue.
+                if (fb->loop_status == LOOP_CONTINUE) {
+                    // Reset the loop state.
+                    fb->loop_status = LOOP_NORMAL;
+                    continue;
+                } else if (fb->loop_status == LOOP_BREAK) {
+                    break;
+                }
+            }
+        }
+
+        parser->pop_block(fb);
+        return ret;
+    });
+    return future;
 }
 
 fustat_t parse_execution_context_t::run_switch_statement(const parse_node_t &statement) {
@@ -1358,7 +1364,7 @@ fustat_t parse_execution_context_t::run_job_list(const parse_node_t &job_list_no
                                              const block_t *associated_block) {
     assert(job_list_node.type == symbol_job_list || job_list_node.type == symbol_andor_job_list);
 
-    parse_execution_result_t result = parse_execution_success;
+    fustat_t result = parse_execution_success;
     const parse_node_t *job_list = &job_list_node;
     while (job_list != NULL && !should_cancel_execution(associated_block)) {
         assert(job_list->type == symbol_job_list || job_list_node.type == symbol_andor_job_list);
@@ -1367,7 +1373,8 @@ fustat_t parse_execution_context_t::run_job_list(const parse_node_t &job_list_no
         const parse_node_t *job = tree.next_node_in_node_list(*job_list, symbol_job, &job_list);
 
         if (job != NULL) {
-            result = this->run_1_job(*job, associated_block).value();
+            result = result.then(
+                [=](parse_execution_result_t) { return this->run_1_job(*job, associated_block); });
         }
     }
 
