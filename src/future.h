@@ -44,6 +44,16 @@ class future_t {
 
     future_t(std::shared_ptr<guts_t> guts) : guts_(std::move(guts)) {}
 
+    static void iterate_helper(std::function<future_t<bool>(void)> func, std::function<void(bool)> fulfiller) {
+        func().on_complete([=](bool keepGoing){
+            if (keepGoing) {
+                iterate_helper(func, fulfiller);
+            } else {
+                fulfiller(true);
+            }
+        });
+    }
+
    public:
     future_t() {}
     future_t(future_t &&) = default;
@@ -74,9 +84,16 @@ class future_t {
     future_t on_complete(std::function<void(void)> func) {
         return then([func](T val) -> future_t<T> {
             func();
-            return future_t<T>(val);
+            return future_t<T>(std::move(val));
         });
     }
+
+    // Let F be a function void->future_t<bool>. Iterate the function and await the result until it returns false. Always returns true.
+    static future_t<bool> iterate(std::function<future_t<bool>(void)> func) {
+        auto future_fulfiller = future_t<bool>::create();
+        iterate_helper(std::move(func), std::move(future_fulfiller.second));
+        return std::move(future_fulfiller.first);
+    };
 
     using fulfiller_t = std::function<void(T)>;
 
