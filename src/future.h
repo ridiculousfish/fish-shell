@@ -6,6 +6,9 @@
 #include <memory>
 #include "maybe.h"
 
+template <class T>
+using result_of_t = typename std::result_of<T>::type;
+
 template<typename T>
 class future_t {
     using callback_t = std::function<void(T)>;
@@ -44,12 +47,13 @@ class future_t {
 
     future_t(std::shared_ptr<guts_t> guts) : guts_(std::move(guts)) {}
 
-    static void iterate_helper(std::function<future_t<bool>(void)> func, std::function<void(bool)> fulfiller) {
-        func().on_complete([=](bool keepGoing){
-            if (keepGoing) {
-                iterate_helper(func, fulfiller);
+    template <typename Func>
+    static void iterate_helper(Func func, std::function<void(const T&)> fulfiller) {
+        func().on_complete([=](const maybe_t<T> &result) {
+            if (result.has_value()) {
+                fulfiller(*result);
             } else {
-                fulfiller(true);
+                iterate_helper(func, fulfiller);
             }
         });
     }
@@ -69,9 +73,9 @@ class future_t {
     };
 
     template <typename Func>
-    typename std::result_of<Func(T)>::type then(Func func) {
+    result_of_t<Func(T)> then(Func func) {
         assert(guts_ && "future is uninstantiated");
-        using next_future_t = typename std::result_of<Func(T)>::type;
+        using next_future_t = result_of_t<Func(T)>;
         auto future_fulfiller = next_future_t::create();
         auto fulfiller = std::move(future_fulfiller.second);
         this->guts_->set_callback([=](T value){
@@ -81,16 +85,31 @@ class future_t {
         return std::move(future_fulfiller.first);
     }
 
-    future_t on_complete(std::function<void(void)> func) {
+    future_t on_complete(std::function<void(const T &)> func) {
         return then([func](T val) -> future_t<T> {
-            func();
+            func(val);
             return future_t<T>(std::move(val));
         });
     }
 
-    // Let F be a function void->future_t<bool>. Iterate the function and await the result until it returns false. Always returns true.
-    static future_t<bool> iterate(std::function<future_t<bool>(void)> func) {
-        auto future_fulfiller = future_t<bool>::create();
+    future_t on_complete(std::function<void(void)> func) {
+        return on_complete([func](const T &) { func(); });
+    }
+
+    template <typename Func>
+    future_t<result_of_t<Func(T)>> map(Func func) {
+        auto future_fulfiller = future_t<result_of_t<Func(T)>>::create();
+        auto fulfiller = std::move(future_fulfiller.second);
+        this->guts_->set_callback([=](T value){
+            fulfiller(func(value));
+        });
+        return std::move(future_fulfiller.first);
+    }
+
+    // Let F be a function void->future_t<maybe_t<T>>. Iterate the function and await the result
+    // while it returns none. Returns the resulting value from the maybe.
+    static future_t<T> iterate(std::function<future_t<maybe_t<T>>()> func) {
+        auto future_fulfiller = future_t<T>::create();
         iterate_helper(std::move(func), std::move(future_fulfiller.second));
         return std::move(future_fulfiller.first);
     };

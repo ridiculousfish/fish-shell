@@ -47,6 +47,8 @@
 #include "wildcard.h"
 #include "wutil.h"
 
+using result_t = parse_execution_result_t;
+using maybe_result_t = maybe_t<result_t>;
 using fustat_t = future_t<parse_execution_result_t>;
 
 /// These are the specific statement types that support redirections.
@@ -453,92 +455,82 @@ bool parse_execution_context_t::is_function_context() const {
     return is_within_function_call;
 }
 
-struct parse_execution_context_t::for_loop_context_t {
-    wcstring_list_t argument_sequence;
-    size_t index = 0;
-    for_block_t *fb = nullptr;
-    future_t<parse_execution_result_t>::fulfiller_t fulfiller;
+struct parse_execution_context_t::for_loop_t {
+    wcstring for_var_name;
     const parse_node_t *var_name_node = nullptr;
     const parse_node_t *block_contents = nullptr;
-    wcstring for_var_name;
+    wcstring_list_t argument_sequence;
 };
 
-void parse_execution_context_t::iterate_for_loop(const std::shared_ptr<for_loop_context_t> &ctx) {
-    assert(ctx->index < ctx->argument_sequence.size() && "Index out of bounds");
-    const wcstring &val = ctx->argument_sequence.at(ctx->index++);
-    int retval = env_set_one(ctx->for_var_name, ENV_DEFAULT | ENV_USER, val);
-    assert(retval == ENV_OK && "for loop variable should have been successfully set");
-    (void)retval;
-    ctx->fb->loop_status = LOOP_NORMAL;
-    this->run_job_list(*ctx->block_contents, ctx->fb).on_complete([ctx, this]() {
-        bool process_next = true;
-        if (ctx->index == ctx->argument_sequence.size()) {
-            process_next = false;
-        } else if (this->cancellation_reason(ctx->fb) == execution_cancellation_loop_control) {
-            // Handle break or continue.
-            if (ctx->fb->loop_status == LOOP_CONTINUE) {
-                // Reset the loop state.
-                ctx->fb->loop_status = LOOP_NORMAL;
-            } else if (ctx->fb->loop_status == LOOP_BREAK) {
-                process_next = false;
-            }
+fustat_t parse_execution_context_t::iterate_for_loop(for_block_t *fb, const for_loop_t *loop) {
+    size_t index = 0;
+    return fustat_t::iterate([=]() mutable -> future_t<maybe_result_t> {
+        if (should_cancel_execution(fb)) {
+            return maybe_result_t(parse_execution_cancelled);
         }
-        if (process_next) {
-            this->iterate_for_loop(ctx);
-        } else {
-            ctx->fulfiller(parse_execution_success);
-        }
+
+        const wcstring &val = loop->argument_sequence.at(index++);
+        int retval = env_set_one(loop->for_var_name, ENV_DEFAULT | ENV_USER, val);
+        assert(retval == ENV_OK && "for loop variable should have been successfully set");
+        (void)retval;
+        fb->loop_status = LOOP_NORMAL;
+        auto future = this->run_job_list(*loop->block_contents, fb);
+        return future.map([=](result_t body_result) -> maybe_result_t {
+                // A for loop doesn't care if its body succeeds or not.
+                (void)body_result;
+                if (index == loop->argument_sequence.size()) {
+                    return parse_execution_success;
+                } else if (this->cancellation_reason(fb) == execution_cancellation_loop_control) {
+                    // Handle break or continue.
+                    if (fb->loop_status == LOOP_CONTINUE) {
+                        // Reset the loop state.
+                        fb->loop_status = LOOP_NORMAL;
+                    } else if (fb->loop_status == LOOP_BREAK) {
+                        return parse_execution_success;
+                    }
+                }
+                // Keep going!
+                return none();
+            });
     });
 }
 
-auto parse_execution_context_t::run_for_statement(const parse_node_t &header,
-                                                  const parse_node_t &block_contents)
-    -> fustat_t {
+fustat_t parse_execution_context_t::run_for_statement(const parse_node_t &header,
+                                                  const parse_node_t &block_contents) {
     assert(header.type == symbol_for_header);
     assert(block_contents.type == symbol_job_list);
-    auto flc = std::make_shared<for_loop_context_t>();
-    flc->block_contents = &block_contents;
+
+    auto ctx = std::make_shared<for_loop_t>();
+    ctx->block_contents = &block_contents;
 
     // Get the variable name: `for var_name in ...`. We expand the variable name. It better result
     // in just one.
-    flc->var_name_node = get_child(header, 1, parse_token_type_string);
-    flc->for_var_name = get_source(*flc->var_name_node);
-    if (!expand_one(flc->for_var_name, 0, NULL)) {
-        report_error(*flc->var_name_node, FAILED_EXPANSION_VARIABLE_NAME_ERR_MSG,
-                     flc->for_var_name.c_str());
+    ctx->var_name_node = get_child(header, 1, parse_token_type_string);
+    ctx->for_var_name = get_source(*ctx->var_name_node);
+    if (!expand_one(ctx->for_var_name, 0, NULL)) {
+        report_error(*ctx->var_name_node, FAILED_EXPANSION_VARIABLE_NAME_ERR_MSG,
+                     ctx->for_var_name.c_str());
         return parse_execution_errored;
     }
-    auto var = env_get(flc->for_var_name, ENV_LOCAL);
-    if (!var && !is_function_context()) var = env_get(flc->for_var_name, ENV_DEFAULT);
+    auto var = env_get(ctx->for_var_name, ENV_LOCAL);
+    if (!var && !is_function_context()) var = env_get(ctx->for_var_name, ENV_DEFAULT);
     if (!var || var->read_only()) {
-        int retval = env_set_empty(flc->for_var_name, ENV_LOCAL | ENV_USER);
+        int retval = env_set_empty(ctx->for_var_name, ENV_LOCAL | ENV_USER);
         if (retval != ENV_OK) {
-            report_error(*flc->var_name_node,
+            report_error(*ctx->var_name_node,
                          L"You cannot use read-only variable '%ls' in a for loop",
-                         flc->for_var_name.c_str());
+                         ctx->for_var_name.c_str());
             return parse_execution_errored;
         }
     }
 
 
-    // Get the contents to iterate over.
-    fustat_t future;
-    return this->determine_arguments(header, &flc->argument_sequence, nullglob)
-        .then([flc, this](parse_execution_result_t ret) -> future_status_t {
-            if (ret != parse_execution_success) {
-                return ret;
-            }
-            if (flc->argument_sequence.empty()) {
-                return parse_execution_success;
-            }
+    return this->determine_arguments(header, &ctx->argument_sequence, nullglob)
+        .then([=](parse_execution_result_t ret) -> fustat_t {
+            if (ret != parse_execution_success || ctx->argument_sequence.empty()) return ret;
 
-            flc->fb = parser->push_block<for_block_t>();
-            auto for_loop_contents = future_status_t::create();
-            future_status_t loop_future = std::move(for_loop_contents.first);
-            flc->fulfiller = std::move(for_loop_contents.second);
-            this->iterate_for_loop(flc);
-
-            return loop_future.on_complete([flc, this] { parser->pop_block(flc->fb); });
+            for_block_t *fb = parser->push_block<for_block_t>();
+            return iterate_for_loop(fb, ctx.get()).on_complete([=]() { parser->pop_block(fb); });
         });
 }
 

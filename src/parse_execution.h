@@ -13,6 +13,7 @@
 
 class parser_t;
 struct block_t;
+struct for_block_t;
 
 enum parse_execution_result_t {
     /// The job was successfully executed (though it have failed on its own).
@@ -106,8 +107,8 @@ class parse_execution_context_t {
                                            const parse_node_t &block_end_command);
     future_status_t run_begin_statement(const parse_node_t &header, const parse_node_t &contents);
 
-    struct for_loop_context_t;
-    void iterate_for_loop(const std::shared_ptr<for_loop_context_t> &context);
+    struct for_loop_t;
+    future_status_t iterate_for_loop(for_block_t *fb, const for_loop_t *loop);
 
     enum globspec_t { failglob, nullglob };
     future_status_t determine_arguments(const parse_node_t &parent, wcstring_list_t *out_arguments,
