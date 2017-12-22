@@ -26,6 +26,8 @@ enum parse_execution_result_t {
     parse_execution_skipped
 };
 
+class base_vm_t;
+
 class parse_execution_context_t {
    public:
     const parse_node_tree_t tree;
@@ -39,6 +41,7 @@ class parse_execution_context_t {
     // Cached line number information.
     size_t cached_lineno_offset;
     int cached_lineno_count;
+    std::vector<std::shared_ptr<base_vm_t>> vms_;
     // No copying allowed.
     parse_execution_context_t(const parse_execution_context_t &);
     parse_execution_context_t &operator=(const parse_execution_context_t &);

@@ -64,7 +64,7 @@ class base_vm_t : public std::enable_shared_from_this<base_vm_t> {
 
     // Performs an abrupt completion with the given result.
     // No further steps are execution.
-    void complete(result_t res) {
+    void complete(result_t res = parse_execution_success) {
         assert(!status_ && "VM already completed");
         status_ = res;
         jump(steps_.size());
@@ -73,23 +73,6 @@ class base_vm_t : public std::enable_shared_from_this<base_vm_t> {
     void fatal_error(result_t res) {
         assert(res != parse_execution_success && "Success is not fatal");
         complete(res);
-    }
-
-    // Build time:
-    // Adds an arbitrary function as a step.
-    step_index_t add_step(step_t s) {
-        steps_.push_back(std::move(s));
-        return steps_.size() - 1;
-    }
-
-
-    // Adds a jump step.
-    void add_jump_step(step_index_t idx) {
-        assert(idx <= steps_.size() && "Index out of bounds");
-        add_step(step_t([idx](base_vm_t *d) {
-            d->jump(idx);
-            return false;
-        }));
     }
 
     wcstring get_source(const parse_node_t *node) const {
@@ -145,14 +128,29 @@ class base_vm_t : public std::enable_shared_from_this<base_vm_t> {
 template <typename Derived>
 class vm_t : public base_vm_t {
    public:
+    // Adds an arbitrary function as a step.
+    step_index_t add_step(step_t s) {
+        steps_.push_back(std::move(s));
+        return steps_.size() - 1;
+    }
+
+    // Adds a jump step.
+    void add_jump_step(step_index_t idx) {
+        assert(idx <= steps_.size() && "Index out of bounds");
+        add_step(step_t([idx](base_vm_t *d) {
+            d->jump(idx);
+            return false;
+        }));
+    }
+
     // Adds a member function as a step.
     step_index_t add_step(awaitable_t (Derived::*func)()) {
-        return base_vm_t::add_step(step_t([func](Derived *d) { return (d->*func)(); }));
+        return add_step(step_t([func](Derived *d) { return (d->*func)(); }));
     }
 
     // Adds a member function as a step.
     step_index_t add_step(void (Derived::*func)()) {
-        return base_vm_t::add_step(step_t([func](base_vm_t *d) {
+        return add_step(step_t([func](base_vm_t *d) {
             (static_cast<Derived *>(d)->*func)();
             return false;
         }));
@@ -577,6 +575,7 @@ struct for_t : vm_t<for_t> {
     const parse_node_t *block_contents_node = nullptr;
     wcstring_list_t argument_sequence;
     size_t argument_index = 0;
+    size_t loop_step_index = -1;
 
     const parse_node_t &var_name_node() {
         return *get_child(header_node, 1, parse_token_type_string);
@@ -591,7 +590,7 @@ struct for_t : vm_t<for_t> {
         }
     }
 
-    void check_variable_name() {
+    void check_var_name() {
         auto var = env_get(for_var_name, ENV_LOCAL);
         if (!var && !context()->is_function_context()) var = env_get(for_var_name, ENV_DEFAULT);
         if (!var || var->read_only()) {
@@ -609,15 +608,13 @@ struct for_t : vm_t<for_t> {
         // Get the contents to iterate over.
         parse_execution_result_t ret = context()->determine_arguments(
             *header_node, &argument_sequence, parse_execution_context_t::nullglob);
-        if (ret != parse_execution_success) {
-            fatal_error(ret);
-        }
+        if (ret != parse_execution_success) fatal_error(ret);
     }
 
     void run_1_iteration() {
         assert(argument_index <= argument_sequence.size() && "index out of bounds");
         if (argument_index == argument_sequence.size()) {
-            complete(parse_execution_success);
+            complete();
             return;
         }
 
@@ -628,6 +625,28 @@ struct for_t : vm_t<for_t> {
 
         block()->loop_status = LOOP_NORMAL;
         context()->run_job_list(*block_contents_node, block());
+    }
+
+    void loop_again() {
+        const for_block_t *fb = static_cast<for_block_t *>(block());
+        switch (context()->cancellation_reason(block())) {
+            case parse_execution_context_t::execution_cancellation_none:
+                jump(loop_step_index);
+                break;
+            case parse_execution_context_t::execution_cancellation_loop_control:
+                if (fb->loop_status == LOOP_CONTINUE) {
+                    jump(loop_step_index);
+                } else {
+                    assert(fb->loop_status == LOOP_BREAK && "Unknown loop status");
+                    complete();
+                }
+                break;
+
+            case parse_execution_context_t::execution_cancellation_skip:
+            case parse_execution_context_t::execution_cancellation_exit:
+                complete(parse_execution_cancelled);
+                break;
+        }
     }
 
     static shared_ptr<for_t> build(parse_execution_context_t *context, const parse_node_t &header,
@@ -642,79 +661,30 @@ struct for_t : vm_t<for_t> {
         // result
         // in just one.
         f->add_step(&for_t::expand_var_name);
-        f->add_step(&for_t::check_variable_name);
+        f->add_step(&for_t::check_var_name);
         f->add_step(&for_t::determine_loop_arguments);
         f->add_step(&for_t::push_block<for_block_t>);
-        size_t loop_again = f->add_step(&for_t::run_1_iteration);
-        f->add_jump_step(loop_again);
+        f->loop_step_index = f->add_step(&for_t::run_1_iteration);
+        f->add_step(&for_t::loop_again);
         return f;
     }
 };
 
-parse_execution_result_t parse_execution_context_t::run_for_statement(
-    const parse_node_t &header, const parse_node_t &block_contents) {
-    assert(header.type == symbol_for_header);
-    assert(block_contents.type == symbol_job_list);
-
-    // Get the variable name: `for var_name in ...`. We expand the variable name. It better result
-    // in just one.
-    const parse_node_t &var_name_node = *get_child(header, 1, parse_token_type_string);
-    wcstring for_var_name = get_source(var_name_node);
-    if (!expand_one(for_var_name, 0, NULL)) {
-        report_error(var_name_node, FAILED_EXPANSION_VARIABLE_NAME_ERR_MSG, for_var_name.c_str());
-        return parse_execution_errored;
-    }
-
-    // Get the contents to iterate over.
-    wcstring_list_t argument_sequence;
-    parse_execution_result_t ret = this->determine_arguments(header, &argument_sequence, nullglob);
-    if (ret != parse_execution_success) {
-        return ret;
-    }
-
-    auto var = env_get(for_var_name, ENV_LOCAL);
-    if (!var && !is_function_context()) var = env_get(for_var_name, ENV_DEFAULT);
-    if (!var || var->read_only()) {
-        int retval = env_set_empty(for_var_name, ENV_LOCAL | ENV_USER);
-        if (retval != ENV_OK) {
-            report_error(var_name_node, L"You cannot use read-only variable '%ls' in a for loop",
-                         for_var_name.c_str());
-            return parse_execution_errored;
-        }
-    }
-
-    for_block_t *fb = parser->push_block<for_block_t>();
-
-    // Now drive the for loop.
-    const size_t arg_count = argument_sequence.size();
-    for (size_t i = 0; i < arg_count; i++) {
-        if (should_cancel_execution(fb)) {
-            ret = parse_execution_cancelled;
-            break;
-        }
-
-        const wcstring &val = argument_sequence.at(i);
-        int retval = env_set_one(for_var_name, ENV_DEFAULT | ENV_USER, val);
-        assert(retval == ENV_OK && "for loop variable should have been successfully set");
-        (void)retval;
-
-        fb->loop_status = LOOP_NORMAL;
-        this->run_job_list(block_contents, fb);
-
-        if (this->cancellation_reason(fb) == execution_cancellation_loop_control) {
-            // Handle break or continue.
-            if (fb->loop_status == LOOP_CONTINUE) {
-                // Reset the loop state.
-                fb->loop_status = LOOP_NORMAL;
-                continue;
-            } else if (fb->loop_status == LOOP_BREAK) {
-                break;
+result_t parse_execution_context_t::run_for_statement(const parse_node_t &header,
+                                                      const parse_node_t &block_contents) {
+    size_t start_count = vms_.size();
+    vms_.push_back(for_t::build(this, header, block_contents));
+    result_t result = parse_execution_success;
+    for (;;) {
+        if (auto maybe_result = vms_.back()->perform()) {
+            result = *maybe_result;
+            vms_.pop_back();
+            if (vms_.size() == start_count) {
+                return result;
             }
         }
     }
-
-    parser->pop_block(fb);
-    return ret;
+    return result;
 }
 
 parse_execution_result_t parse_execution_context_t::run_switch_statement(
