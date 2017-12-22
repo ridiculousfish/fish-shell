@@ -51,10 +51,9 @@ using result_t = parse_execution_result_t;
 using maybe_result_t = maybe_t<result_t>;
 using awaitable_t = bool;
 
-template <typename Derived>
-class vm_t : public std::enable_shared_from_this<Derived> {
+class base_vm_t : public std::enable_shared_from_this<base_vm_t> {
    public:
-    using step_t = std::function<awaitable_t(Derived *)>;
+    using step_t = std::function<awaitable_t(base_vm_t *)>;
     using step_index_t = size_t;
 
     // Jumps to the given step.
@@ -83,34 +82,14 @@ class vm_t : public std::enable_shared_from_this<Derived> {
         return steps_.size() - 1;
     }
 
-    // Adds a member function as a step.
-    step_index_t add_step(awaitable_t (Derived::*func)()) {
-        return add_step(step_t([func](Derived *d) { return (d->*func)(); }));
-    }
-
-    // Adds a member function as a step.
-    step_index_t add_step(void (Derived::*func)()) {
-        return add_step(step_t([func](Derived *d) {
-            (d->*func)();
-            return false;
-        }));
-    }
 
     // Adds a jump step.
     void add_jump_step(step_index_t idx) {
         assert(idx <= steps_.size() && "Index out of bounds");
-        add_step(step_t([idx](Derived *d) {
+        add_step(step_t([idx](base_vm_t *d) {
             d->jump(idx);
             return false;
         }));
-    }
-
-    template <class... Args>
-    static std::shared_ptr<Derived> create(parse_execution_context_t *context, Args &&... args) {
-        assert(context && "null context");
-        auto ret = std::make_shared<Derived>(std::forward<Args>(args)...);
-        ret->context_ = context;
-        return ret;
     }
 
     wcstring get_source(const parse_node_t *node) const {
@@ -146,21 +125,46 @@ class vm_t : public std::enable_shared_from_this<Derived> {
         assert(next_step_index_ < steps_.size() && "step_index out of bounds");
         // Not yet done
         auto &func = steps_.at(next_step_index_++);
-        func(static_cast<Derived *>(this));
+        func(this);
         return none();
     }
 
-   private:
+   protected:
     parse_execution_context_t *context_ = nullptr;
     step_index_t next_step_index_ = 0;
     std::vector<step_t> steps_;
     maybe_result_t status_;
     block_t *block_ = nullptr;
-    vm_t(const vm_t &) = delete;
-    void operator=(const vm_t &) = delete;
+    base_vm_t(const base_vm_t &) = delete;
+    void operator=(const base_vm_t &) = delete;
 
    protected:
-    vm_t() = default;
+    base_vm_t() = default;
+};
+
+template <typename Derived>
+class vm_t : public base_vm_t {
+   public:
+    // Adds a member function as a step.
+    step_index_t add_step(awaitable_t (Derived::*func)()) {
+        return base_vm_t::add_step(step_t([func](Derived *d) { return (d->*func)(); }));
+    }
+
+    // Adds a member function as a step.
+    step_index_t add_step(void (Derived::*func)()) {
+        return base_vm_t::add_step(step_t([func](base_vm_t *d) {
+            (static_cast<Derived *>(d)->*func)();
+            return false;
+        }));
+    }
+
+    template <class... Args>
+    static std::shared_ptr<Derived> create(parse_execution_context_t *context, Args &&... args) {
+        assert(context && "null context");
+        auto ret = std::make_shared<Derived>(std::forward<Args>(args)...);
+        ret->context_ = context;
+        return ret;
+    }
 };
 
 /// These are the specific statement types that support redirections.

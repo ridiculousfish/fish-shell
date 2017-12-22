@@ -46,6 +46,13 @@ class maybe_t {
         }
     }
 
+    // Copy constructor maybe.
+    maybe_t(const maybe_t &v) {
+        if (v.filled) {
+            *this = v.value();
+        }
+    }
+
     // Access the value.
     T &value() {
         assert(filled && "maybe_t does not have a value");
