@@ -47,6 +47,122 @@
 #include "wildcard.h"
 #include "wutil.h"
 
+using result_t = parse_execution_result_t;
+using maybe_result_t = maybe_t<result_t>;
+using awaitable_t = bool;
+
+template <typename Derived>
+class vm_t : public std::enable_shared_from_this<Derived> {
+   public:
+    using step_t = std::function<awaitable_t(Derived *)>;
+    using step_index_t = size_t;
+
+    // Jumps to the given step.
+    void jump(step_index_t idx) {
+        assert(idx <= steps_.size() && "Index out of bounds");
+        next_step_index_ = idx;
+    }
+
+    // Performs an abrupt completion with the given result.
+    // No further steps are execution.
+    void complete(result_t res) {
+        assert(!status_ && "VM already completed");
+        status_ = res;
+        jump(steps_.size());
+    }
+
+    void fatal_error(result_t res) {
+        assert(res != parse_execution_success && "Success is not fatal");
+        complete(res);
+    }
+
+    // Build time:
+    // Adds an arbitrary function as a step.
+    step_index_t add_step(step_t s) {
+        steps_.push_back(std::move(s));
+        return steps_.size() - 1;
+    }
+
+    // Adds a member function as a step.
+    step_index_t add_step(awaitable_t (Derived::*func)()) {
+        return add_step(step_t([func](Derived *d) { return (d->*func)(); }));
+    }
+
+    // Adds a member function as a step.
+    step_index_t add_step(void (Derived::*func)()) {
+        return add_step(step_t([func](Derived *d) {
+            (d->*func)();
+            return false;
+        }));
+    }
+
+    // Adds a jump step.
+    void add_jump_step(step_index_t idx) {
+        assert(idx <= steps_.size() && "Index out of bounds");
+        add_step(step_t([idx](Derived *d) {
+            d->jump(idx);
+            return false;
+        }));
+    }
+
+    template <class... Args>
+    static std::shared_ptr<Derived> create(parse_execution_context_t *context, Args &&... args) {
+        assert(context && "null context");
+        auto ret = std::make_shared<Derived>(std::forward<Args>(args)...);
+        ret->context_ = context;
+        return ret;
+    }
+
+    wcstring get_source(const parse_node_t *node) const {
+        assert(node && "null node");
+        return context_->get_source(*node);
+    }
+
+    const parse_node_t *get_child(const parse_node_t *parent, node_offset_t which,
+                                  parse_token_type_t expected_type = token_type_invalid) const {
+        assert(parent && "null parent");
+        return context_->get_child(*parent, which, expected_type);
+    }
+
+    parse_execution_context_t *context() { return context_; }
+
+    template <typename Block, class... Args>
+    void push_block(Args &&... args) {
+        assert(!block_ && "Block already set");
+        block_ = context()->parser->template push_block<Block>(std::forward<Args>(args)...);
+    }
+
+    block_t *block() { return block_; }
+
+    maybe_result_t perform() {
+        if (status_) {
+            // We're done, clean up.
+            if (block_) {
+                context()->parser->pop_block(block_);
+                block_ = nullptr;
+            }
+            return status_;
+        }
+        assert(next_step_index_ < steps_.size() && "step_index out of bounds");
+        // Not yet done
+        auto &func = steps_.at(next_step_index_++);
+        func(static_cast<Derived *>(this));
+        return none();
+    }
+
+   private:
+    parse_execution_context_t *context_ = nullptr;
+    step_index_t next_step_index_ = 0;
+    std::vector<step_t> steps_;
+    maybe_result_t status_;
+    block_t *block_ = nullptr;
+    vm_t(const vm_t &) = delete;
+    void operator=(const vm_t &) = delete;
+
+   protected:
+    vm_t() = default;
+};
+
 /// These are the specific statement types that support redirections.
 static bool specific_statement_type_is_redirectable_block(const parse_node_t &node) {
     return node.type == symbol_block_statement || node.type == symbol_if_statement ||
@@ -450,6 +566,86 @@ bool parse_execution_context_t::is_function_context() const {
         (current && parent && current->type() == TOP && parent->type() == FUNCTION_CALL);
     return is_within_function_call;
 }
+
+struct for_t : vm_t<for_t> {
+    wcstring for_var_name;
+    const parse_node_t *header_node = nullptr;
+    const parse_node_t *block_contents_node = nullptr;
+    wcstring_list_t argument_sequence;
+    size_t argument_index = 0;
+
+    const parse_node_t &var_name_node() {
+        return *get_child(header_node, 1, parse_token_type_string);
+    }
+
+    void expand_var_name() {
+        for_var_name = get_source(&var_name_node());
+        if (!expand_one(for_var_name, 0, NULL)) {
+            context()->report_error(var_name_node(), FAILED_EXPANSION_VARIABLE_NAME_ERR_MSG,
+                                    for_var_name.c_str());
+            fatal_error(parse_execution_errored);
+        }
+    }
+
+    void check_variable_name() {
+        auto var = env_get(for_var_name, ENV_LOCAL);
+        if (!var && !context()->is_function_context()) var = env_get(for_var_name, ENV_DEFAULT);
+        if (!var || var->read_only()) {
+            int retval = env_set_empty(for_var_name, ENV_LOCAL | ENV_USER);
+            if (retval != ENV_OK) {
+                context()->report_error(var_name_node(),
+                                        L"You cannot use read-only variable '%ls' in a for loop",
+                                        for_var_name.c_str());
+                fatal_error(parse_execution_errored);
+            }
+        }
+    }
+
+    void determine_loop_arguments() {
+        // Get the contents to iterate over.
+        parse_execution_result_t ret = context()->determine_arguments(
+            *header_node, &argument_sequence, parse_execution_context_t::nullglob);
+        if (ret != parse_execution_success) {
+            fatal_error(ret);
+        }
+    }
+
+    void run_1_iteration() {
+        assert(argument_index <= argument_sequence.size() && "index out of bounds");
+        if (argument_index == argument_sequence.size()) {
+            complete(parse_execution_success);
+            return;
+        }
+
+        const wcstring &val = argument_sequence.at(argument_index);
+        int retval = env_set_one(for_var_name, ENV_DEFAULT | ENV_USER, val);
+        assert(retval == ENV_OK && "for loop variable should have been successfully set");
+        (void)retval;
+
+        block()->loop_status = LOOP_NORMAL;
+        context()->run_job_list(*block_contents_node, block());
+    }
+
+    static shared_ptr<for_t> build(parse_execution_context_t *context, const parse_node_t &header,
+                                   const parse_node_t &block_contents) {
+        assert(header.type == symbol_for_header);
+        assert(block_contents.type == symbol_job_list);
+        shared_ptr<for_t> f = create(context);
+        f->header_node = &header;
+        f->block_contents_node = &block_contents;
+
+        // Get the variable name: `for var_name in ...`. We expand the variable name. It better
+        // result
+        // in just one.
+        f->add_step(&for_t::expand_var_name);
+        f->add_step(&for_t::check_variable_name);
+        f->add_step(&for_t::determine_loop_arguments);
+        f->add_step(&for_t::push_block<for_block_t>);
+        size_t loop_again = f->add_step(&for_t::run_1_iteration);
+        f->add_jump_step(loop_again);
+        return f;
+    }
+};
 
 parse_execution_result_t parse_execution_context_t::run_for_statement(
     const parse_node_t &header, const parse_node_t &block_contents) {

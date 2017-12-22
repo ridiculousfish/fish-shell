@@ -27,7 +27,7 @@ enum parse_execution_result_t {
 };
 
 class parse_execution_context_t {
-   private:
+   public:
     const parse_node_tree_t tree;
     const wcstring src;
     io_chain_t block_io;
@@ -71,6 +71,7 @@ class parse_execution_context_t {
 
     // Utilities
     wcstring get_source(const parse_node_t &node) const;
+
     const parse_node_t *get_child(const parse_node_t &parent, node_offset_t which,
                                   parse_token_type_t expected_type = token_type_invalid) const;
     node_offset_t get_offset(const parse_node_t &node) const;
@@ -127,7 +128,6 @@ class parse_execution_context_t {
     int line_offset_of_node_at_offset(node_offset_t idx);
     int line_offset_of_character_at_offset(size_t char_idx);
 
-   public:
     parse_execution_context_t(parse_node_tree_t t, const wcstring &s, parser_t *p,
                               int initial_eval_level);
 
