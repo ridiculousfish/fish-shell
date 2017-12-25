@@ -70,6 +70,7 @@ static void debug_safe_int(int level, const char *format, int val) {
 /// prior to sending the child SIGCONT to wake it up to exec.
 ///
 /// Returns true on sucess, false on failiure.
+extern int g_keepalive_pid;
 bool child_set_group(job_t *j, process_t *p) {
     bool retval = true;
 
@@ -83,12 +84,18 @@ bool child_set_group(job_t *j, process_t *p) {
         // times to get the kernel to see the new group. (Linux 4.4.0)
         int failure = setpgid(p->pid, j->pgid);
         while (failure == -1 && (errno == EPERM || errno == EINTR)) {
+            if (errno == EPERM) {
+                fprintf(stderr, "Child got EPERM with setpgid(%d, %d), keepalive is %d\n", p->pid, j->pgid, g_keepalive_pid);
+                failure = false;
+                break;
+                //_exit(-1);
+            }
             debug_safe(4, "Retrying setpgid in child process");
             failure = setpgid(p->pid, j->pgid);
         }
         // TODO: Figure out why we're testing whether the pgid is correct after attempting to
         // set it failed. This was added in commit 4e912ef8 from 2012-02-27.
-        failure = failure && getpgid(p->pid) != j->pgid;
+        failure = failure;// && getpgid(p->pid) != j->pgid;
         if (failure) {  //!OCLINT(collapsible if statements)
             char pid_buff[128];
             char job_id_buff[128];
@@ -135,6 +142,13 @@ bool set_child_group(job_t *j, pid_t child_pid) {
         // New jobs have the pgid set to -2
         if (j->pgid == -2) {
             j->pgid = child_pid;
+        }
+        if (setpgid(child_pid, j->pgid)) {
+            if (errno == EPERM) {
+                fprintf(stderr, "Child got EPERM with setpgid(%d, %d), keepalive is %d\n", child_pid, j->pgid, g_keepalive_pid);
+            } else {
+                perror("Parent setpgid");
+            }
         }
     } else {
         j->pgid = getpgrp();

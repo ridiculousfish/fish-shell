@@ -55,6 +55,8 @@
 
 static bool s_block_children = false;
 
+static bool s_log_keepalive = false;
+
 /// Called in a forked child.
 static void exec_write_and_exit(int fd, const char *buff, size_t count, int status) {
     if (write_loop(fd, buff, count) == -1) {
@@ -510,6 +512,8 @@ static bool exec_internal_builtin_proc(parser_t &parser, job_t *j, process_t *p,
     return true;  // "success"
 }
 
+int g_keepalive_pid = 0;
+
 void exec_job(parser_t &parser, job_t *j) {
     pid_t pid = 0;
 
@@ -587,6 +591,7 @@ void exec_job(parser_t &parser, job_t *j) {
     if (needs_keepalive) {
         // Call fork. No need to wait for threads since our use is confined and simple.
         keepalive.pid = execute_fork(false);
+        g_keepalive_pid = keepalive.pid;
         if (keepalive.pid == 0) {
             // Child
             keepalive.pid = getpid();
@@ -598,6 +603,7 @@ void exec_job(parser_t &parser, job_t *j) {
             debug(2, L"Fork #%d, pid %d: keepalive fork for '%ls'", g_fork_count, keepalive.pid,
                   j->command_wcstr());
             set_child_group(j, keepalive.pid);
+            if (s_log_keepalive) fprintf(stderr, "parent %d created keepalive %d\n", getpid(), keepalive.pid);
         }
     }
 
@@ -614,7 +620,7 @@ void exec_job(parser_t &parser, job_t *j) {
     //
     // We are careful to set these to -1 when closed, so if we exit the loop abruptly, we can still
     // close them.
-    bool pgrp_set = false;
+    bool pgrp_set = needs_keepalive;
     // This is static since processes can block on input/output across jobs the main exec_job loop
     // is only ever run in a single thread, so this is OK.
     static pid_t blocked_pid = -1;
@@ -1189,7 +1195,9 @@ void exec_job(parser_t &parser, job_t *j) {
 
     // The keepalive process is no longer needed, so we terminate it with extreme prejudice.
     if (needs_keepalive) {
+        if (s_log_keepalive) fprintf(stderr, "killing keepalive %d\n", keepalive.pid);
         kill(keepalive.pid, SIGKILL);
+        g_keepalive_pid = -1;
     }
 
     debug(3, L"Job is constructed");
