@@ -576,6 +576,12 @@ void exec_job(parser_t &parser, job_t *j) {
         }
     }
 
+    // Create a keepalive process in all cases when running under WSL
+    // (see https://github.com/Microsoft/WSL/issues/2786)
+    if (is_windows_subsystem_for_linux())
+        needs_keepalive = true;
+
+
     if (needs_keepalive) {
         // Call fork. No need to wait for threads since our use is confined and simple.
         keepalive.pid = execute_fork(false);
