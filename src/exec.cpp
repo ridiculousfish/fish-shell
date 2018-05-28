@@ -891,8 +891,9 @@ void exec_job(parser_t &parser, job_t *j) {
 
                 block_output_io_buffer->read();
 
-                const char *buffer = block_output_io_buffer->out_buffer_ptr();
-                size_t count = block_output_io_buffer->out_buffer_size();
+                const std::string buffer_contents = block_output_io_buffer->serialized_with_newlines();
+                const char *buffer = buffer_contents.data();
+                size_t count = buffer_contents.size();
                 if (count > 0) {
                     // We don't have to drain threads here because our child process is simple.
                     const char *fork_reason = p->type == INTERNAL_BLOCK_NODE ? "internal block io" : "internal function io";
@@ -1203,8 +1204,9 @@ static int exec_subshell_internal(const wcstring &cmd, wcstring_list_t *lst, boo
         return subcommand_status;
     }
 
-    const char *begin = io_buffer->out_buffer_ptr();
-    const char *end = begin + io_buffer->out_buffer_size();
+    const std::string buffer_contents = io_buffer->serialized_with_newlines();
+    const char *begin = buffer_contents.data();
+    const char *end = begin + buffer_contents.size();
     if (split_output) {
         const char *cursor = begin;
         while (cursor < end) {

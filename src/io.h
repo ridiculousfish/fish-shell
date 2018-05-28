@@ -208,17 +208,11 @@ class io_chain_t;
 class output_stream_t;
 class io_buffer_t : public io_pipe_t {
    private:
-    /// True if we're discarding input.
-    bool discard{false};
-    /// Limit on how much data we'll buffer. Zero means no limit.
-    size_t buffer_limit;
-    /// Buffer to save output in.
-    std::vector<char> out_buffer;
+    separated_buffer_t<std::string> buffer_;
 
     explicit io_buffer_t(int f, size_t limit)
         : io_pipe_t(IO_BUFFER, f, false /* not input */),
-          buffer_limit(limit),
-          out_buffer() {}
+          buffer_(limit) {}
 
    public:
     void print() const override;
@@ -226,33 +220,27 @@ class io_buffer_t : public io_pipe_t {
     ~io_buffer_t() override;
 
     /// Function to append to the buffer.
-    void out_buffer_append(const char *ptr, size_t count) {
-        if (discard) return;
-        if (buffer_limit && out_buffer.size() + count > buffer_limit) {
-            set_discard();
-            return;
-        }
-        out_buffer.insert(out_buffer.end(), ptr, ptr + count);
+    void append(const char *ptr, size_t count) { buffer_.append(ptr, ptr + count); }
+
+    /// Function to get the contents of the buffer. TODO: less copying.
+    std::string serialized_with_newlines() const {
+        return buffer_.serialized_with_newlines();
     }
 
-    /// Function to get a pointer to the buffer.
-    const char *out_buffer_ptr() const { return out_buffer.empty() ? NULL : &out_buffer.at(0); }
-
-    /// Function to get the size of the buffer.
-    size_t out_buffer_size() const { return out_buffer.size(); }
-
     /// Function that returns true if we discarded the input because there was too much data.
-    bool output_discarded() { return discard; }
+    bool output_discarded() { return buffer_.discarded(); }
 
     /// Function to explicitly put the object in discard mode. Meant to be used when moving
     /// the results from an output_stream_t to an io_buffer_t.
     void set_discard() {
-        discard = true;
-        out_buffer.clear();
+        buffer_.set_discard();
     }
 
     /// This is used to transfer the buffer limit for this object to a output_stream_t object.
-    size_t get_buffer_limit() { return buffer_limit; }
+    size_t get_buffer_limit() const { return buffer_.limit(); }
+
+    /// return the size of the out buffer.
+    size_t buffer_size() const { return buffer_.size(); }
 
     /// Ensures that the pipes do not conflict with any fd redirections in the chain.
     bool avoid_conflicts_with_io_chain(const io_chain_t &ios);
@@ -301,6 +289,8 @@ bool pipe_avoid_conflicts_with_io_chain(int fds[2], const io_chain_t &ios);
 /// Class representing the output that a builtin can generate.
 class output_stream_t {
    private:
+    friend io_buffer_t;
+
     /// Storage for our data.
     separated_buffer_t<wcstring> buffer_;
 
