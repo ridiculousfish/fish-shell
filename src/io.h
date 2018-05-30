@@ -27,6 +27,7 @@ enum class separation_type_t { inferred, explicitly };
 /// Support for explicitly separated output.
 template <typename StringType>
 class separated_buffer_t {
+   public:
     struct element_t {
         StringType contents;
         separation_type_t separation;
@@ -37,6 +38,7 @@ class separated_buffer_t {
         bool is_explicitly_separated() const { return separation == separation_type_t::explicitly; }
     };
 
+   private:
     /// Limit on how much data we'll buffer. Zero means no limit.
     size_t buffer_limit_;
 
@@ -68,7 +70,7 @@ class separated_buffer_t {
     separated_buffer_t(const separated_buffer_t &) = delete;
     void operator=(const separated_buffer_t &) = delete;
 
-public:
+   public:
     size_t size() const { return contents_size_; }
 
     separated_buffer_t(size_t limit) : buffer_limit_(limit) {}
@@ -225,6 +227,11 @@ class io_buffer_t : public io_pipe_t {
     /// Function to get the contents of the buffer. TODO: less copying.
     std::string serialized_with_newlines() const {
         return buffer_.serialized_with_newlines();
+    }
+
+    /// Get the contents of the buffer as a list of elements.
+    const std::vector<separated_buffer_t<std::string>::element_t> elements() const {
+        return buffer_.elements();
     }
 
     /// Function that returns true if we discarded the input because there was too much data.
