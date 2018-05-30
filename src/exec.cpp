@@ -950,6 +950,12 @@ void exec_job(parser_t &parser, job_t *j) {
                         // The builtin produced no stderr, and its stdout is going to an
                         // internal buffer. There is no need to fork. This helps out the
                         // performance quite a bit in complex completion code.
+                        // TODO: we're sloppy about handling explicitly separated output.
+                        // Theoretically we could have explicitly separated output on stdout and
+                        // also stderr output; in that case we ought to thread the exp-sep output
+                        // through to the io buffer. We're getting away with this because the only
+                        // thing that can output exp-sep output is `string split0` which doesn't
+                        // also produce stderr.
                         debug(3, L"Skipping fork: buffered output for internal builtin '%ls'",
                               p->argv0());
 

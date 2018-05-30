@@ -22,6 +22,113 @@ using std::tr1::shared_ptr;
 #include "common.h"
 #include "env.h"
 
+enum class separation_type_t { inferred, explicitly };
+
+/// Support for explicitly separated output.
+template <typename StringType>
+class separated_buffer_t {
+    struct element_t {
+        StringType contents;
+        separation_type_t separation;
+
+        element_t(StringType contents, separation_type_t sep)
+            : contents(std::move(contents)), separation(sep) {}
+
+        bool is_explicitly_separated() const { return separation == separation_type_t::explicitly; }
+    };
+
+    /// Limit on how much data we'll buffer. Zero means no limit.
+    size_t buffer_limit_;
+
+    /// Current size of all contents.
+    size_t contents_size_{0};
+
+    /// List of buffer elements.
+    std::vector<element_t> elements_;
+
+    /// True if we're discarding input because our buffer_limit has been exceeded.
+    bool discard = false;
+
+    bool try_add_size(size_t delta) {
+        if (discard) return false;
+        contents_size_ += delta;
+        if (contents_size_ < delta) {
+            // Overflow!
+            set_discard();
+            return false;
+        }
+        if (buffer_limit_ > 0 && contents_size_ > buffer_limit_) {
+            set_discard();
+            return false;
+        }
+        return true;
+    }
+
+    /// Disable copying.
+    separated_buffer_t(const separated_buffer_t &) = delete;
+    void operator=(const separated_buffer_t &) = delete;
+
+public:
+    size_t size() const { return contents_size_; }
+
+    separated_buffer_t(size_t limit) : buffer_limit_(limit) {}
+
+    bool discarded() const { return discard; }
+
+    void set_discard() {
+        elements_.clear();
+        contents_size_ = 0;
+        discard = true;
+    }
+
+    size_t limit() const { return buffer_limit_; }
+
+    StringType serialized_with_newlines() const {
+        StringType result;
+        result.reserve(size());
+        for (const auto &elem : elements_) {
+            result.append(elem.contents);
+            if (elem.is_explicitly_separated()) {
+                result.push_back('\n');
+            }
+        }
+        return result;
+    }
+
+    const std::vector<element_t> &elements() const { return elements_; }
+
+    template <typename Iterator>
+    void append(Iterator begin, Iterator end, separation_type_t sep = separation_type_t::inferred) {
+        if (!try_add_size(std::distance(begin, end))) return;
+        // Try merging with the last element.
+        if (sep == separation_type_t::inferred && !elements_.empty() && !elements_.back().is_explicitly_separated()) {
+            elements_.back().contents.append(begin, end);
+        } else {
+            elements_.emplace_back(StringType(begin, end), sep);
+        }
+    }
+
+    void append(const StringType &c, separation_type_t sep = separation_type_t::inferred) { append(c.begin(), c.end(), sep); }
+
+    void append_explicitly_separated_output(std::vector<StringType> strs) {
+        for (const auto &s : strs) {
+            if (!try_add_size(s.size())) return;
+        }
+        for (auto &s : strs) {
+            elements_.emplace_back(std::move(s), separation_type_t::explicitly);
+        }
+    }
+
+    // Given that this is a narrow stream, convert a wide stream \p rhs to narrow and then append
+    // it.
+    template <typename RHSStringType>
+    void append_wide_buffer(const separated_buffer_t<RHSStringType> &rhs) {
+        for (const auto &rhs_elem : rhs.elements()) {
+            append(wcs2string(rhs_elem.contents), rhs_elem.separation);
+        }
+    }
+};
+
 /// Describes what type of IO operation an io_data_t represents.
 enum io_mode_t { IO_FILE, IO_PIPE, IO_FD, IO_BUFFER, IO_CLOSE };
 
@@ -194,77 +301,50 @@ bool pipe_avoid_conflicts_with_io_chain(int fds[2], const io_chain_t &ios);
 /// Class representing the output that a builtin can generate.
 class output_stream_t {
    private:
-    /// Limit on how much data we'll buffer. Zero means no limit.
-    size_t buffer_limit;
-    /// True if we're discarding input.
-    bool discard;
+    /// Storage for our data.
+    separated_buffer_t<wcstring> buffer_;
+
     // No copying.
-    output_stream_t(const output_stream_t &s);
-    void operator=(const output_stream_t &s);
-
-    wcstring buffer_;
-
-    void check_for_overflow() {
-        if (buffer_limit && buffer_.size() > buffer_limit) {
-            discard = true;
-            buffer_.clear();
-        }
-    }
+    output_stream_t(const output_stream_t &s) = delete;
+    void operator=(const output_stream_t &s) = delete;
 
    public:
-    output_stream_t(size_t buffer_limit_) : buffer_limit(buffer_limit_), discard(false) {}
+    output_stream_t(size_t buffer_limit) : buffer_(buffer_limit) {}
 
     void append(const wcstring &s) {
-        if (discard) return;
         buffer_.append(s);
-        check_for_overflow();
     }
 
-    void append(const wchar_t *s) {
-        if (discard) return;
-        buffer_.append(s);
-        check_for_overflow();
-    }
+    void append(const wchar_t *s) { append(s, wcslen(s)); }
 
-    void append(wchar_t s) {
-        if (discard) return;
-        buffer_.push_back(s);
-        check_for_overflow();
-    }
+    void append(wchar_t s) { append(&s, 1); }
 
-    void append(const wchar_t *s, size_t amt) {
-        if (discard) return;
-        buffer_.append(s, amt);
-        check_for_overflow();
-    }
+    void append(const wchar_t *s, size_t amt) { buffer_.append(s, s + amt); }
 
-    void push_back(wchar_t c) {
-        if (discard) return;
-        buffer_.push_back(c);
-        check_for_overflow();
-    }
+    void push_back(wchar_t c) { append(c); }
 
     void append_format(const wchar_t *format, ...) {
-        if (discard) return;
         va_list va;
         va_start(va, format);
-        ::append_formatv(buffer_, format, va);
+        append_formatv(format, va);
         va_end(va);
-        check_for_overflow();
     }
 
-    void append_formatv(const wchar_t *format, va_list va_orig) {
-        if (discard) return;
-        ::append_formatv(buffer_, format, va_orig);
-        check_for_overflow();
+    void append_formatv(const wchar_t *format, va_list va) {
+        buffer_.append(vformat_string(format, va));
     }
 
-    const wcstring &buffer() const { return buffer_; }
+    wcstring buffer() const { return buffer_.serialized_with_newlines(); }
+
+    /// Black magic. Adds explicitly separated output. This is used by `string split0`.
+    void append_explicitly_separated_output(wcstring_list_t output) {
+        buffer_.append_explicitly_separated_output(std::move(output));
+    }
 
     /// Function that returns true if we discarded the input because there was too much data.
-    bool output_discarded() const { return discard; }
+    bool output_discarded() const { return buffer_.discarded(); }
 
-    bool empty() const { return buffer_.empty(); }
+    bool empty() const { return buffer_.size() == 0; }
 };
 
 struct io_streams_t {
