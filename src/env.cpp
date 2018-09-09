@@ -135,8 +135,6 @@ class env_node_t {
 
 static fish_mutex_t env_lock;
 
-static bool local_scope_exports(const env_node_t *n);
-
 // A class wrapping up a variable stack
 // Currently there is only one variable stack in fish,
 // but we can imagine having separate (linked) stacks
@@ -157,7 +155,7 @@ struct var_stack_t {
     void mark_changed_exported() { has_changed_exported = true; }
     void update_export_array_if_necessary();
 
-    var_stack_t() : top(new env_node_t(false)) { this->global_env = this->top.get(); }
+    var_stack_t() : top(new env_node_t(false)), global_env(top.get()) {}
 
     // Pushes a new node onto our stack
     // Optionally creates a new scope for the node
@@ -174,6 +172,10 @@ struct var_stack_t {
     // Returns the scope used for unspecified scopes. An unspecified scope is either the topmost
     // shadowing scope, or the global scope if none. This implements the default behavior of `set`.
     env_node_t *resolve_unspecified_scope();
+
+   private:
+    bool local_scope_exports(const env_node_t *n) const;
+    void get_exported(const env_node_t *n, var_table_t &h) const;
 };
 
 void var_stack_t::push(bool new_scope) {
@@ -266,11 +268,12 @@ env_node_t *var_stack_t::resolve_unspecified_scope() {
     return node ? node : this->global_env;
 }
 
-// Get the global variable stack
-static var_stack_t &vars_stack() {
-    static var_stack_t global_stack;
-    return global_stack;
-}
+env_stack_t::env_stack_t() : vars_(make_unique<var_stack_t>()) {}
+
+// Get the variable stack
+var_stack_t &env_stack_t::vars_stack() { return *vars_; }
+
+const var_stack_t &env_stack_t::vars_stack() const { return *vars_; }
 
 /// Universal variables global instance. Initialized in env_init.
 static env_universal_t *s_universal_variables = NULL;
@@ -626,7 +629,7 @@ static void react_to_variable_change(const wchar_t *op, const wcstring &key) {
 
 /// Universal variable callback function. This function makes sure the proper events are triggered
 /// when an event occurs.
-static void universal_callback(fish_message_type_t type, const wchar_t *name) {
+static void universal_callback(env_stack_t *stack, fish_message_type_t type, const wchar_t *name) {
     const wchar_t *op;
 
     switch (type) {
@@ -642,7 +645,7 @@ static void universal_callback(fish_message_type_t type, const wchar_t *name) {
     }
 
     react_to_variable_change(op, name);
-    vars_stack().mark_changed_exported();
+    stack->mark_changed_exported();
 
     event_t ev = event_t::variable_event(name);
     ev.arguments.push_back(L"VARIABLE");
@@ -671,7 +674,7 @@ static void env_set_termsize() {
     if (rows.missing_or_empty()) env_set_one(L"LINES", ENV_GLOBAL, DFLT_TERM_ROW_STR);
 }
 
-bool env_set_pwd() {
+bool env_stack_t::set_pwd() {
     wcstring cwd = wgetcwd();
     if (cwd.empty()) {
         debug(0,
@@ -684,7 +687,7 @@ bool env_set_pwd() {
 
 /// Allow the user to override the limit on how much data the `read` command will process.
 /// This is primarily for testing but could be used by users in special situations.
-void env_set_read_limit() {
+void env_stack_t::set_read_limit() {
     auto read_byte_limit_var = env_get(L"fish_read_limit");
     if (!read_byte_limit_var.missing_or_empty()) {
         size_t limit = fish_wcstoull(read_byte_limit_var->as_string().c_str());
@@ -696,7 +699,9 @@ void env_set_read_limit() {
     }
 }
 
-wcstring env_get_pwd_slash() {
+void env_stack_t::mark_changed_exported() { vars_stack().mark_changed_exported(); }
+
+wcstring env_stack_t::get_pwd_slash() {
     auto pwd_var = env_get(L"PWD");
     wcstring pwd;
     if (!pwd_var.missing_or_empty()) {
@@ -771,14 +776,14 @@ void misc_init() {
 #endif
 }
 
-static void env_universal_callbacks(callback_data_list_t &callbacks) {
+static void env_universal_callbacks(env_stack_t *stack, const callback_data_list_t &callbacks) {
     for (size_t i = 0; i < callbacks.size(); i++) {
         const callback_data_t &data = callbacks.at(i);
-        universal_callback(data.type, data.key.c_str());
+        universal_callback(stack, data.type, data.key.c_str());
     }
 }
 
-void env_universal_barrier() {
+void env_stack_t::universal_barrier() {
     ASSERT_IS_MAIN_THREAD();
     if (!uvars()) return;
 
@@ -788,7 +793,7 @@ void env_universal_barrier() {
         universal_notifier_t::default_notifier().post_notification();
     }
 
-    env_universal_callbacks(callbacks);
+    env_universal_callbacks(this, callbacks);
 }
 
 static void handle_fish_term_change(const wcstring &op, const wcstring &var_name) {
@@ -1049,7 +1054,7 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
     s_universal_variables = new env_universal_t(L"");
     callback_data_list_t callbacks;
     s_universal_variables->initialize(callbacks);
-    env_universal_callbacks(callbacks);
+    env_universal_callbacks(&env_stack_t::principal(), callbacks);
 
     // Now that the global scope is fully initialized, add a toplevel local scope. This same local
     // scope will persist throughout the lifetime of the fish process, and it will ensure that `set
@@ -1059,7 +1064,7 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
 
 /// Search all visible scopes in order for the specified key. Return the first scope in which it was
 /// found.
-static env_node_t *env_get_node(const wcstring &key) {
+env_node_t *env_stack_t::get_node(const wcstring &key) {
     env_node_t *env = vars_stack().top.get();
     while (env != NULL) {
         if (env->find_entry(key)) break;
@@ -1096,7 +1101,7 @@ static int set_umask(const wcstring_list_t &list_val) {
 /// * ENV_SCOPE, the variable cannot be set in the given scope. This applies to readonly/electric
 /// variables set from the local or universal scopes, or set as exported.
 /// * ENV_INVALID, the variable value was invalid. This applies only to special variables.
-static int env_set_internal(const wcstring &key, env_mode_flags_t var_mode, wcstring_list_t val) {
+int env_stack_t::set_internal(const wcstring &key, env_mode_flags_t var_mode, wcstring_list_t val) {
     ASSERT_IS_MAIN_THREAD();
     bool has_changed_old = vars_stack().has_changed_exported;
     int done = 0;
@@ -1106,7 +1111,7 @@ static int env_set_internal(const wcstring &key, env_mode_flags_t var_mode, wcst
         wcstring val_canonical = val.front();
         path_make_canonical(val_canonical);
         if (val.front() != val_canonical) {
-            return env_set_internal(key, var_mode, {val_canonical});
+            return set_internal(key, var_mode, {val_canonical});
         }
     }
 
@@ -1148,7 +1153,7 @@ static int env_set_internal(const wcstring &key, env_mode_flags_t var_mode, wcst
     } else {
         // Determine the node.
         bool has_changed_new = false;
-        env_node_t *preexisting_node = env_get_node(key);
+        env_node_t *preexisting_node = get_node(key);
         bool preexisting_entry_exportv = false;
         if (preexisting_node != NULL) {
             var_table_t::const_iterator result = preexisting_node->env.find(key);
@@ -1239,26 +1244,26 @@ static int env_set_internal(const wcstring &key, env_mode_flags_t var_mode, wcst
 }
 
 /// Sets the variable with the specified name to the given values.
-int env_set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
-    return env_set_internal(key, mode, std::move(vals));
+int env_stack_t::set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
+    return set_internal(key, mode, std::move(vals));
 }
 
 /// Sets the variable with the specified name to a single value.
-int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val) {
+int env_stack_t::set_one(const wcstring &key, env_mode_flags_t mode, wcstring val) {
     wcstring_list_t vals;
     vals.push_back(std::move(val));
-    return env_set_internal(key, mode, std::move(vals));
+    return set_internal(key, mode, std::move(vals));
 }
 
 /// Sets the variable with the specified name without any (i.e., zero) values.
-int env_set_empty(const wcstring &key, env_mode_flags_t mode) {
-    return env_set_internal(key, mode, {});
+int env_stack_t::set_empty(const wcstring &key, env_mode_flags_t mode) {
+    return set_internal(key, mode, {});
 }
 
 /// Attempt to remove/free the specified key/value pair from the specified map.
 ///
 /// \return zero if the variable was not found, non-zero otherwise
-static bool try_remove(env_node_t *n, const wchar_t *key, int var_mode) {
+bool env_stack_t::try_remove(env_node_t *n, const wchar_t *key, int var_mode) {
     if (n == NULL) {
         return false;
     }
@@ -1266,7 +1271,7 @@ static bool try_remove(env_node_t *n, const wchar_t *key, int var_mode) {
     var_table_t::iterator result = n->env.find(key);
     if (result != n->env.end()) {
         if (result->second.exports()) {
-            vars_stack().mark_changed_exported();
+            mark_changed_exported();
         }
         n->env.erase(result);
         return true;
@@ -1282,7 +1287,7 @@ static bool try_remove(env_node_t *n, const wchar_t *key, int var_mode) {
     return try_remove(n->next.get(), key, var_mode);
 }
 
-int env_remove(const wcstring &key, int var_mode) {
+int env_stack_t::remove(const wcstring &key, int var_mode) {
     ASSERT_IS_MAIN_THREAD();
     env_node_t *first_node;
     int erased = 0;
@@ -1349,7 +1354,7 @@ env_var_t::env_var_flags_t env_var_t::flags_for(const wchar_t *name) {
     return result;
 }
 
-maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode) {
+maybe_t<env_var_t> env_stack_t::get(const wcstring &key, env_mode_flags_t mode) const {
     const bool has_scope = mode & (ENV_LOCAL | ENV_GLOBAL | ENV_UNIVERSAL);
     const bool search_local = !has_scope || (mode & ENV_LOCAL);
     const bool search_global = !has_scope || (mode & ENV_GLOBAL);
@@ -1387,7 +1392,7 @@ maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode) {
 
     if (search_local || search_global) {
         scoped_lock locker(env_lock);  // lock around a local region
-        env_node_t *env = search_local ? vars_stack().top.get() : vars_stack().global_env;
+        const env_node_t *env = search_local ? vars_stack().top.get() : vars_stack().global_env;
 
         while (env != NULL) {
             if (env == vars_stack().global_env && !search_global) {
@@ -1426,11 +1431,48 @@ maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode) {
     return none();
 }
 
+/// Legacy versions.
+maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode) {
+    return env_stack_t::principal().get(key, mode);
+}
+
+int env_set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
+    return env_stack_t::principal().set(key, mode, std::move(vals));
+}
+
+int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val) {
+    return env_stack_t::principal().set_one(key, mode, std::move(val));
+}
+
+int env_set_empty(const wcstring &key, env_mode_flags_t mode) {
+    return env_stack_t::principal().set_empty(key, mode);
+}
+
+int env_remove(const wcstring &key, int mode) { return env_stack_t::principal().remove(key, mode); }
+
+void env_push(bool new_scope) { env_stack_t::principal().push(new_scope); }
+
+void env_pop() { env_stack_t::principal().pop(); }
+
+void env_universal_barrier() { env_stack_t::principal().universal_barrier(); }
+
+const char *const *env_export_arr() { return env_stack_t::principal().export_arr(); }
+
+void env_set_argv(const wchar_t *const *argv) { return env_stack_t::principal().set_argv(argv); }
+
+wcstring_list_t env_get_names(int flags) { return env_stack_t::principal().get_names(flags); }
+
+bool env_set_pwd() { return env_stack_t::principal().set_pwd(); }
+
+wcstring env_get_pwd_slash() { return env_stack_t::principal().get_pwd_slash(); }
+
+void env_set_read_limit() { return env_stack_t::principal().set_read_limit(); }
+
 /// Returns true if the specified scope or any non-shadowed non-global subscopes contain an exported
 /// variable.
-static bool local_scope_exports(const env_node_t *n) {
+bool var_stack_t::local_scope_exports(const env_node_t *n) const {
     assert(n != NULL);
-    if (n == vars_stack().global_env) return false;
+    if (n == global_env) return false;
 
     if (n->exportv) return true;
 
@@ -1439,9 +1481,9 @@ static bool local_scope_exports(const env_node_t *n) {
     return local_scope_exports(n->next.get());
 }
 
-void env_push(bool new_scope) { vars_stack().push(new_scope); }
+void env_stack_t::push(bool new_scope) { vars_stack().push(new_scope); }
 
-void env_pop() { vars_stack().pop(); }
+void env_stack_t::pop() { vars_stack().pop(); }
 
 /// Function used with to insert keys of one table into a set::set<wcstring>.
 static void add_key_to_string_set(const var_table_t &envs, std::set<wcstring> *str_set,
@@ -1457,7 +1499,7 @@ static void add_key_to_string_set(const var_table_t &envs, std::set<wcstring> *s
     }
 }
 
-wcstring_list_t env_get_names(int flags) {
+wcstring_list_t env_stack_t::get_names(int flags) {
     scoped_lock locker(env_lock);
 
     wcstring_list_t result;
@@ -1503,11 +1545,11 @@ wcstring_list_t env_get_names(int flags) {
 }
 
 /// Get list of all exported variables.
-static void get_exported(const env_node_t *n, var_table_t &h) {
+void var_stack_t::get_exported(const env_node_t *n, var_table_t &h) const {
     if (!n) return;
 
     if (n->new_scope) {
-        get_exported(vars_stack().global_env, h);
+        get_exported(global_env, h);
     } else {
         get_exported(n->next.get(), h);
     }
@@ -1580,14 +1622,14 @@ void var_stack_t::update_export_array_if_necessary() {
     has_changed_exported = false;
 }
 
-const char *const *env_export_arr() {
+const char *const *env_stack_t::export_arr() {
     ASSERT_IS_MAIN_THREAD();
     ASSERT_IS_NOT_FORKED_CHILD();
     vars_stack().update_export_array_if_necessary();
     return vars_stack().export_array.get();
 }
 
-void env_set_argv(const wchar_t *const *argv) {
+void env_stack_t::set_argv(const wchar_t *const *argv) {
     if (argv && *argv) {
         wcstring_list_t list;
         for (auto arg = argv; *arg; arg++) {
@@ -1601,6 +1643,13 @@ void env_set_argv(const wchar_t *const *argv) {
 }
 
 environment_t::~environment_t() = default;
+
+env_stack_t::~env_stack_t() = default;
+
+env_stack_t &env_stack_t::principal() {
+    static env_stack_t s_principal;
+    return s_principal;
+}
 
 env_vars_snapshot_t::env_vars_snapshot_t(const wchar_t *const *keys) {
     ASSERT_IS_MAIN_THREAD();
