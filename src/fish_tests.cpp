@@ -2117,7 +2117,7 @@ static void test_is_potential_path() {
 /// Test the 'test' builtin.
 int builtin_test(parser_t &parser, io_streams_t &streams, wchar_t **argv);
 static bool run_one_test_test(int expected, wcstring_list_t &lst, bool bracket) {
-    parser_t parser;
+    parser_t &parser = parser_t::principal_parser();
     size_t i, count = lst.size();
     wchar_t **argv = new wchar_t *[count + 3];
     argv[0] = (wchar_t *)(bracket ? L"[" : L"test");
@@ -2155,7 +2155,7 @@ static bool run_test_test(int expected, const wcstring &str) {
 
 static void test_test_brackets() {
     // Ensure [ knows it needs a ].
-    parser_t parser;
+    parser_t &parser = parser_t::principal_parser();
     io_streams_t streams(0);
 
     null_terminated_array_t<wchar_t> args;
@@ -4158,7 +4158,7 @@ static void test_wcstring_tok() {
 int builtin_string(parser_t &parser, io_streams_t &streams, wchar_t **argv);
 static void run_one_string_test(const wchar_t *const *argv, int expected_rc,
                                 const wchar_t *expected_out) {
-    parser_t parser;
+    parser_t &parser = parser_t::principal_parser();
     io_streams_t streams(0);
     streams.stdin_is_directly_redirected = false;  // read from argv instead of stdin
     int rc = builtin_string(parser, streams, const_cast<wchar_t **>(argv));
