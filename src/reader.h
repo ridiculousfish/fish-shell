@@ -151,11 +151,8 @@ void reader_pop();
 
 /// Specify function to use for finding possible tab completions. The function must take these
 /// arguments:
-///
-/// - The command to be completed as a null terminated array of wchar_t
-/// - An array_list_t in which completions will be inserted.
 typedef void (*complete_function_t)(const wcstring &, std::vector<completion_t> *,
-                                    completion_request_flags_t);
+                                    completion_request_flags_t, const environment_t &);
 void reader_set_complete_function(complete_function_t);
 
 /// The type of a highlight function.
