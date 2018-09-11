@@ -86,7 +86,7 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         return STATUS_CMD_ERROR;
     }
 
-    if (!env_set_pwd()) {
+    if (!parser.vars().set_pwd()) {
         streams.err.append_format(_(L"%ls: Could not set PWD variable\n"), cmd);
         return STATUS_CMD_ERROR;
     }

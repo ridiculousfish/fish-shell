@@ -664,11 +664,11 @@ static void setup_path() {
 /// If they don't already exist initialize the `COLUMNS` and `LINES` env vars to reasonable
 /// defaults. They will be updated later by the `get_current_winsize()` function if they need to be
 /// adjusted.
-static void env_set_termsize() {
-    auto cols = env_get(L"COLUMNS");
+void env_stack_t::set_termsize() {
+    auto cols = get(L"COLUMNS");
     if (cols.missing_or_empty()) env_set_one(L"COLUMNS", ENV_GLOBAL, DFLT_TERM_COL_STR);
 
-    auto rows = env_get(L"LINES");
+    auto rows = get(L"LINES");
     if (rows.missing_or_empty()) env_set_one(L"LINES", ENV_GLOBAL, DFLT_TERM_ROW_STR);
 }
 
@@ -754,8 +754,6 @@ static void setup_user(bool force) {
 /// Various things we need to initialize at run-time that don't really fit any of the other init
 /// routines.
 void misc_init() {
-    env_set_read_limit();
-
     // If stdout is open on a tty ensure stdio is unbuffered. That's because those functions might
     // be intermixed with `write()` calls and we need to ensure the writes are not reordered. See
     // issue #3748.
@@ -1029,17 +1027,18 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
         }
     }
 
-    env_set_pwd();         // initialize the PWD variable
-    env_set_termsize();    // initialize the terminal size variables
-    env_set_read_limit();  // initialize the read_byte_limit
+    env_stack_t &vars = env_stack_t::principal();
+    vars.set_pwd();         // initialize the PWD variable
+    vars.set_termsize();    // initialize the terminal size variables
+    vars.set_read_limit();  // initialize the read_byte_limit
 
     // Set g_use_posix_spawn. Default to true.
-    auto use_posix_spawn = env_get(L"fish_use_posix_spawn");
+    auto use_posix_spawn = vars.get(L"fish_use_posix_spawn");
     g_use_posix_spawn =
         use_posix_spawn.missing_or_empty() ? true : from_string<bool>(use_posix_spawn->as_string());
 
     // Set fish_bind_mode to "default".
-    env_set_one(FISH_BIND_MODE_VAR, ENV_GLOBAL, DEFAULT_BIND_MODE);
+    vars.set_one(FISH_BIND_MODE_VAR, ENV_GLOBAL, DEFAULT_BIND_MODE);
 
     // This is somewhat subtle. At this point we consider our environment to be sufficiently
     // initialized that we can react to changes to variables. Prior to doing this we expect that the
@@ -1444,10 +1443,6 @@ int env_set_empty(const wcstring &key, env_mode_flags_t mode) {
 int env_remove(const wcstring &key, int mode) { return env_stack_t::principal().remove(key, mode); }
 
 void env_universal_barrier() { env_stack_t::principal().universal_barrier(); }
-
-void env_set_argv(const wchar_t *const *argv) { return env_stack_t::principal().set_argv(argv); }
-
-bool env_set_pwd() { return env_stack_t::principal().set_pwd(); }
 
 wcstring env_get_pwd_slash() { return env_stack_t::principal().get_pwd_slash(); }
 
