@@ -884,6 +884,8 @@ static void setup_var_dispatch_table() {
 void env_init(const struct config_paths_t *paths /* or NULL */) {
     setup_var_dispatch_table();
 
+    env_stack_t &vars = env_stack_t::principal();
+
     // Names of all dynamically calculated variables.
     env_electric.insert({L"history", L"status", L"umask"});
 
@@ -901,7 +903,7 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
         if (eql == wcstring::npos) {
             // No equal-sign found so treat it as a defined var that has no value(s).
             if (is_read_only(key_and_val) || is_electric(key_and_val)) continue;
-            env_set_empty(key_and_val, ENV_EXPORT | ENV_GLOBAL);
+            vars.set_empty(key_and_val, ENV_EXPORT | ENV_GLOBAL);
         } else {
             key.assign(key_and_val, 0, eql);
             if (is_read_only(key) || is_electric(key)) continue;
@@ -992,16 +994,15 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
             } else {
                 // We cannot get $HOME. This triggers warnings for history and config.fish already,
                 // so it isn't necessary to warn here as well.
-                env_set_empty(L"HOME", ENV_GLOBAL | ENV_EXPORT);
+                vars.set_empty(L"HOME", ENV_GLOBAL | ENV_EXPORT);
             }
             free(unam_narrow);
         } else {
             // If $USER is empty as well (which we tried to set above), we can't get $HOME.
-            env_set_empty(L"HOME", ENV_GLOBAL | ENV_EXPORT);
+            vars.set_empty(L"HOME", ENV_GLOBAL | ENV_EXPORT);
         }
     }
 
-    env_stack_t &vars = env_stack_t::principal();
     vars.set_pwd();         // initialize the PWD variable
     vars.set_termsize();    // initialize the terminal size variables
     vars.set_read_limit();  // initialize the read_byte_limit
@@ -1410,10 +1411,6 @@ int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val) {
     return env_stack_t::principal().set_one(key, mode, std::move(val));
 }
 
-int env_set_empty(const wcstring &key, env_mode_flags_t mode) {
-    return env_stack_t::principal().set_empty(key, mode);
-}
-
 void env_universal_barrier() { env_stack_t::principal().universal_barrier(); }
 
 wcstring env_get_pwd_slash() { return env_stack_t::principal().get_pwd_slash(); }
@@ -1585,12 +1582,11 @@ void env_stack_t::set_argv(const wchar_t *const *argv) {
     if (argv && *argv) {
         wcstring_list_t list;
         for (auto arg = argv; *arg; arg++) {
-            list.push_back(*arg);
+            list.emplace_back(*arg);
         }
-
-        env_set(L"argv", ENV_LOCAL, list);
+        set(L"argv", ENV_LOCAL, std::move(list));
     } else {
-        env_set_empty(L"argv", ENV_LOCAL);
+        set_empty(L"argv", ENV_LOCAL);
     }
 }
 
