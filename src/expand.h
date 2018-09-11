@@ -16,6 +16,7 @@
 #include "parse_constants.h"
 
 class env_var_t;
+class environment_t;
 
 enum {
     /// Flag specifying that cmdsubst expansion should be skipped.
@@ -111,7 +112,8 @@ enum expand_error_t {
 /// EXPAND_WILDCARD_NO_MATCH and EXPAND_WILDCARD_MATCH are normal exit conditions used only on
 /// strings containing wildcards to tell if the wildcard produced any matches.
 __warn_unused expand_error_t expand_string(const wcstring &input, std::vector<completion_t> *output,
-                                           expand_flags_t flags, parse_error_list_t *errors);
+                                           expand_flags_t flags, const environment_t &vars,
+                                           parse_error_list_t *errors);
 
 /// expand_one is identical to expand_string, except it will fail if in expands to more than one
 /// string. This is used for expanding command names.
@@ -122,7 +124,8 @@ __warn_unused expand_error_t expand_string(const wcstring &input, std::vector<co
 /// \param errors Resulting errors, or NULL to ignore
 ///
 /// \return Whether expansion succeded
-bool expand_one(wcstring &inout_str, expand_flags_t flags, parse_error_list_t *errors = NULL);
+bool expand_one(wcstring &inout_str, expand_flags_t flags, const environment_t &vars,
+                parse_error_list_t *errors = NULL);
 
 /// Expand a command string like $HOME/bin/cmd into a command and list of arguments.
 /// Return the command and arguments by reference.
@@ -130,8 +133,8 @@ bool expand_one(wcstring &inout_str, expand_flags_t flags, parse_error_list_t *e
 /// that API does not distinguish between expansion resulting in an empty command (''), and
 /// expansion resulting in no command (e.g. unset variable).
 // \return an expand error.
-expand_error_t expand_to_command_and_args(const wcstring &instr, wcstring *out_cmd,
-                                          wcstring_list_t *out_args,
+expand_error_t expand_to_command_and_args(const wcstring &instr, const environment_t &vars,
+                                          wcstring *out_cmd, wcstring_list_t *out_args,
                                           parse_error_list_t *errors = NULL);
 
 /// Convert the variable value to a human readable form, i.e. escape things, handle arrays, etc.
