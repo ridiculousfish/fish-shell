@@ -699,38 +699,13 @@ void env_stack_t::set_read_limit() {
 
 void env_stack_t::mark_changed_exported() { vars_stack().mark_changed_exported(); }
 
-wcstring env_stack_t::get_pwd_slash() {
-    auto pwd_var = env_get(L"PWD");
-    wcstring pwd;
-    if (!pwd_var.missing_or_empty()) {
-        pwd = pwd_var->as_string();
-    }
-    else {
-        // Not sure how we can end up here, but it's possible.
-        // See https://github.com/fish-shell/fish-shell/issues/5080
-        // Perhaps it can happen on some platforms if the path is too long?
-        std::vector<char> path;
-        bool cwd_success = false;
-        for (int i = 1; !cwd_success && i <= 10; ++i) {
-            path.resize(PATH_MAX * i);
-            if (getcwd(&path[0], PATH_MAX * i) == nullptr) {
-                if (errno == ERANGE) {
-                    // buffer is not big enough, try again (up to a point)
-                    continue;
-                }
-                debug(1, "getcwd() failed with errno %d", errno);
-                // . but with a trailing slash, because that's what this function does
-                return L"./";
-            }
-            cwd_success = true;
-        }
-        if (!cwd_success) {
-            debug(1, "getcwd() path too long!");
-            return L"./";
-        }
-        pwd = str2wcstring(path.data());
+wcstring environment_t::get_pwd_slash() const {
+    auto pwd_var = get(L"PWD");
+    if (pwd_var.missing_or_empty()) {
+        return L"";
     }
 
+    wcstring pwd = pwd_var->as_string();
     if (!string_suffixes_string(L"/", pwd)) {
         pwd.push_back(L'/');
     }
@@ -1439,8 +1414,6 @@ int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val) {
 
 void env_universal_barrier() { env_stack_t::principal().universal_barrier(); }
 
-wcstring env_get_pwd_slash() { return env_stack_t::principal().get_pwd_slash(); }
-
 void env_set_read_limit() { return env_stack_t::principal().set_read_limit(); }
 
 /// Returns true if the specified scope or any non-shadowed non-global subscopes contain an exported
@@ -1618,6 +1591,13 @@ void env_stack_t::set_argv(const wchar_t *const *argv) {
 
 environment_t::~environment_t() = default;
 env_stack_t::~env_stack_t() = default;
+
+null_environment_t::null_environment_t() = default;
+null_environment_t::~null_environment_t() = default;
+maybe_t<env_var_t> null_environment_t::get(const wcstring &key, env_mode_flags_t mode) const {
+    return none();
+}
+wcstring_list_t null_environment_t::get_names(int flags) const { return {}; }
 
 env_stack_t &env_stack_t::principal() {
     static env_stack_t s_principal;
