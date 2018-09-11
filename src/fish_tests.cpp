@@ -1732,7 +1732,8 @@ static void test_fuzzy_match() {
 
 static void test_abbreviations() {
     say(L"Testing abbreviations");
-    env_push(true);
+    auto &vars = parser_t::principal_parser().vars();
+    vars.push(true);
 
     const std::vector<std::pair<const wcstring, const wcstring>> abbreviations = {
         {L"gc", L"git checkout"}, {L"foo", L"bar"}, {L"gx", L"git checkout"},
@@ -1797,7 +1798,7 @@ static void test_abbreviations() {
     expanded = reader_expand_abbreviation_in_command(L"command gc", wcslen(L"command gc"), &result);
     if (expanded) err(L"gc incorrectly expanded on line %ld", (long)__LINE__);
 
-    env_pop();
+    vars.pop();
 }
 
 /// Test path functions.
