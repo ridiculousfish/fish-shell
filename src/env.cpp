@@ -89,7 +89,7 @@ bool term_has_xn = false;
 /// found in `TERMINFO_DIRS` we don't to call `handle_curses()` before we've imported the latter.
 static bool env_initialized = false;
 
-typedef std::unordered_map<wcstring, void (*)(const wcstring &, const wcstring &)>
+typedef std::unordered_map<wcstring, void (*)(const wcstring &, const wcstring &, env_stack_t &)>
     var_dispatch_table_t;
 static var_dispatch_table_t var_dispatch_table;
 
@@ -141,6 +141,8 @@ static fish_mutex_t env_lock;
 // but we can imagine having separate (linked) stacks
 // if we introduce multiple threads of execution
 struct var_stack_t {
+    var_stack_t(var_stack_t &&) = default;
+
     // Top node on the function stack.
     env_node_ref_t top;
 
@@ -148,11 +150,13 @@ struct var_stack_t {
     env_node_ref_t global_env;
 
     // Exported variable array used by execv.
-    null_terminated_array_t<char> export_array;
+    maybe_t<null_terminated_array_t<char>> export_array;
 
     /// Flag for checking if we need to regenerate the exported variable array.
-    bool has_changed_exported = true;
-    void mark_changed_exported() { has_changed_exported = true; }
+    void mark_changed_exported() { export_array.reset(); }
+
+    bool has_changed_exported() const { return !export_array; }
+
     void update_export_array_if_necessary();
 
     var_stack_t() : top(globals()), global_env(globals()) {
@@ -177,7 +181,15 @@ struct var_stack_t {
     // shadowing scope, or the global scope if none. This implements the default behavior of `set`.
     env_node_ref_t resolve_unspecified_scope();
 
+    /// Copy this vars_stack.
+    var_stack_t clone() const {
+        return var_stack_t(*this);
+    }
+
    private:
+    /// Copy constructor. This does not copy the export array; it just allows it to be regenerated.
+    var_stack_t(const var_stack_t &rhs) : top(rhs.top), global_env(rhs.global_env) {}
+
     bool local_scope_exports(const env_node_ref_t &n) const;
     void get_exported(const env_node_t *n, var_table_t &h) const;
 
@@ -267,6 +279,7 @@ env_node_ref_t var_stack_t::resolve_unspecified_scope() {
 }
 
 env_stack_t::env_stack_t() : vars_(make_unique<var_stack_t>()) {}
+env_stack_t::env_stack_t(std::unique_ptr<var_stack_t> vars) : vars_(std::move(vars)) {}
 
 // Get the variable stack
 var_stack_t &env_stack_t::vars_stack() { return *vars_; }
@@ -361,7 +374,7 @@ static void handle_timezone(const wchar_t *env_var_name) {
 /// Some env vars contain a list of paths where an empty path element is equivalent to ".".
 /// Unfortunately that convention causes problems for fish scripts. So this function replaces the
 /// empty path element with an explicit ".". See issue #3914.
-static void fix_colon_delimited_var(const wcstring &var_name) {
+static void fix_colon_delimited_var(const wcstring &var_name, env_stack_t &vars) {
     // While we auto split/join MANPATH we do not want to replace empty elements with "." (#4158).
     if (var_name == L"MANPATH") return;
 
@@ -375,7 +388,7 @@ static void fix_colon_delimited_var(const wcstring &var_name) {
         // Copy the list and replace empties with L"."
         wcstring_list_t newstrs = strs;
         std::replace(newstrs.begin(), newstrs.end(), empty, wcstring(L"."));
-        int retval = env_set(var_name, ENV_DEFAULT | ENV_USER, std::move(newstrs));
+        int retval = vars.set(var_name, ENV_DEFAULT | ENV_USER, std::move(newstrs));
         if (retval != ENV_OK) {
             debug(0, L"fix_colon_delimited_var failed unexpectedly with retval %d", retval);
         }
@@ -537,7 +550,7 @@ static bool initialize_curses_using_fallback(const char *term) {
 /// elements are converted to explicit "." to make the vars easier to use in fish scripts.
 static void init_path_vars() {
     for (const wchar_t *var_name : colon_delimited_variable) {
-        fix_colon_delimited_var(var_name);
+        fix_colon_delimited_var(var_name, env_stack_t::globals());
     }
 }
 
@@ -607,7 +620,7 @@ static void init_curses() {
 }
 
 /// React to modifying the given variable.
-static void react_to_variable_change(const wchar_t *op, const wcstring &key) {
+static void react_to_variable_change(const wchar_t *op, const wcstring &key, env_stack_t &vars) {
     // Don't do any of this until `env_init()` has run. We only want to do this in response to
     // variables set by the user; e.g., in a script like *config.fish* or interactively or as part
     // of loading the universal variables for the first time. Variables we import from the
@@ -617,7 +630,7 @@ static void react_to_variable_change(const wchar_t *op, const wcstring &key) {
 
     auto dispatch = var_dispatch_table.find(key);
     if (dispatch != var_dispatch_table.end()) {
-        (*dispatch->second)(op, key);
+        (*dispatch->second)(op, key, vars);
     } else if (string_prefixes_string(L"_fish_abbr_", key)) {
         update_abbr_cache(op, key);
     } else if (string_prefixes_string(L"fish_color_", key)) {
@@ -627,7 +640,7 @@ static void react_to_variable_change(const wchar_t *op, const wcstring &key) {
 
 /// Universal variable callback function. This function makes sure the proper events are triggered
 /// when an event occurs.
-static void universal_callback(env_stack_t *stack, fish_message_type_t type, const wchar_t *name) {
+static void universal_callback(env_stack_t *vars, fish_message_type_t type, const wchar_t *name) {
     const wchar_t *op;
 
     switch (type) {
@@ -642,8 +655,8 @@ static void universal_callback(env_stack_t *stack, fish_message_type_t type, con
         }
     }
 
-    react_to_variable_change(op, name);
-    stack->mark_changed_exported();
+    react_to_variable_change(op, name, *vars);
+    vars->mark_changed_exported();
 
     event_t ev = event_t::variable_event(name);
     ev.arguments.push_back(L"VARIABLE");
@@ -654,10 +667,11 @@ static void universal_callback(env_stack_t *stack, fish_message_type_t type, con
 
 /// Make sure the PATH variable contains something.
 static void setup_path() {
-    const auto path = env_get(L"PATH");
+    auto &vars = env_stack_t::globals();
+    const auto path = vars.get(L"PATH");
     if (path.missing_or_empty()) {
         wcstring_list_t value({L"/usr/bin", L"/bin"});
-        env_set(L"PATH", ENV_GLOBAL | ENV_EXPORT, value);
+        vars.set(L"PATH", ENV_GLOBAL | ENV_EXPORT, value);
     }
 }
 
@@ -665,21 +679,23 @@ static void setup_path() {
 /// defaults. They will be updated later by the `get_current_winsize()` function if they need to be
 /// adjusted.
 void env_stack_t::set_termsize() {
+    auto &vars = env_stack_t::globals();
     auto cols = get(L"COLUMNS");
-    if (cols.missing_or_empty()) env_set_one(L"COLUMNS", ENV_GLOBAL, DFLT_TERM_COL_STR);
+    if (cols.missing_or_empty()) vars.set_one(L"COLUMNS", ENV_GLOBAL, DFLT_TERM_COL_STR);
 
     auto rows = get(L"LINES");
-    if (rows.missing_or_empty()) env_set_one(L"LINES", ENV_GLOBAL, DFLT_TERM_ROW_STR);
+    if (rows.missing_or_empty()) vars.set_one(L"LINES", ENV_GLOBAL, DFLT_TERM_ROW_STR);
 }
 
 bool env_stack_t::set_pwd() {
+    auto &vars = env_stack_t::globals();
     wcstring cwd = wgetcwd();
     if (cwd.empty()) {
         debug(0,
               _(L"Could not determine current working directory. Is your locale set correctly?"));
         return false;
     }
-    env_set_one(L"PWD", ENV_EXPORT | ENV_GLOBAL, cwd);
+    vars.set_one(L"PWD", ENV_EXPORT | ENV_GLOBAL, cwd);
     return true;
 }
 
@@ -720,7 +736,7 @@ static void setup_user(bool force) {
         int retval = getpwuid_r(getuid(), &userinfo, buf, sizeof(buf), &result);
         if (!retval && result) {
             const wcstring uname = str2wcstring(userinfo.pw_name);
-            env_set_one(L"USER", ENV_GLOBAL | ENV_EXPORT, uname);
+            env_stack_t::globals().set_one(L"USER", ENV_GLOBAL | ENV_EXPORT, uname);
         }
     }
 }
@@ -766,20 +782,23 @@ void env_stack_t::universal_barrier() {
     env_universal_callbacks(this, callbacks);
 }
 
-static void handle_fish_term_change(const wcstring &op, const wcstring &var_name) {
+static void handle_fish_term_change(const wcstring &op, const wcstring &var_name,
+                                    env_stack_t &vars) {
     UNUSED(op);
     UNUSED(var_name);
     update_fish_color_support();
     reader_react_to_color_change();
 }
 
-static void handle_escape_delay_change(const wcstring &op, const wcstring &var_name) {
+static void handle_escape_delay_change(const wcstring &op, const wcstring &var_name,
+                                       env_stack_t &vars) {
     UNUSED(op);
     UNUSED(var_name);
     update_wait_on_escape_ms();
 }
 
-static void handle_change_emoji_width(const wcstring &op, const wcstring &var_name) {
+static void handle_change_emoji_width(const wcstring &op, const wcstring &var_name,
+                                      env_stack_t &vars) {
     (void)op;
     (void)var_name;
     int new_width = 0;
@@ -789,7 +808,8 @@ static void handle_change_emoji_width(const wcstring &op, const wcstring &var_na
     g_fish_emoji_width = std::max(0, new_width);
 }
 
-static void handle_change_ambiguous_width(const wcstring &op, const wcstring &var_name) {
+static void handle_change_ambiguous_width(const wcstring &op, const wcstring &var_name,
+                                          env_stack_t &vars) {
     (void)op;
     (void)var_name;
     int new_width = 1;
@@ -799,53 +819,59 @@ static void handle_change_ambiguous_width(const wcstring &op, const wcstring &va
     g_fish_ambiguous_width = std::max(0, new_width);
 }
 
-static void handle_term_size_change(const wcstring &op, const wcstring &var_name) {
+static void handle_term_size_change(const wcstring &op, const wcstring &var_name,
+                                    env_stack_t &vars) {
     UNUSED(op);
     UNUSED(var_name);
     invalidate_termsize(true);  // force fish to update its idea of the terminal size plus vars
 }
 
-static void handle_read_limit_change(const wcstring &op, const wcstring &var_name) {
+static void handle_read_limit_change(const wcstring &op, const wcstring &var_name,
+                                     env_stack_t &vars) {
     UNUSED(op);
     UNUSED(var_name);
     env_set_read_limit();
 }
 
-static void handle_fish_history_change(const wcstring &op, const wcstring &var_name) {
+static void handle_fish_history_change(const wcstring &op, const wcstring &var_name,
+                                       env_stack_t &vars) {
     UNUSED(op);
     UNUSED(var_name);
     reader_change_history(history_session_id().c_str());
 }
 
-static void handle_function_path_change(const wcstring &op, const wcstring &var_name) {
+static void handle_function_path_change(const wcstring &op, const wcstring &var_name,
+                                        env_stack_t &vars) {
     UNUSED(op);
     UNUSED(var_name);
     function_invalidate_path();
 }
 
-static void handle_complete_path_change(const wcstring &op, const wcstring &var_name) {
+static void handle_complete_path_change(const wcstring &op, const wcstring &var_name,
+                                        env_stack_t &vars) {
     UNUSED(op);
     UNUSED(var_name);
     complete_invalidate_path();
 }
 
-static void handle_tz_change(const wcstring &op, const wcstring &var_name) {
+static void handle_tz_change(const wcstring &op, const wcstring &var_name, env_stack_t &vars) {
     UNUSED(op);
     handle_timezone(var_name.c_str());
 }
 
-static void handle_magic_colon_var_change(const wcstring &op, const wcstring &var_name) {
+static void handle_magic_colon_var_change(const wcstring &op, const wcstring &var_name,
+                                          env_stack_t &vars) {
     UNUSED(op);
-    fix_colon_delimited_var(var_name);
+    fix_colon_delimited_var(var_name, vars);
 }
 
-static void handle_locale_change(const wcstring &op, const wcstring &var_name) {
+static void handle_locale_change(const wcstring &op, const wcstring &var_name, env_stack_t &vars) {
     UNUSED(op);
     UNUSED(var_name);
     init_locale();
 }
 
-static void handle_curses_change(const wcstring &op, const wcstring &var_name) {
+static void handle_curses_change(const wcstring &op, const wcstring &var_name, env_stack_t &vars) {
     UNUSED(op);
     UNUSED(var_name);
     guess_emoji_width();
@@ -884,7 +910,7 @@ static void setup_var_dispatch_table() {
 void env_init(const struct config_paths_t *paths /* or NULL */) {
     setup_var_dispatch_table();
 
-    env_stack_t &vars = env_stack_t::principal();
+    env_stack_t &vars = env_stack_t::globals();
 
     // Names of all dynamically calculated variables.
     env_electric.insert({L"history", L"status", L"umask"});
@@ -909,16 +935,16 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
             if (is_read_only(key) || is_electric(key)) continue;
             val.assign(key_and_val, eql + 1, wcstring::npos);
             wchar_t sep = variable_is_colon_delimited_var(key) ? L':' : ARRAY_SEP;
-            env_set(key, ENV_EXPORT | ENV_GLOBAL, split_string(val, sep));
+            vars.set(key, ENV_EXPORT | ENV_GLOBAL, split_string(val, sep));
         }
     }
 
     // Set the given paths in the environment, if we have any.
     if (paths != NULL) {
-        env_set_one(FISH_DATADIR_VAR, ENV_GLOBAL, paths->data);
-        env_set_one(FISH_SYSCONFDIR_VAR, ENV_GLOBAL, paths->sysconf);
-        env_set_one(FISH_HELPDIR_VAR, ENV_GLOBAL, paths->doc);
-        env_set_one(FISH_BIN_DIR, ENV_GLOBAL, paths->bin);
+        vars.set_one(FISH_DATADIR_VAR, ENV_GLOBAL, paths->data);
+        vars.set_one(FISH_SYSCONFDIR_VAR, ENV_GLOBAL, paths->sysconf);
+        vars.set_one(FISH_HELPDIR_VAR, ENV_GLOBAL, paths->doc);
+        vars.set_one(FISH_BIN_DIR, ENV_GLOBAL, paths->bin);
     }
 
     init_locale();
@@ -939,19 +965,19 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
     setup_user(uid == 0);
 
     // Set up $IFS - this used to be in share/config.fish, but really breaks if it isn't done.
-    env_set_one(L"IFS", ENV_GLOBAL, L"\n \t");
+    vars.set_one(L"IFS", ENV_GLOBAL, L"\n \t");
 
     // Set up the version variable.
     wcstring version = str2wcstring(get_fish_version());
-    env_set_one(L"version", ENV_GLOBAL, version);
+    vars.set_one(L"version", ENV_GLOBAL, version);
 
     // Set the $fish_pid variable (%self replacement)
-    env_set_one(L"fish_pid", ENV_GLOBAL, to_string<long>(getpid()));
+    vars.set_one(L"fish_pid", ENV_GLOBAL, to_string<long>(getpid()));
 
     // Set the $hostname variable
     wcstring hostname = L"fish";
     get_hostname_identifier(hostname);
-    env_set_one(L"hostname", ENV_GLOBAL, hostname);
+    vars.set_one(L"hostname", ENV_GLOBAL, hostname);
 
     // Set up SHLVL variable. Not we can't use env_get because SHLVL is read-only, and therefore was
     // not inherited from the environment.
@@ -964,7 +990,7 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
             nshlvl_str = to_string<long>(shlvl_i + 1);
         }
     }
-    env_set_one(L"SHLVL", ENV_GLOBAL | ENV_EXPORT, nshlvl_str);
+    vars.set_one(L"SHLVL", ENV_GLOBAL | ENV_EXPORT, nshlvl_str);
 
     // Set up the HOME variable.
     // Unlike $USER, it doesn't seem that `su`s pass this along
@@ -990,7 +1016,7 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
             }
             if (!retval && result && userinfo.pw_dir) {
                 const wcstring dir = str2wcstring(userinfo.pw_dir);
-                env_set_one(L"HOME", ENV_GLOBAL | ENV_EXPORT, dir);
+                vars.set_one(L"HOME", ENV_GLOBAL | ENV_EXPORT, dir);
             } else {
                 // We cannot get $HOME. This triggers warnings for history and config.fish already,
                 // so it isn't necessary to warn here as well.
@@ -1070,7 +1096,7 @@ static int set_umask(const wcstring_list_t &list_val) {
 /// * ENV_INVALID, the variable value was invalid. This applies only to special variables.
 int env_stack_t::set_internal(const wcstring &key, env_mode_flags_t var_mode, wcstring_list_t val) {
     ASSERT_IS_MAIN_THREAD();
-    bool has_changed_old = vars_stack().has_changed_exported;
+    bool has_changed_old = vars_stack().has_changed_exported();
     int done = 0;
 
     if (val.size() == 1 && (key == L"PWD" || key == L"HOME")) {
@@ -1206,7 +1232,7 @@ int env_stack_t::set_internal(const wcstring &key, env_mode_flags_t var_mode, wc
     event_fire(&ev);
     // debug(1, L"env_set: return from event firing");
 
-    react_to_variable_change(L"SET", key);
+    react_to_variable_change(L"SET", key, *this);
     return ENV_OK;
 }
 
@@ -1296,7 +1322,7 @@ int env_stack_t::remove(const wcstring &key, int var_mode) {
         if (is_exported) vars_stack().mark_changed_exported();
     }
 
-    react_to_variable_change(L"ERASE", key);
+    react_to_variable_change(L"ERASE", key, *this);
 
     return erased ? ENV_OK : ENV_NOT_FOUND;
 }
@@ -1401,14 +1427,6 @@ maybe_t<env_var_t> env_stack_t::get(const wcstring &key, env_mode_flags_t mode) 
 /// Legacy versions.
 maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode) {
     return env_stack_t::principal().get(key, mode);
-}
-
-int env_set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
-    return env_stack_t::principal().set(key, mode, std::move(vals));
-}
-
-int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val) {
-    return env_stack_t::principal().set_one(key, mode, std::move(val));
 }
 
 void env_universal_barrier() { env_stack_t::principal().universal_barrier(); }
@@ -1544,7 +1562,7 @@ static std::vector<std::string> get_export_list(const var_table_t &envs) {
 }
 
 void var_stack_t::update_export_array_if_necessary() {
-    if (!this->has_changed_exported) {
+    if (!this->has_changed_exported()) {
         return;
     }
 
@@ -1565,15 +1583,15 @@ void var_stack_t::update_export_array_if_necessary() {
         }
     }
 
-    export_array.set(get_export_list(vals));
-    has_changed_exported = false;
+    export_array.emplace(get_export_list(vals));
 }
 
 const char *const *env_stack_t::export_arr() {
     ASSERT_IS_MAIN_THREAD();
     ASSERT_IS_NOT_FORKED_CHILD();
     vars_stack().update_export_array_if_necessary();
-    return vars_stack().export_array.get();
+    assert(vars_stack().export_array && "Should have export array");
+    return vars_stack().export_array->get();
 }
 
 void env_stack_t::set_argv(const wchar_t *const *argv) {
@@ -1590,6 +1608,7 @@ void env_stack_t::set_argv(const wchar_t *const *argv) {
 
 environment_t::~environment_t() = default;
 env_stack_t::~env_stack_t() = default;
+env_stack_t::env_stack_t(env_stack_t &&) = default;
 
 null_environment_t::null_environment_t() = default;
 null_environment_t::~null_environment_t() = default;
@@ -1598,9 +1617,20 @@ maybe_t<env_var_t> null_environment_t::get(const wcstring &key, env_mode_flags_t
 }
 wcstring_list_t null_environment_t::get_names(int flags) const { return {}; }
 
+env_stack_t env_stack_t::make_principal() {
+    const env_stack_t &gl = env_stack_t::globals();
+    std::unique_ptr<var_stack_t> dup_stack = make_unique<var_stack_t>(gl.vars_stack().clone());
+    return env_stack_t{std::move(dup_stack)};
+}
+
 env_stack_t &env_stack_t::principal() {
-    static env_stack_t s_principal;
+    static env_stack_t s_principal = make_principal();
     return s_principal;
+}
+
+env_stack_t &env_stack_t::globals() {
+    static env_stack_t s_global;
+    return s_global;
 }
 
 env_vars_snapshot_t::env_vars_snapshot_t(const environment_t &source, const wchar_t *const *keys) {
