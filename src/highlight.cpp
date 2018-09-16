@@ -349,10 +349,8 @@ bool autosuggest_validate_from_history(const history_item_t &item,
             bool is_help =
                 string_prefixes_string(cd_dir, L"--help") || string_prefixes_string(cd_dir, L"-h");
             if (!is_help) {
-                wcstring path;
-                env_var_t dir_var(cd_dir, 0);
-                bool can_cd = path_get_cdpath(dir_var, &path, working_directory.c_str(), vars);
-                if (can_cd && !paths_are_same_file(working_directory, path)) {
+                auto path = path_get_cdpath(cd_dir, working_directory, vars);
+                if (path && !paths_are_same_file(working_directory, *path)) {
                     suggestionOK = true;
                 }
             }
@@ -1015,7 +1013,7 @@ static bool command_is_valid(const wcstring &cmd, enum parse_statement_decoratio
 
     // Implicit cd
     if (!is_valid && implicit_cd_ok) {
-        is_valid = path_can_be_implicit_cd(cmd, NULL, working_directory.c_str(), vars);
+        is_valid = path_as_implicit_cd(cmd, working_directory, vars).has_value();
     }
 
     // Return what we got.
