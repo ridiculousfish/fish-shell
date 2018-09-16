@@ -157,17 +157,12 @@ wcstring_list_t path_get_paths(const wcstring &cmd) {
     return paths;
 }
 
-bool path_get_cdpath(const env_var_t &dir_var, wcstring *out, const wchar_t *wd,
-                     const environment_t &env_vars) {
+maybe_t<wcstring> path_get_cdpath(const wcstring &dir, const wcstring &wd,
+                                  const environment_t &env_vars) {
     int err = ENOENT;
-    if (dir_var.empty()) return false;
-    wcstring dir = dir_var.as_string();
+    if (dir.empty()) return none();
 
-    if (wd) {
-        size_t len = wcslen(wd);
-        assert(wd[len - 1] == L'/');
-    }
-
+    assert(wd.empty() || wd.back() == L'/');
     wcstring_list_t paths;
     if (dir.at(0) == L'/') {
         // Absolute path.
@@ -176,7 +171,6 @@ bool path_get_cdpath(const env_var_t &dir_var, wcstring *out, const wchar_t *wd,
                dir == L"." || dir == L"..") {
         // Path is relative to the working directory.
         wcstring path;
-        if (wd) path.append(wd);
         path.append(dir);
         paths.push_back(path);
     } else {
@@ -184,13 +178,10 @@ bool path_get_cdpath(const env_var_t &dir_var, wcstring *out, const wchar_t *wd,
         auto cdpaths = env_vars.get(L"CDPATH");
         if (cdpaths.missing_or_empty()) cdpaths = env_var_t(L"CDPATH", L".");
 
-        std::vector<wcstring> cdpathsv;
-        cdpaths->to_list(cdpathsv);
-        for (auto next_path : cdpathsv) {
+        for (auto next_path : cdpaths->as_list()) {
             if (next_path.empty()) next_path = L".";
-            if (next_path == L"." && wd != NULL) {
-                // next_path is just '.', and we have a working directory, so use the wd instead.
-                // TODO: if next_path starts with ./ we need to replace the . with the wd.
+            if (next_path == L".") {
+                // next_path is just '.', so use the wd instead.
                 next_path = wd;
             }
             expand_tilde(next_path);
@@ -202,39 +193,32 @@ bool path_get_cdpath(const env_var_t &dir_var, wcstring *out, const wchar_t *wd,
         }
     }
 
-    bool success = false;
     for (const wcstring &dir : paths) {
         struct stat buf;
         if (wstat(dir, &buf) == 0) {
             if (S_ISDIR(buf.st_mode)) {
-                success = true;
-                if (out) out->assign(dir);
-                break;
-            } else {
-                err = ENOTDIR;
+                return dir;
             }
+            err = ENOTDIR;
         }
     }
 
-    if (!success) errno = err;
-    return success;
+    errno = err;
+    return none();
 }
 
-bool path_can_be_implicit_cd(const wcstring &path, wcstring *out_path, const wchar_t *wd,
-                             const environment_t &vars) {
+maybe_t<wcstring> path_as_implicit_cd(const wcstring &path, const wcstring &wd,
+                                      const environment_t &vars) {
     wcstring exp_path = path;
     expand_tilde(exp_path);
-
-    bool result = false;
     if (string_prefixes_string(L"/", exp_path) || string_prefixes_string(L"./", exp_path) ||
         string_prefixes_string(L"../", exp_path) || string_suffixes_string(L"/", exp_path) ||
         exp_path == L"..") {
         // These paths can be implicit cd, so see if you cd to the path. Note that a single period
         // cannot (that's used for sourcing files anyways).
-        env_var_t path_var(L"n/a", exp_path);
-        result = path_get_cdpath(path_var, out_path, wd, vars);
+        return path_get_cdpath(exp_path, wd, vars);
     }
-    return result;
+    return none();
 }
 
 // If the given path looks like it's relative to the working directory, then prepend that working
