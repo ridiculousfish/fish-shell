@@ -210,7 +210,8 @@ static int read_interactive(wcstring &buff, int nchars, bool shell, bool silent,
     int exit_res = STATUS_CMD_OK;
     const wchar_t *line;
 
-    wcstring read_history_ID = history_session_id();
+    const auto &vars = parser_t::principal_parser().vars();
+    wcstring read_history_ID = history_session_id(vars);
     if (!read_history_ID.empty()) read_history_ID += L"_read";
     reader_push(read_history_ID);
 
@@ -510,7 +511,7 @@ int builtin_read(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         }
 
         if (!opts.have_delimiter) {
-            auto ifs = env_get(L"IFS");
+            auto ifs = parser.vars().get(L"IFS");
             if (!ifs.missing_or_empty()) opts.delimiter = ifs->as_string();
         }
 

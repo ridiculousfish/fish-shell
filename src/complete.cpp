@@ -404,7 +404,9 @@ bool completer_t::condition_test(const wcstring &condition) {
     condition_cache_t::iterator cached_entry = condition_cache.find(condition);
     if (cached_entry == condition_cache.end()) {
         // Compute new value and reinsert it.
-        test_res = (0 == exec_subshell(condition, false /* don't apply exit status */));
+        // TODO: rationalize this principal_parser
+        test_res = (0 == exec_subshell(condition, parser_t::principal_parser(),
+                                       false /* don't apply exit status */));
         condition_cache[condition] = test_res;
     } else {
         // Use the old value.
@@ -596,7 +598,9 @@ void completer_t::complete_cmd_desc(const wcstring &str) {
     // search if we know the location of the whatis database. This can take some time on slower
     // systems with a large set of manuals, but it should be ok since apropos is only called once.
     wcstring_list_t list;
-    if (exec_subshell(lookup_cmd, list, false /* don't apply exit status */) != -1) {
+    // TODO: justify this use of parser_t::principal_parser
+    if (exec_subshell(lookup_cmd, parser_t::principal_parser(), list,
+                      false /* don't apply exit status */) != -1) {
         std::unordered_map<wcstring, wcstring> lookup;
         lookup.reserve(list.size());
 
@@ -1130,7 +1134,7 @@ bool completer_t::complete_variable(const wcstring &str, size_t start_offset) {
         wcstring desc;
         if (this->wants_descriptions()) {
             // Can't use this->vars here, it could be any variable.
-            auto var = env_get(env_name);
+            auto var = vars.get(env_name);
             if (!var) continue;
 
             wcstring value = expand_escape_variable(*var);

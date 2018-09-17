@@ -141,9 +141,6 @@ class null_environment_t : public environment_t {
     wcstring_list_t get_names(int flags) const override;
 };
 
-/// Gets the variable with the specified name, or none() if it does not exist.
-maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode = ENV_DEFAULT);
-
 /// Synchronizes all universal variable changes: writes everything out, reads stuff in.
 void env_universal_barrier();
 
@@ -153,7 +150,7 @@ void env_set_read_limit();
 /// A environment stack of scopes. This is the main class that tracks fish variables.
 struct var_stack_t;
 class env_node_t;
-class env_stack_t : public environment_t {
+class env_stack_t final : public environment_t {
     friend class parser_t;
     std::unique_ptr<var_stack_t> vars_;
 

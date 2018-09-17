@@ -830,7 +830,9 @@ void reader_write_title(const wcstring &cmd, bool reset_cursor_position) {
 
     wcstring_list_t lst;
     proc_push_interactive(0);
-    if (exec_subshell(fish_title_command, lst, false /* ignore exit status */) != -1 &&
+    // TODO: justify this principal_parser usage.
+    if (exec_subshell(fish_title_command, parser_t::principal_parser(), lst,
+                      false /* ignore exit status */) != -1 &&
         !lst.empty()) {
         fputws(L"\x1B]0;", stdout);
         for (size_t i = 0; i < lst.size(); i++) {
@@ -856,6 +858,7 @@ static void exec_prompt() {
 
     // Do not allow the exit status of the prompts to leak through.
     const bool apply_exit_status = false;
+    parser_t &parser = parser_t::principal_parser();
 
     // HACK: Query winsize again because it might have changed.
     // This allows prompts to react to $COLUMNS.
@@ -868,7 +871,8 @@ static void exec_prompt() {
         // Prepend any mode indicator to the left prompt (issue #1988).
         if (function_exists(MODE_PROMPT_FUNCTION_NAME)) {
             wcstring_list_t mode_indicator_list;
-            exec_subshell(MODE_PROMPT_FUNCTION_NAME, mode_indicator_list, apply_exit_status);
+            exec_subshell(MODE_PROMPT_FUNCTION_NAME, parser, mode_indicator_list,
+                          apply_exit_status);
             // We do not support multiple lines in the mode indicator, so just concatenate all of
             // them.
             for (size_t i = 0; i < mode_indicator_list.size(); i++) {
@@ -879,7 +883,7 @@ static void exec_prompt() {
         if (!data->left_prompt.empty()) {
             wcstring_list_t prompt_list;
             // Ignore return status.
-            exec_subshell(data->left_prompt, prompt_list, apply_exit_status);
+            exec_subshell(data->left_prompt, parser, prompt_list, apply_exit_status);
             for (size_t i = 0; i < prompt_list.size(); i++) {
                 if (i > 0) data->left_prompt_buff += L'\n';
                 data->left_prompt_buff += prompt_list.at(i);
@@ -889,7 +893,7 @@ static void exec_prompt() {
         if (!data->right_prompt.empty()) {
             wcstring_list_t prompt_list;
             // Status is ignored.
-            exec_subshell(data->right_prompt, prompt_list, apply_exit_status);
+            exec_subshell(data->right_prompt, parser, prompt_list, apply_exit_status);
             for (size_t i = 0; i < prompt_list.size(); i++) {
                 // Right prompt does not support multiple lines, so just concatenate all of them.
                 data->right_prompt_buff += prompt_list.at(i);
@@ -2109,12 +2113,13 @@ void reader_import_history_if_necessary() {
         // Try opening a bash file. We make an effort to respect $HISTFILE; this isn't very complete
         // (AFAIK it doesn't have to be exported), and to really get this right we ought to ask bash
         // itself. But this is better than nothing.
-        const auto var = env_get(L"HISTFILE");
+        auto &vars = env_stack_t::globals();
+        const auto var = vars.get(L"HISTFILE");
         wcstring path = (var ? var->as_string() : L"~/.bash_history");
-        expand_tilde(path);
+        expand_tilde(path, vars);
         FILE *f = wfopen(path, "r");
         if (f) {
-            data->history->populate_from_bash(f);
+            data->history->populate_from_bash(f, vars);
             fclose(f);
         }
     }
@@ -2310,7 +2315,8 @@ uint32_t reader_run_count() { return run_count; }
 
 /// Read interactively. Read input from stdin while providing editing facilities.
 static int read_i() {
-    reader_push(history_session_id());
+    parser_t &parser = parser_t::principal_parser();
+    reader_push(history_session_id(parser.vars()));
     reader_set_complete_function(&complete);
     reader_set_highlight_function(&highlight_shell);
     reader_set_test_function(&reader_shell_test);
@@ -2318,7 +2324,6 @@ static int read_i() {
     reader_set_expand_abbreviations(true);
     reader_import_history_if_necessary();
 
-    parser_t &parser = parser_t::principal_parser();
     reader_data_t *data = current_data();
     data->prev_end_loop = 0;
 

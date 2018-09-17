@@ -144,10 +144,10 @@ wcstring expand_escape_variable(const env_var_t &var);
 /// Perform tilde expansion and nothing else on the specified string, which is modified in place.
 ///
 /// \param input the string to tilde expand
-void expand_tilde(wcstring &input);
+void expand_tilde(wcstring &input, const environment_t &vars);
 
 /// Perform the opposite of tilde expansion on the string, which is modified in place.
-wcstring replace_home_directory_with_tilde(const wcstring &str);
+wcstring replace_home_directory_with_tilde(const wcstring &str, const environment_t &vars);
 
 /// Abbreviation support. Expand src as an abbreviation, returning true if one was found, false if
 /// not. If result is not-null, returns the abbreviation by reference.

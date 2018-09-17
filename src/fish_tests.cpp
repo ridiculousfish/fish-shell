@@ -2108,24 +2108,25 @@ static void test_is_potential_path() {
     const wcstring wd = L"test/is_potential_path_test/";
     const wcstring_list_t wds({L".", wd});
 
-    do_test(is_potential_path(L"al", wds, PATH_REQUIRE_DIR));
-    do_test(is_potential_path(L"alpha/", wds, PATH_REQUIRE_DIR));
-    do_test(is_potential_path(L"aard", wds, 0));
+    const auto &vars = env_stack_t::principal();
+    do_test(is_potential_path(L"al", wds, vars, PATH_REQUIRE_DIR));
+    do_test(is_potential_path(L"alpha/", wds, vars, PATH_REQUIRE_DIR));
+    do_test(is_potential_path(L"aard", wds, vars, 0));
 
-    do_test(!is_potential_path(L"balpha/", wds, PATH_REQUIRE_DIR));
-    do_test(!is_potential_path(L"aard", wds, PATH_REQUIRE_DIR));
-    do_test(!is_potential_path(L"aarde", wds, PATH_REQUIRE_DIR));
-    do_test(!is_potential_path(L"aarde", wds, 0));
+    do_test(!is_potential_path(L"balpha/", wds, vars, PATH_REQUIRE_DIR));
+    do_test(!is_potential_path(L"aard", wds, vars, PATH_REQUIRE_DIR));
+    do_test(!is_potential_path(L"aarde", wds, vars, PATH_REQUIRE_DIR));
+    do_test(!is_potential_path(L"aarde", wds, vars, 0));
 
-    do_test(is_potential_path(L"test/is_potential_path_test/aardvark", wds, 0));
-    do_test(is_potential_path(L"test/is_potential_path_test/al", wds, PATH_REQUIRE_DIR));
-    do_test(is_potential_path(L"test/is_potential_path_test/aardv", wds, 0));
+    do_test(is_potential_path(L"test/is_potential_path_test/aardvark", wds, vars, 0));
+    do_test(is_potential_path(L"test/is_potential_path_test/al", wds, vars, PATH_REQUIRE_DIR));
+    do_test(is_potential_path(L"test/is_potential_path_test/aardv", wds, vars, 0));
 
-    do_test(!is_potential_path(L"test/is_potential_path_test/aardvark", wds, PATH_REQUIRE_DIR));
-    do_test(!is_potential_path(L"test/is_potential_path_test/al/", wds, 0));
-    do_test(!is_potential_path(L"test/is_potential_path_test/ar", wds, 0));
+    do_test(!is_potential_path(L"test/is_potential_path_test/aardvark", wds, vars, PATH_REQUIRE_DIR));
+    do_test(!is_potential_path(L"test/is_potential_path_test/al/", wds, vars, 0));
+    do_test(!is_potential_path(L"test/is_potential_path_test/ar", wds, vars, 0));
 
-    do_test(is_potential_path(L"/usr", wds, PATH_REQUIRE_DIR));
+    do_test(is_potential_path(L"/usr", wds, vars, PATH_REQUIRE_DIR));
 }
 
 /// Test the 'test' builtin.
@@ -3489,7 +3490,7 @@ void history_tests_t::test_history_formats() {
                                      L"echo foo",
                                      NULL};
         history_t &test_history = history_t::history_with_name(L"bash_import");
-        test_history.populate_from_bash(f);
+        test_history.populate_from_bash(f, env_stack_t::principal());
         if (!history_equals(test_history, expected)) {
             err(L"test_history_formats failed for bash import\n");
         }

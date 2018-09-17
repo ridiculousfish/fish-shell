@@ -205,6 +205,9 @@ class parser_t {
     /// Helper for push_block()
     void push_block_int(block_t *b);
 
+    // Given a file path, return something nicer.
+    wcstring user_presentable_path(const wcstring &path) const;
+
     /// Create a parser.
     parser_t();
 
