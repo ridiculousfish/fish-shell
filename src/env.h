@@ -180,6 +180,9 @@ class env_stack_t final : public environment_t {
     /// Sets the variable with the specified name to no values.
     int set_empty(const wcstring &key, env_mode_flags_t mode);
 
+    /// Update the PWD variable based on the result of getcwd.
+    void set_pwd_from_getcwd();
+
     /// Remove environment variable.
     ///
     /// \param key The name of the variable to remove

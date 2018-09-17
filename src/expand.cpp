@@ -776,7 +776,9 @@ static void expand_home_directory(wcstring &input, const environment_t &vars) {
             }
         }
 
-        maybe_t<wcstring> realhome = (home ? wrealpath(*home) : none());
+        maybe_t<wcstring> realhome;
+        if (home) realhome = normalize_path(*home);
+
         if (realhome) {
             input.replace(input.begin(), input.begin() + tail_idx, *realhome);
         } else {
