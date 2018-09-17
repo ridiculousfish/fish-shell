@@ -172,7 +172,7 @@ static bool pushd(const char *path) {
         return false;
     }
 
-    parser_t::principal_parser().vars().set_pwd();
+    parser_t::principal_parser().vars().set_pwd_from_getcwd();
     return true;
 }
 
@@ -183,7 +183,7 @@ static void popd() {
     }
     free((void *)old_cwd);
     pushed_dirs.pop_back();
-    parser_t::principal_parser().vars().set_pwd();
+    parser_t::principal_parser().vars().set_pwd_from_getcwd();
 }
 
 // The odd formulation of these macros is to avoid "multiple unary operator" warnings from oclint
