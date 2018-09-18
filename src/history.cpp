@@ -1685,6 +1685,8 @@ void history_t::clear() {
     this->clear_file_state();
 }
 
+bool history_t::is_default() const { return name == DFLT_FISH_HISTORY_SESSION_ID; }
+
 bool history_t::is_empty() {
     scoped_lock locker(lock);
 
@@ -1795,9 +1797,6 @@ static bool should_import_bash_history_line(const std::string &line) {
 /// commands. We can't actually parse bash syntax and the bash history file does not unambiguously
 /// encode multiline commands.
 void history_t::populate_from_bash(FILE *stream) {
-    // We do not import bash history if an alternative fish history file is being used.
-    if (history_session_id() != DFLT_FISH_HISTORY_SESSION_ID) return;
-
     // Process the entire history file until EOF is observed.
     bool eof = false;
     while (!eof) {
@@ -1858,10 +1857,10 @@ void history_collection_t::save() {
 void history_save_all() { histories.save(); }
 
 /// Return the prefix for the files to be used for command and read history.
-wcstring history_session_id() {
+wcstring history_session_id(const environment_t &vars) {
     wcstring result = DFLT_FISH_HISTORY_SESSION_ID;
 
-    const auto var = env_get(L"fish_history");
+    const auto var = vars.get(L"fish_history");
     if (var) {
         wcstring session_id = var->as_string();
         if (session_id.empty()) {
