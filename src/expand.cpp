@@ -43,6 +43,7 @@
 #include "iothread.h"
 #include "parse_constants.h"
 #include "parse_util.h"
+#include "parser.h"
 #include "path.h"
 #include "proc.h"
 #include "reader.h"
@@ -273,7 +274,7 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
 /// actually starts operating on last_idx-1. As such, to process a string fully, pass string.size()
 /// as last_idx instead of string.size()-1.
 static bool expand_variables(const wcstring &instr, std::vector<completion_t> *out, size_t last_idx,
-                             parse_error_list_t *errors) {
+                             const environment_t &vars, parse_error_list_t *errors) {
     const size_t insize = instr.size();
 
     // last_idx may be 1 past the end of the string, but no further.
@@ -337,7 +338,7 @@ static bool expand_variables(const wcstring &instr, std::vector<completion_t> *o
             history = &history_t::history_with_name(history_session_id(env_stack_t::principal()));
         }
     } else if (var_name != wcstring{VARIABLE_EXPAND_EMPTY}) {
-        var = env_get(var_name);
+        var = vars.get(var_name);
     }
 
     // Parse out any following slice.
@@ -382,7 +383,7 @@ static bool expand_variables(const wcstring &instr, std::vector<completion_t> *o
                 res.push_back(VARIABLE_EXPAND_EMPTY);
             }
             res.append(instr, var_name_and_slice_stop, wcstring::npos);
-            return expand_variables(res, out, varexp_char_idx, errors);
+            return expand_variables(res, out, varexp_char_idx, vars, errors);
         }
     }
 
@@ -443,7 +444,7 @@ static bool expand_variables(const wcstring &instr, std::vector<completion_t> *o
             res.pop_back();
         }
         res.append(instr, var_name_and_slice_stop, wcstring::npos);
-        return expand_variables(res, out, varexp_char_idx, errors);
+        return expand_variables(res, out, varexp_char_idx, vars, errors);
     } else {
         // Normal cartesian-product expansion.
         for (const wcstring &item : var_item_list) {
@@ -460,7 +461,7 @@ static bool expand_variables(const wcstring &instr, std::vector<completion_t> *o
                 }
                 new_in.append(item);
                 new_in.append(instr, var_name_and_slice_stop, wcstring::npos);
-                if (!expand_variables(new_in, out, varexp_char_idx, errors)) {
+                if (!expand_variables(new_in, out, varexp_char_idx, vars, errors)) {
                     return false;
                 }
             }
@@ -617,7 +618,10 @@ static bool expand_cmdsubst(const wcstring &input, std::vector<completion_t> *ou
 
     wcstring_list_t sub_res;
     const wcstring subcmd(paren_begin + 1, paren_end - paren_begin - 1);
-    if (exec_subshell(subcmd, sub_res, true /* apply_exit_status */, true /* is_subcmd */) == -1) {
+    // TODO: justify this parser_t::principal_parser
+    auto &parser = parser_t::principal_parser();
+    if (exec_subshell(subcmd, parser, sub_res, true /* apply_exit_status */,
+                      true /* is_subcmd */) == -1) {
         append_cmdsub_error(errors, SOURCE_LOCATION_UNKNOWN,
                             L"Unknown error while evaulating command substitution");
         return false;
@@ -722,7 +726,7 @@ static wcstring get_home_directory_name(const wcstring &input, size_t *out_tail_
 }
 
 /// Attempts tilde expansion of the string specified, modifying it in place.
-static void expand_home_directory(wcstring &input) {
+static void expand_home_directory(wcstring &input, const environment_t &vars) {
     if (!input.empty() && input.at(0) == HOME_DIRECTORY) {
         size_t tail_idx;
         wcstring username = get_home_directory_name(input, &tail_idx);
@@ -730,7 +734,7 @@ static void expand_home_directory(wcstring &input) {
         maybe_t<env_var_t> home;
         if (username.empty()) {
             // Current users home directory.
-            home = env_get(L"HOME");
+            home = vars.get(L"HOME");
             if (home.missing_or_empty()) {
                 input.clear();
                 return;
@@ -759,16 +763,17 @@ static void expand_home_directory(wcstring &input) {
     }
 }
 
-void expand_tilde(wcstring &input) {
+void expand_tilde(wcstring &input, const environment_t &vars) {
     // Avoid needless COW behavior by ensuring we use const at.
     const wcstring &tmp = input;
     if (!tmp.empty() && tmp.at(0) == L'~') {
         input.at(0) = HOME_DIRECTORY;
-        expand_home_directory(input);
+        expand_home_directory(input, vars);
     }
 }
 
-static void unexpand_tildes(const wcstring &input, std::vector<completion_t> *completions) {
+static void unexpand_tildes(const wcstring &input, const environment_t &vars,
+                            std::vector<completion_t> *completions) {
     // If input begins with tilde, then try to replace the corresponding string in each completion
     // with the tilde. If it does not, there's nothing to do.
     if (input.empty() || input.at(0) != L'~') return;
@@ -790,7 +795,7 @@ static void unexpand_tildes(const wcstring &input, std::vector<completion_t> *co
 
     // Expand username_with_tilde.
     wcstring home = username_with_tilde;
-    expand_tilde(home);
+    expand_tilde(home, vars);
 
     // Now for each completion that starts with home, replace it with the username_with_tilde.
     for (size_t i = 0; i < completions->size(); i++) {
@@ -807,12 +812,12 @@ static void unexpand_tildes(const wcstring &input, std::vector<completion_t> *co
 
 // If the given path contains the user's home directory, replace that with a tilde. We don't try to
 // be smart about case insensitivity, etc.
-wcstring replace_home_directory_with_tilde(const wcstring &str) {
+wcstring replace_home_directory_with_tilde(const wcstring &str, const environment_t &vars) {
     // Only absolute paths get this treatment.
     wcstring result = str;
     if (string_prefixes_string(L"/", result)) {
         wcstring home_directory = L"~";
-        expand_tilde(home_directory);
+        expand_tilde(home_directory, vars);
         if (!string_suffixes_string(L"/", home_directory)) {
             home_directory.push_back(L'/');
         }
@@ -899,7 +904,7 @@ static expand_error_t expand_stage_variables(const wcstring &input, std::vector<
         }
         append_completion(out, next);
     } else {
-        if (!expand_variables(next, out, next.size(), errors)) {
+        if (!expand_variables(next, out, next.size(), vars, errors)) {
             return EXPAND_ERROR;
         }
     }
@@ -919,7 +924,7 @@ static expand_error_t expand_stage_home(const wcstring &input, std::vector<compl
     wcstring next = input;
 
     if (!(EXPAND_SKIP_HOME_DIRECTORIES & flags)) {
-        expand_home_directory(next);
+        expand_home_directory(next, vars);
     }
     append_completion(out, next);
     return EXPAND_OK;
@@ -978,7 +983,7 @@ static expand_error_t expand_stage_wildcards(const wcstring &input, std::vector<
                 // Get the PATH/CDPATH and CWD. Perhaps these should be passed in. An empty CDPATH
                 // implies just the current directory, while an empty PATH is left empty.
                 const wchar_t *name = for_cd ? L"CDPATH" : L"PATH";
-                auto paths = env_get(name);
+                auto paths = vars.get(name);
                 if (paths.missing_or_empty()) {
                     paths = env_var_t(name, for_cd ? L"." : L"");
                 }
@@ -1059,7 +1064,7 @@ expand_error_t expand_string(const wcstring &input, std::vector<completion_t> *o
     if (total_result != EXPAND_ERROR) {
         // Hack to un-expand tildes (see #647).
         if (!(flags & EXPAND_SKIP_HOME_DIRECTORIES)) {
-            unexpand_tildes(input, &completions);
+            unexpand_tildes(input, vars, &completions);
         }
         out_completions->insert(out_completions->end(), completions.begin(), completions.end());
     }

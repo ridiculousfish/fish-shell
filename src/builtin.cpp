@@ -168,7 +168,7 @@ wcstring builtin_help_get(parser_t &parser, io_streams_t &streams, const wchar_t
         int cols = common_get_width();
         cmd = format_string(L"__fish_print_help --tty-width %d %ls", cols, name_esc.c_str());
     }
-    if (exec_subshell(cmd, lst, false /* don't apply exit status */) >= 0) {
+    if (exec_subshell(cmd, parser, lst, false /* don't apply exit status */) >= 0) {
         for (size_t i = 0; i < lst.size(); i++) {
             out.append(lst.at(i));
             out.push_back(L'\n');
