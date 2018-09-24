@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "common.h"
+#include "maybe.h"
 #include "parse_constants.h"
 
 class env_var_t;
@@ -149,10 +150,9 @@ void expand_tilde(wcstring &input);
 /// Perform the opposite of tilde expansion on the string, which is modified in place.
 wcstring replace_home_directory_with_tilde(const wcstring &str);
 
-/// Abbreviation support. Expand src as an abbreviation, returning true if one was found, false if
-/// not. If result is not-null, returns the abbreviation by reference.
-void update_abbr_cache(const wchar_t *op, const wcstring &varname);
-bool expand_abbreviation(const wcstring &src, wcstring *output);
+/// Abbreviation support. Expand src as an abbreviation, returning the expanded form if found,
+/// none() if not.
+maybe_t<wcstring> expand_abbreviation(const wcstring &src);
 
 // Terrible hacks
 bool fish_xdm_login_hack_hack_hack_hack(std::vector<std::string> *cmds, int argc,
