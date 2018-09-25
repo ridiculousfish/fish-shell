@@ -25,6 +25,7 @@
 #include "fallback.h"  // IWYU pragma: keep
 #include "function.h"
 #include "intern.h"
+#include "parser.h"
 #include "parser_keywords.h"
 #include "reader.h"
 #include "wutil.h"  // IWYU pragma: keep
@@ -44,7 +45,8 @@ public:
  const bool is_autoload;
 
  /// Constructs relevant information from the function_data.
- function_info_t(function_data_t data, const wchar_t *filename, bool autoload);
+ function_info_t(function_data_t data, const environment_t &vars, const wchar_t *filename,
+                 bool autoload);
 
  /// Used by function_copy.
  function_info_t(const function_info_t &data, const wchar_t *filename, bool autoload);
@@ -102,7 +104,9 @@ static int load(const wcstring &name) {
 static void autoload_names(std::unordered_set<wcstring> &names, int get_hidden) {
     size_t i;
 
-    const auto path_var = env_get(L"fish_function_path");
+    // TODO: justfy this.
+    auto &vars = env_stack_t::principal();
+    const auto path_var = vars.get(L"fish_function_path");
     if (path_var.missing_or_empty()) return;
 
     wcstring_list_t path_list;
@@ -130,20 +134,22 @@ static void autoload_names(std::unordered_set<wcstring> &names, int get_hidden) 
     }
 }
 
-static std::map<wcstring, env_var_t> snapshot_vars(const wcstring_list_t &vars) {
+static std::map<wcstring, env_var_t> snapshot_vars(const wcstring_list_t &vars,
+                                                   const environment_t &src) {
     std::map<wcstring, env_var_t> result;
     for (const wcstring &name : vars) {
-        auto var = env_get(name);
+        auto var = src.get(name);
         if (var) result[name] = std::move(*var);
     }
     return result;
 }
 
-function_info_t::function_info_t(function_data_t data, const wchar_t *filename, bool autoload)
+function_info_t::function_info_t(function_data_t data, const environment_t &vars,
+                                 const wchar_t *filename, bool autoload)
     : props(std::make_shared<const function_properties_t>(std::move(data.props))),
       description(std::move(data.description)),
       definition_file(intern(filename)),
-      inherit_vars(snapshot_vars(data.inherit_vars)),
+      inherit_vars(snapshot_vars(data.inherit_vars, vars)),
       is_autoload(autoload) {}
 
 function_info_t::function_info_t(const function_info_t &data, const wchar_t *filename,
@@ -167,8 +173,8 @@ void function_add(const function_data_t &data, const parser_t &parser) {
     // Create and store a new function.
     const wchar_t *filename = reader_current_filename();
 
-    const function_map_t::value_type new_pair(data.name,
-                                              function_info_t(data, filename, is_autoload));
+    const function_map_t::value_type new_pair(
+        data.name, function_info_t(data, parser.vars(), filename, is_autoload));
     loaded_functions.insert(new_pair);
 
     // Add event handlers.
