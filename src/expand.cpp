@@ -1163,7 +1163,7 @@ bool fish_xdm_login_hack_hack_hack_hack(std::vector<std::string> *cmds, int argc
     return result;
 }
 
-maybe_t<wcstring> expand_abbreviation(const wcstring &src) {
+maybe_t<wcstring> expand_abbreviation(const wcstring &src, const environment_t &vars) {
     if (src.empty()) return none();
 
     wcstring unesc_src;
@@ -1171,7 +1171,7 @@ maybe_t<wcstring> expand_abbreviation(const wcstring &src) {
         return none();
     }
     wcstring var_name = L"_fish_abbr_" + unesc_src;
-    auto var_value = env_get(var_name);
+    auto var_value = vars.get(var_name);
     if (var_value) {
         return var_value->as_string();
     }
