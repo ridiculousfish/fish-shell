@@ -2119,7 +2119,7 @@ static void test_is_potential_path() {
     const wcstring wd = L"test/is_potential_path_test/";
     const wcstring_list_t wds({L".", wd});
 
-    const auto &vars = env_stack_t::principal();
+    const auto &vars = env_stack_t::globals();
     do_test(is_potential_path(L"al", wds, vars, PATH_REQUIRE_DIR));
     do_test(is_potential_path(L"alpha/", wds, vars, PATH_REQUIRE_DIR));
     do_test(is_potential_path(L"aard", wds, vars, 0));

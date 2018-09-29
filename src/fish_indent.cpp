@@ -257,12 +257,13 @@ static std::string ansi_colorize(const wcstring &text,
 
     int (*saved)(char) = output_get_writer();
     output_set_writer(write_to_output_receiver);
+    const auto &vars = env_stack_t::globals();
 
     highlight_spec_t last_color = highlight_spec_normal;
     for (size_t i = 0; i < text.size(); i++) {
         highlight_spec_t color = colors.at(i);
         if (color != last_color) {
-            set_color(highlight_get_color(color, false), rgb_color_t::normal());
+            set_color(highlight_get_color(color, vars, false), rgb_color_t::normal());
             last_color = color;
         }
         writech(text.at(i));

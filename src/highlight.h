@@ -102,7 +102,8 @@ void highlight_universal(const wcstring &buffstr, std::vector<highlight_spec_t> 
 ///
 /// If the environment variable FISH_FISH_COLOR_ERROR is set to 'red', a call to
 /// highlight_get_color( highlight_error) will return FISH_COLOR_RED.
-rgb_color_t highlight_get_color(highlight_spec_t highlight, bool is_background);
+rgb_color_t highlight_get_color(highlight_spec_t highlight, const environment_t &vars,
+                                bool is_background);
 
 /// Given a command 'str' from the history, try to determine whether we ought to suggest it by
 /// specially recognizing the command. Returns true if we validated the command. If so, returns by

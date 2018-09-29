@@ -250,9 +250,8 @@ static bool plain_statement_get_expanded_command(const wcstring &src,
     return err == EXPAND_OK || err == EXPAND_WILDCARD_MATCH;
 }
 
-rgb_color_t highlight_get_color(highlight_spec_t highlight, bool is_background) {
-    // TODO: rationalize this principal_vars.
-    const auto &vars = env_stack_t::principal();
+rgb_color_t highlight_get_color(highlight_spec_t highlight, const environment_t &vars,
+                                bool is_background) {
     rgb_color_t result = rgb_color_t::normal();
 
     // If sloppy_background is set, then we look at the foreground color even if is_background is
