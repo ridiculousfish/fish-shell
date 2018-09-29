@@ -529,13 +529,14 @@ static void s_move(screen_t *s, data_buffer_t *b, int new_x, int new_y) {
 }
 
 /// Set the pen color for the terminal.
-static void s_set_color(screen_t *s, data_buffer_t *b, highlight_spec_t c) {
+static void s_set_color(screen_t *s, data_buffer_t *b, const environment_t &vars,
+                        highlight_spec_t c) {
     UNUSED(s);
     scoped_buffer_t scoped_buffer(b);
 
     unsigned int uc = (unsigned int)c;
-    set_color(highlight_get_color(uc & 0xffff, false),
-              highlight_get_color((uc >> 16) & 0xffff, true));
+    set_color(highlight_get_color(uc & 0xffff, vars, false),
+              highlight_get_color((uc >> 16) & 0xffff, vars, true));
 }
 
 /// Convert a wide character to a multibyte string and append it to the buffer.
@@ -608,7 +609,7 @@ static void invalidate_soft_wrap(screen_t *scr) { scr->soft_wrap_location = INVA
 
 /// Update the screen to match the desired output.
 static void s_update(screen_t *scr, const wcstring &left_prompt, const wcstring &right_prompt) {
-    // if (test_stuff(scr)) return;
+    const environment_t &vars = env_stack_t::principal();
     const size_t left_prompt_width =
         calc_prompt_layout(left_prompt, cached_layouts).last_line_width;
     const size_t right_prompt_width =
@@ -721,7 +722,7 @@ static void s_update(screen_t *scr, const wcstring &left_prompt, const wcstring 
 
             perform_any_impending_soft_wrap(scr, current_width, (int)i);
             s_move(scr, &output, current_width, (int)i);
-            s_set_color(scr, &output, o_line.color_at(j));
+            s_set_color(scr, &output, vars, o_line.color_at(j));
             s_write_char(scr, &output, o_line.char_at(j));
             current_width += fish_wcwidth_min_0(o_line.char_at(j));
         }
@@ -750,7 +751,7 @@ static void s_update(screen_t *scr, const wcstring &left_prompt, const wcstring 
             clear_remainder = prev_width > current_width;
         }
         if (clear_remainder) {
-            s_set_color(scr, &output, 0xffffffff);
+            s_set_color(scr, &output, vars, 0xffffffff);
             s_move(scr, &output, current_width, (int)i);
             s_write_mbs(&output, clr_eol);
         }
@@ -758,7 +759,7 @@ static void s_update(screen_t *scr, const wcstring &left_prompt, const wcstring 
         // Output any rprompt if this is the first line.
         if (i == 0 && right_prompt_width > 0) {  //!OCLINT(Use early exit/continue)
             s_move(scr, &output, (int)(screen_width - right_prompt_width), (int)i);
-            s_set_color(scr, &output, 0xffffffff);
+            s_set_color(scr, &output, vars, 0xffffffff);
             s_write_str(&output, right_prompt.c_str());
             scr->actual.cursor.x += right_prompt_width;
 
@@ -779,7 +780,7 @@ static void s_update(screen_t *scr, const wcstring &left_prompt, const wcstring 
 
     // Clear remaining lines (if any) if we haven't cleared the screen.
     if (!has_cleared_screen && scr->desired.line_count() < lines_with_stuff) {
-        s_set_color(scr, &output, 0xffffffff);
+        s_set_color(scr, &output, vars, 0xffffffff);
         for (size_t i = scr->desired.line_count(); i < lines_with_stuff; i++) {
             s_move(scr, &output, 0, (int)i);
             s_write_mbs(&output, clr_eol);
@@ -787,7 +788,7 @@ static void s_update(screen_t *scr, const wcstring &left_prompt, const wcstring 
     }
 
     s_move(scr, &output, scr->desired.cursor.x, scr->desired.cursor.y);
-    s_set_color(scr, &output, 0xffffffff);
+    s_set_color(scr, &output, vars, 0xffffffff);
 
     if (!output.empty()) {
         write_loop(STDOUT_FILENO, &output.at(0), output.size());
