@@ -76,9 +76,6 @@ extern char **environ;
 #define READ_BYTE_LIMIT 10 * 1024 * 1024
 size_t read_byte_limit = READ_BYTE_LIMIT;
 
-/// The character used to separate exported array environment variable. See #436.
-static constexpr wchar_t EXPORTED_ENV_ARRAY_SEP = L':';
-
 /// The character used to separate path variables by default.
 static constexpr wchar_t PATH_DEFAULT_ENV_ARRAY_SEP = L':';
 
@@ -1304,9 +1301,7 @@ int env_remove(const wcstring &key, int var_mode) {
 const wcstring_list_t &env_var_t::as_list() const { return vals; }
 
 /// Return a string representation of the var.
-wcstring env_var_t::as_string() const {
-    return join_strings(vals, EXPORTED_ENV_ARRAY_SEP);
-}
+wcstring env_var_t::as_string() const { return join_strings(vals, delimiter); }
 
 void env_var_t::to_list(wcstring_list_t &out) const {
     out = vals;

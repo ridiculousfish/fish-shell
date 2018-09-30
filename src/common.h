@@ -341,6 +341,9 @@ wcstring_list_t split_string(const wcstring &val, wchar_t sep);
 /// Join a list of strings by a separator character.
 wcstring join_strings(const wcstring_list_t &vals, wchar_t sep);
 
+/// Join a list of strings by a separator string.
+wcstring join_strings(const wcstring_list_t &vals, const wcstring &sep);
+
 enum fuzzy_match_type_t {
     // We match the string exactly: FOOBAR matches FOOBAR.
     fuzzy_match_exact = 0,

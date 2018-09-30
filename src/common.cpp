@@ -1873,11 +1873,26 @@ wcstring_list_t split_string(const wcstring &val, wchar_t sep) {
 }
 
 wcstring join_strings(const wcstring_list_t &vals, wchar_t sep) {
+    return join_strings(vals, wcstring{sep});
+}
+
+wcstring join_strings(const wcstring_list_t &vals, const wcstring &sep) {
+    if (vals.empty()) return wcstring{};
+
+    // Reserve the size we will need.
+    size_t size = 0;
+    for (const wcstring &s : vals) {
+        size += s.size();
+        size += sep.size();
+    }
+    size -= sep.size();
+
+    // Construct the string.
     wcstring result;
     bool first = true;
     for (const wcstring &s : vals) {
         if (!first) {
-            result.push_back(sep);
+            result.append(sep);
         }
         result.append(s);
         first = false;
