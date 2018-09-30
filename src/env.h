@@ -61,7 +61,14 @@ void misc_init();
 class env_var_t {
    private:
     using env_var_flags_t = uint8_t;
-    wcstring_list_t vals;  // list of values assigned to the var
+
+    /// List of values assigned to the var
+    wcstring_list_t vals;
+
+    /// String used for joining the values in string interpolation and exporting.
+    wcstring delimiter;
+
+    /// Flags associated with the variable.
     env_var_flags_t flags;
 
    public:
@@ -73,14 +80,17 @@ class env_var_t {
     // Constructors.
     env_var_t(const env_var_t &) = default;
     env_var_t(env_var_t &&) = default;
-    env_var_t(wcstring_list_t vals, env_var_flags_t flags) : vals(std::move(vals)), flags(flags) {}
-    env_var_t(wcstring val, env_var_flags_t flags)
-        : env_var_t(wcstring_list_t{std::move(val)}, flags) {}
+    env_var_t(wcstring_list_t vals, wcstring delimiter, env_var_flags_t flags)
+        : vals(std::move(vals)), delimiter(std::move(delimiter)), flags(flags) {}
+    env_var_t(wcstring val, wcstring delimiter, env_var_flags_t flags)
+        : env_var_t(wcstring_list_t{std::move(val)}, std::move(delimiter), flags) {}
 
     // Constructors that infer the flags from a name.
-    env_var_t(const wchar_t *name, wcstring_list_t vals)
-        : env_var_t(std::move(vals), flags_for(name)) {}
-    env_var_t(const wchar_t *name, wcstring val) : env_var_t(std::move(val), flags_for(name)) {}
+    env_var_t(const wchar_t *name, wcstring_list_t vals, wcstring delimiter)
+        : env_var_t(std::move(vals), std::move(delimiter), flags_for(name)) {}
+
+    env_var_t(const wchar_t *name, wcstring val, wcstring delimiter)
+        : env_var_t(std::move(val), std::move(delimiter), flags_for(name)) {}
 
     env_var_t() = default;
 
@@ -93,6 +103,10 @@ class env_var_t {
     const wcstring_list_t &as_list() const;
 
     void set_vals(wcstring_list_t v) { vals = std::move(v); }
+
+    void set_delimiter(wcstring d) { delimiter = std::move(d); }
+
+    const wcstring &get_delimiter() const { return delimiter; }
 
     void set_exports(bool exportv) {
         if (exportv) {
@@ -115,12 +129,16 @@ class env_var_t {
 maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode = ENV_DEFAULT);
 
 /// Sets the variable with the specified name to the given values.
-int env_set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals);
+/// If a delimiter is provided, set it; otherwise infer the delimiter.
+int env_set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals,
+            maybe_t<wcstring> delimiter = none());
 
 /// Sets the variable with the specified name to a single value.
-int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val);
+/// If a delimiter is provided, set it; otherwise infer the delimiter.
+int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val,
+                maybe_t<wcstring> delimiter = none());
 
-/// Sets the variable with the specified name to no values.
+/// Sets the variable with the specified name to no values. Infer the delimiter.
 int env_set_empty(const wcstring &key, env_mode_flags_t mode);
 
 /// Remove environment variable.

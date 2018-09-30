@@ -77,7 +77,13 @@ extern char **environ;
 size_t read_byte_limit = READ_BYTE_LIMIT;
 
 /// The character used to separate exported array environment variable. See #436.
-static const wchar_t EXPORTED_ENV_ARRAY_SEP = L':';
+static constexpr wchar_t EXPORTED_ENV_ARRAY_SEP = L':';
+
+/// The character used to separate path variables by default.
+static constexpr wchar_t PATH_DEFAULT_ENV_ARRAY_SEP = L':';
+
+/// The character used to separate non-path variables by default.
+static constexpr wchar_t NONPATH_DEFAULT_ENV_ARRAY_SEP = L' ';
 
 bool g_use_posix_spawn = false;  // will usually be set to true
 bool curses_initialized = false;
@@ -302,9 +308,7 @@ static bool is_read_only(const wchar_t *val) {
 static bool is_read_only(const wcstring &val) { return is_read_only(val.c_str()); }
 
 /// Return true if a variable should auto 'splitenv', i.e. should be treated as a colon-delimited array. See #436.
-static bool variable_should_auto_splitenv(const wcstring &name) {
-    return string_suffixes_string(L"PATH", name);
-}
+static bool is_path_variable(const wcstring &name) { return string_suffixes_string(L"PATH", name); }
 
 /// Table of variables whose value is dynamically calculated, such as umask, status, etc.
 static const string_set_t env_electric = {L"history", L"status", L"umask"};
@@ -403,6 +407,18 @@ static bool can_set_term_title = false;
 
 /// Returns true if we think the terminal supports setting its title.
 bool term_supports_setting_title() { return can_set_term_title; }
+
+/// return an inferred delimiter string for a variable name.
+/// This is the existing delimiter for that variable name if it exists, otherwise it is the default
+/// delimiter for that name.
+static wcstring infer_delimiter(const wcstring &key, env_mode_flags_t mode) {
+    if (auto existing = env_get(key, mode)) {
+        return existing->get_delimiter();
+    }
+    wchar_t sep =
+        is_path_variable(key) ? PATH_DEFAULT_ENV_ARRAY_SEP : NONPATH_DEFAULT_ENV_ARRAY_SEP;
+    return wcstring{sep};
+}
 
 /// This is a pretty lame heuristic for detecting terminals that do not support setting the
 /// title. If we recognise the terminal name as that of a virtual terminal, we assume it supports
@@ -875,7 +891,7 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
             val.assign(key_and_val, eql+1, wcstring::npos);
             if (is_read_only(key) || is_electric(key)) continue;
             wcstring_list_t values;
-            if (variable_should_auto_splitenv(key)) {
+            if (is_path_variable(key)) {
                 values = split_string(val, L':');
             } else {
                 values = {val};
@@ -1031,10 +1047,11 @@ static int set_umask(const wcstring_list_t &list_val) {
 /// Set the value of the environment variable whose name matches key to val.
 ///
 /// \param key The key
-/// \param val The value to set.
 /// \param var_mode The type of the variable. Can be any combination of ENV_GLOBAL, ENV_LOCAL,
 /// ENV_EXPORT and ENV_USER. If mode is ENV_DEFAULT, the current variable space is searched and the
 /// current mode is used. If no current variable with the same name is found, ENV_LOCAL is assumed.
+/// \param val The value to set.
+/// \param delimiter The delimiter to set.
 ///
 /// Returns:
 ///
@@ -1044,7 +1061,8 @@ static int set_umask(const wcstring_list_t &list_val) {
 /// * ENV_SCOPE, the variable cannot be set in the given scope. This applies to readonly/electric
 /// variables set from the local or universal scopes, or set as exported.
 /// * ENV_INVALID, the variable value was invalid. This applies only to special variables.
-static int env_set_internal(const wcstring &key, env_mode_flags_t var_mode, wcstring_list_t val) {
+static int env_set_internal(const wcstring &key, env_mode_flags_t var_mode, wcstring_list_t val,
+                            wcstring delimiter) {
     ASSERT_IS_MAIN_THREAD();
     bool has_changed_old = vars_stack().has_changed_exported;
     int done = 0;
@@ -1054,7 +1072,7 @@ static int env_set_internal(const wcstring &key, env_mode_flags_t var_mode, wcst
         wcstring val_canonical = val.front();
         path_make_canonical(val_canonical);
         if (val.front() != val_canonical) {
-            return env_set_internal(key, var_mode, {val_canonical});
+            return env_set_internal(key, var_mode, {val_canonical}, delimiter);
         }
     }
 
@@ -1155,6 +1173,7 @@ static int env_set_internal(const wcstring &key, env_mode_flags_t var_mode, wcst
             }
 
             var.set_vals(std::move(val));
+            var.set_delimiter(std::move(delimiter));
 
             if (var_mode & ENV_EXPORT) {
                 // The new variable is exported.
@@ -1187,20 +1206,25 @@ static int env_set_internal(const wcstring &key, env_mode_flags_t var_mode, wcst
 }
 
 /// Sets the variable with the specified name to the given values.
-int env_set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
-    return env_set_internal(key, mode, std::move(vals));
+int env_set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals,
+            maybe_t<wcstring> delimiter) {
+    if (!delimiter) {
+        delimiter = infer_delimiter(key, mode);
+    }
+    return env_set_internal(key, mode, std::move(vals), delimiter.acquire());
 }
 
 /// Sets the variable with the specified name to a single value.
-int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val) {
+int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val,
+                maybe_t<wcstring> delimiter) {
     wcstring_list_t vals;
     vals.push_back(std::move(val));
-    return env_set_internal(key, mode, std::move(vals));
+    return env_set(key, mode, std::move(vals));
 }
 
 /// Sets the variable with the specified name without any (i.e., zero) values.
 int env_set_empty(const wcstring &key, env_mode_flags_t mode) {
-    return env_set_internal(key, mode, {});
+    return env_set(key, mode, wcstring_list_t{});
 }
 
 /// Attempt to remove/free the specified key/value pair from the specified map.
@@ -1211,7 +1235,7 @@ static bool try_remove(env_node_t *n, const wchar_t *key, int var_mode) {
         return false;
     }
 
-    var_table_t::iterator result = n->env.find(key);
+    var_table_t::const_iterator result = n->env.find(key);
     if (result != n->env.end()) {
         if (result->second.exports()) {
             vars_stack().mark_changed_exported();
@@ -1307,6 +1331,8 @@ maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode) {
     // that in env_set().
     if (is_electric(key)) {
         if (!search_global) return none();
+        // Electric variables are not path variables and cannot have their delimiter changed.
+        wcstring delimit{NONPATH_DEFAULT_ENV_ARRAY_SEP};
         if (key == L"history") {
             // Big hack. We only allow getting the history on the main thread. Note that history_t
             // may ask for an environment variable, so don't take the lock here (we don't need it).
@@ -1320,11 +1346,11 @@ maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode) {
             }
             wcstring_list_t result;
             if (history) history->get_history(result);
-            return env_var_t(L"history", result);
+            return env_var_t(L"history", result, delimit);
         } else if (key == L"status") {
-            return env_var_t(L"status", to_string(proc_get_last_status()));
+            return env_var_t(L"status", to_string(proc_get_last_status()), delimit);
         } else if (key == L"umask") {
-            return env_var_t(L"umask", format_string(L"0%0.3o", get_umask()));
+            return env_var_t(L"umask", format_string(L"0%0.3o", get_umask()), delimit);
         }
         // We should never get here unless the electric var list is out of sync with the above code.
         DIE("unerecognized electric var name");
@@ -1391,13 +1417,11 @@ void env_pop() { vars_stack().pop(); }
 /// Function used with to insert keys of one table into a set::set<wcstring>.
 static void add_key_to_string_set(const var_table_t &envs, std::set<wcstring> *str_set,
                                   bool show_exported, bool show_unexported) {
-    var_table_t::const_iterator iter;
-    for (iter = envs.begin(); iter != envs.end(); ++iter) {
-        const env_var_t &var = iter->second;
-
+    for (const auto &kv : envs) {
+        const env_var_t &var = kv.second;
         if ((var.exports() && show_exported) || (!var.exports() && show_unexported)) {
             // Insert this key.
-            str_set->insert(iter->first);
+            str_set->insert(kv.first);
         }
     }
 }

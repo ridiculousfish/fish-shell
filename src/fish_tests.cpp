@@ -2831,7 +2831,7 @@ static void test_universal() {
             if (j == 0) {
                 expected_val = none();
             } else {
-                expected_val = env_var_t(format_string(L"val_%d_%d", i, j), 0);
+                expected_val = env_var_t{format_string(L"val_%d_%d", i, j), L" ", 0};
             }
             const maybe_t<env_var_t> var = uvars.get(key);
             if (j == 0) assert(!expected_val);
