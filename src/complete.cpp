@@ -33,6 +33,7 @@
 #include "expand.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "function.h"
+#include "gil.h"
 #include "iothread.h"
 #include "parse_constants.h"
 #include "parse_util.h"
@@ -1639,7 +1640,7 @@ void complete_invalidate_path() { completion_autoloader.invalidate(); }
 
 /// Completion "wrapper" support. The map goes from wrapping-command to wrapped-command-list.
 using wrapper_map_t = std::unordered_map<wcstring, wcstring_list_t>;
-static owning_lock<wrapper_map_t> wrapper_map;
+static fish_global_t<wrapper_map_t> wrapper_map;
 
 /// Add a new target that wraps a command. Example: __fish_XYZ (function) wraps XYZ (target).
 bool complete_add_wrapper(const wcstring &command, const wcstring &new_target) {
