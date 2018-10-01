@@ -2121,6 +2121,11 @@ void assert_is_background_thread(const char *who) {
     }
 }
 
+void assert_is_exec_thread(const char *who) {
+    // Currently only the main thread can exec.
+    assert_is_main_thread(who);
+}
+
 void fish_mutex_t::assert_is_locked(const char *who, const char *caller) const {
     if (!is_locked_) {
         debug(0, "%s is not locked when it should be in '%s'", who, caller);
