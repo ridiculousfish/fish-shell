@@ -50,7 +50,7 @@ static int set_color_builtin_outputter(char c) {
     return 0;
 }
 
-static const wchar_t *short_options = L":b:hvoidrcu";
+static const wchar_t *const short_options = L":b:hvoidrcu";
 static const struct woption long_options[] = {{L"background", required_argument, NULL, 'b'},
                                               {L"help", no_argument, NULL, 'h'},
                                               {L"bold", no_argument, NULL, 'o'},
@@ -63,9 +63,9 @@ static const struct woption long_options[] = {{L"background", required_argument,
                                               {NULL, 0, NULL, 0}};
 
 #if __APPLE__
-char sitm_esc[] = "\x1B[3m";
-char ritm_esc[] = "\x1B[23m";
-char dim_esc[] = "\x1B[2m";
+static char sitm_esc[] = "\x1B[3m";
+static char ritm_esc[] = "\x1B[23m";
+static char dim_esc[] = "\x1B[2m";
 #endif
 
 /// set_color builtin.
