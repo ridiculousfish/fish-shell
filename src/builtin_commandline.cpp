@@ -9,6 +9,7 @@
 #include "builtin.h"
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
+#include "gil.h"
 #include "input.h"
 #include "io.h"
 #include "parse_util.h"
@@ -48,34 +49,32 @@ static const wchar_t *get_buffer() { return current_buffer; }
 /// Returns the position of the cursor.
 static size_t get_cursor_pos() { return current_cursor_pos; }
 
-static owning_lock<wcstring_list_t> &get_transient_stack() {
-    ASSERT_IS_MAIN_THREAD();
-    static owning_lock<wcstring_list_t> s_transient_stack;
-    return s_transient_stack;
-}
+/// The stack of transient command lines.
+static fish_exec_tld_t<wcstring_list_t> tld_transient_stack;
 
 static bool get_top_transient(wcstring *out_result) {
-    auto stack = get_transient_stack().acquire();
-    if (stack->empty()) {
+    ASSERT_IS_EXEC_THREAD();
+    const wcstring_list_t &stack = *tld_transient_stack;
+    if (stack.empty()) {
         return false;
     }
-    out_result->assign(stack->back());
+    out_result->assign(stack.back());
     return true;
 }
 
 builtin_commandline_scoped_transient_t::builtin_commandline_scoped_transient_t(
     const wcstring &cmd) {
-    ASSERT_IS_MAIN_THREAD();
-    auto stack = get_transient_stack().acquire();
-    stack->push_back(cmd);
-    this->token = stack->size();
+    ASSERT_IS_EXEC_THREAD();
+    wcstring_list_t &stack = *tld_transient_stack;
+    stack.push_back(cmd);
+    this->token = stack.size();
 }
 
 builtin_commandline_scoped_transient_t::~builtin_commandline_scoped_transient_t() {
-    ASSERT_IS_MAIN_THREAD();
-    auto stack = get_transient_stack().acquire();
-    assert(this->token == stack->size());
-    stack->pop_back();
+    ASSERT_IS_EXEC_THREAD();
+    wcstring_list_t &stack = *tld_transient_stack;
+    assert(this->token == stack.size());
+    stack.pop_back();
 }
 
 /// Replace/append/insert the selection with/at/after the specified string.

@@ -12,8 +12,19 @@
 #include "builtin_random.h"
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
+#include "gil.h"
 #include "io.h"
 #include "wutil.h"  // IWYU pragma: keep
+
+static std::minstd_rand create_random_engine() {
+    // seed engine with 2*32 bits of random data
+    // for the 64 bits of internal state of minstd_rand
+    std::minstd_rand engine;
+    std::random_device rd;
+    std::seed_seq seed{rd(), rd()};
+    engine.seed(seed);
+    return engine;
+}
 
 /// The random builtin generates random numbers.
 int builtin_random(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
@@ -30,16 +41,8 @@ int builtin_random(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         return STATUS_CMD_OK;
     }
 
-    static bool seeded = false;
-    static std::minstd_rand engine;
-    if (!seeded) {
-        // seed engine with 2*32 bits of random data
-        // for the 64 bits of internal state of minstd_rand
-        std::random_device rd;
-        std::seed_seq seed{rd(), rd()};
-        engine.seed(seed);
-        seeded = true;
-    }
+    static fish_global_t<std::minstd_rand> s_rand_engine{create_random_engine()};
+    auto engine = s_rand_engine.acquire();
 
     int arg_count = argc - optind;
     long long start, end;
@@ -79,7 +82,7 @@ int builtin_random(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         } else if (arg_count == 1) {
             long long seed = parse_ll(argv[optind]);
             if (parse_error) return STATUS_INVALID_ARGS;
-            engine.seed(static_cast<uint32_t>(seed));
+            engine->seed(static_cast<uint32_t>(seed));
             return STATUS_CMD_OK;
         } else if (arg_count == 2) {
             start = parse_ll(argv[optind]);
@@ -128,7 +131,7 @@ int builtin_random(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     }
 
     std::uniform_int_distribution<long long> dist(start, real_end);
-    long long random = dist(engine);
+    long long random = dist(*engine);
     long long result;
     if (start >= 0) {
         // 0 <= start <= random <= end
