@@ -125,4 +125,26 @@ rmdir $tmpdir
 logmsg Test delimiters
 set TEST_DELIMITER one two three
 set TEST_DELIMITER_PATH one two three
-echo "$TEST_DELIMITER" "$TEST_DELIMITER_PATH"
+echo TEST_DELIMITER: $TEST_DELIMITER "$TEST_DELIMITER"
+echo TEST_DELIMITER_PATH: $TEST_DELIMITER_PATH "$TEST_DELIMITER_PATH"
+echo "Delimiters: " (set --print-delimiter TEST_DELIMITER) (set --print-delimiter TEST_DELIMITER_PATH)
+set -g --delimit '!' delimited 1 2 3
+echo delimited 1: "$delimited"
+set -g delimited 4 5 6
+echo delimited 2: "$delimited"
+
+function delimit_test
+  echo "Entering delimit function"
+  # Local delimited value should inherit global delimiter
+  set -l delimited 7 8 9
+  echo "$delimited"
+  # Modifying local should not affect global
+  set --delimit @ delimited 11 12 13
+  echo "$delimited"
+  echo local: (set --print-delimiter delimited) global: (set --print-delimiter -g delimited)
+end
+delimit_test
+echo now global: (set --print-delimiter -g delimited)
+# Ensure sketchy delimiters are supported.
+set --delimit \n'*\\' delimited 14 15 16
+echo (set --print-delimiter delimited) "$delimited"

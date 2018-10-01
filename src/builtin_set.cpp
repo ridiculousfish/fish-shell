@@ -42,21 +42,40 @@ struct set_cmd_opts_t {
     bool shorten_ok = true;
     bool append = false;
     bool prepend = false;
+    bool print_delimiter = false;
     bool preserve_failure_exit_status = true;
+
+    // List of explicit delimiters. Empty means none; more than one is an error.
+    wcstring_list_t delimiters{};
+};
+
+enum {
+    // print-delimiter does not have a corresponding short option because it is expected to be used
+    // rarely. This is the value passed in the long option.
+    opt_print_delimiter = 1,
 };
 
 // Variables used for parsing the argument list. This command is atypical in using the "+"
 // (REQUIRE_ORDER) option for flag parsing. This is not typical of most fish commands. It means
 // we stop scanning for flags when the first non-flag argument is seen.
-static const wchar_t *const short_options = L"+:LSUaeghlnpqux";
+static const wchar_t *const short_options = L"+:LSUaeghlnpd:qux";
 static const struct woption long_options[] = {
-    {L"export", no_argument, NULL, 'x'},    {L"global", no_argument, NULL, 'g'},
-    {L"local", no_argument, NULL, 'l'},     {L"erase", no_argument, NULL, 'e'},
-    {L"names", no_argument, NULL, 'n'},     {L"unexport", no_argument, NULL, 'u'},
-    {L"universal", no_argument, NULL, 'U'}, {L"long", no_argument, NULL, 'L'},
-    {L"query", no_argument, NULL, 'q'},     {L"show", no_argument, NULL, 'S'},
-    {L"append", no_argument, NULL, 'a'},    {L"prepend", no_argument, NULL, 'p'},
-    {L"help", no_argument, NULL, 'h'},      {NULL, 0, NULL, 0}};
+    {L"export", no_argument, NULL, 'x'},
+    {L"global", no_argument, NULL, 'g'},
+    {L"local", no_argument, NULL, 'l'},
+    {L"erase", no_argument, NULL, 'e'},
+    {L"names", no_argument, NULL, 'n'},
+    {L"unexport", no_argument, NULL, 'u'},
+    {L"universal", no_argument, NULL, 'U'},
+    {L"long", no_argument, NULL, 'L'},
+    {L"query", no_argument, NULL, 'q'},
+    {L"show", no_argument, NULL, 'S'},
+    {L"append", no_argument, NULL, 'a'},
+    {L"prepend", no_argument, NULL, 'p'},
+    {L"delimit", required_argument, NULL, 'd'},
+    {L"print-delimiter", no_argument, NULL, opt_print_delimiter},
+    {L"help", no_argument, NULL, 'h'},
+    {NULL, 0, NULL, 0}};
 
 // Hint for invalid path operation with a colon.
 #define BUILTIN_SET_PATH_ERROR _(L"%ls: Warning: $%ls entry \"%ls\" is not valid (%s)\n")
@@ -64,6 +83,7 @@ static const struct woption long_options[] = {
 #define BUILTIN_SET_MISMATCHED_ARGS _(L"%ls: You provided %d indexes but %d values\n")
 #define BUILTIN_SET_ERASE_NO_VAR _(L"%ls: Erase needs a variable name\n")
 #define BUILTIN_SET_ARRAY_BOUNDS_ERR _(L"%ls: Array index out of bounds\n")
+#define BUILTIN_SET_MULTIPLE_DELIMITERS _(L"%ls: More than one delimiter set\n")
 #define BUILTIN_SET_UVAR_ERR \
     _(L"%ls: Universal variable '%ls' is shadowed by the global variable of the same name.\n")
 
@@ -135,6 +155,14 @@ static int parse_cmd_opts(set_cmd_opts_t &opts, int *optind,  //!OCLINT(high ncs
                 opts.preserve_failure_exit_status = false;
                 break;
             }
+            case 'd': {
+                opts.delimiters.push_back(w.woptarg);
+                break;
+            }
+            case opt_print_delimiter: {
+                opts.print_delimiter = true;
+                break;
+            }
             case ':': {
                 builtin_missing_argument(parser, streams, cmd, argv[w.woptind - 1]);
                 return STATUS_INVALID_ARGS;
@@ -156,6 +184,24 @@ static int parse_cmd_opts(set_cmd_opts_t &opts, int *optind,  //!OCLINT(high ncs
 
 static int validate_cmd_opts(const wchar_t *cmd, set_cmd_opts_t &opts,  //!OCLINT(npath complexity)
                              int argc, parser_t &parser, io_streams_t &streams) {
+    // Check delimiters.
+    if (opts.delimiters.size() > 0) {
+        // Can't have more than one delimiter.
+        if (opts.delimiters.size() > 1) {
+            streams.err.append_format(BUILTIN_SET_MULTIPLE_DELIMITERS, cmd);
+            builtin_print_help(parser, streams, cmd, streams.err);
+            return STATUS_INVALID_ARGS;
+        }
+
+        // Can't show, list, or erase with a delimiter.
+        // Require that we have a variable name without a delimiter.
+        if (opts.show || opts.list || opts.erase || argc == 0) {
+            streams.err.append_format(BUILTIN_ERR_COMBO, cmd);
+            builtin_print_help(parser, streams, cmd, streams.err);
+            return STATUS_INVALID_ARGS;
+        }
+    }
+
     // Can't query and erase or list.
     if (opts.query && (opts.erase || opts.list)) {
         streams.err.append_format(BUILTIN_ERR_COMBO, cmd);
@@ -191,9 +237,17 @@ static int validate_cmd_opts(const wchar_t *cmd, set_cmd_opts_t &opts,  //!OCLIN
         return STATUS_INVALID_ARGS;
     }
 
+    // print-delimiter cannot do much else.
+    if (opts.print_delimiter &&
+        (opts.show || opts.erase || opts.list || opts.query || opts.append || opts.prepend)) {
+        streams.err.append_format(BUILTIN_ERR_COMBO, cmd);
+        builtin_print_help(parser, streams, cmd, streams.err);
+        return STATUS_INVALID_ARGS;
+    }
+
     // The --show flag cannot be combined with any other flag.
-    if (opts.show &&
-        (opts.local || opts.global || opts.erase || opts.list || opts.exportv || opts.universal)) {
+    if (opts.show && (opts.local || opts.global || opts.erase || opts.list || opts.exportv ||
+                      opts.print_delimiter || opts.universal || opts.delimiters.size())) {
         streams.err.append_format(BUILTIN_ERR_COMBO, cmd);
         builtin_print_help(parser, streams, cmd, streams.err);
         return STATUS_INVALID_ARGS;
@@ -321,12 +375,13 @@ static void handle_env_return(int retval, const wchar_t *cmd, const wchar_t *key
 /// Call env_set. If this is a path variable, e.g. PATH, validate the elements. On error, print a
 /// description of the problem to stderr.
 static int env_set_reporting_errors(const wchar_t *cmd, const wchar_t *key, int scope,
-                                    wcstring_list_t &list, io_streams_t &streams) {
+                                    wcstring_list_t list, maybe_t<wcstring> delimiter,
+                                    io_streams_t &streams) {
     if (is_path_variable(key) && !validate_path_warning_on_colons(cmd, key, list, streams)) {
         return STATUS_CMD_ERROR;
     }
 
-    int retval = env_set(key, scope | ENV_USER, list);
+    int retval = env_set(key, scope | ENV_USER, std::move(list), delimiter);
     handle_env_return(retval, cmd, key, streams);
 
     return retval;
@@ -477,6 +532,33 @@ static int builtin_set_list(const wchar_t *cmd, set_cmd_opts_t &opts, int argc, 
     }
 
     return STATUS_CMD_OK;
+}
+
+// Print-delimiter mode. Print delimiters for each variable names.
+/// \return success if all variables exists, an error if at least one does not exist.
+static int builtin_set_print_delimiter(const wchar_t *cmd, set_cmd_opts_t &opts, int argc,
+                                       const wchar_t *const *argv, parser_t &parser,
+                                       io_streams_t &streams) {
+    int res = STATUS_CMD_OK;
+    int scope = compute_scope(opts);
+    wcstring arg;
+    for (int i = 0; i < argc; i++) {
+        arg = argv[i];
+        if (!valid_var_name(arg)) {
+            streams.err.append_format(_(L"$%ls: invalid var name\n"), arg.c_str());
+            res = STATUS_CMD_ERROR;
+            continue;
+        }
+        maybe_t<env_var_t> var = env_get(arg, scope);
+        if (!var) {
+            streams.err.append_format(_(L"$%ls: no such variable\n"), arg.c_str());
+            res = STATUS_CMD_ERROR;
+            continue;
+        }
+        streams.out.append(escape_string(var->get_delimiter(), ESCAPE_ALL));
+        streams.out.push_back(L'\n');
+    }
+    return res;
 }
 
 // Query mode. Return the number of variables that do not exist out of the specified variables.
@@ -639,7 +721,7 @@ static int builtin_set_erase(const wchar_t *cmd, set_cmd_opts_t &opts, int argc,
         wcstring_list_t result;
         dest_var->to_list(result);
         erase_values(result, indexes);
-        retval = env_set_reporting_errors(cmd, dest, scope, result, streams);
+        retval = env_set_reporting_errors(cmd, dest, scope, std::move(result), none(), streams);
     }
 
     if (retval != STATUS_CMD_OK) return retval;
@@ -718,6 +800,11 @@ static int builtin_set_set(const wchar_t *cmd, set_cmd_opts_t &opts, int argc, w
         return STATUS_INVALID_ARGS;
     }
 
+    assert(opts.delimiters.size() <= 1 &&
+           "validate_cmd_opts should have errored on multiple delimiters");
+    maybe_t<wcstring> delimiter;
+    if (!opts.delimiters.empty()) delimiter = opts.delimiters.front();
+
     int scope = compute_scope(opts);  // calculate the variable scope based on the provided options
     wchar_t *varname = argv[0];
     argv++;
@@ -748,7 +835,7 @@ static int builtin_set_set(const wchar_t *cmd, set_cmd_opts_t &opts, int argc, w
     }
     if (retval != STATUS_CMD_OK) return retval;
 
-    retval = env_set_reporting_errors(cmd, varname, scope, new_values, streams);
+    retval = env_set_reporting_errors(cmd, varname, scope, new_values, delimiter, streams);
     if (retval != STATUS_CMD_OK) return retval;
     return check_global_scope_exists(cmd, opts, varname, streams);
 }
@@ -773,8 +860,9 @@ int builtin_set(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
     retval = validate_cmd_opts(cmd, opts, argc, parser, streams);
     if (retval != STATUS_CMD_OK) return retval;
-
-    if (opts.query) {
+    if (opts.print_delimiter) {
+        retval = builtin_set_print_delimiter(cmd, opts, argc, argv, parser, streams);
+    } else if (opts.query) {
         retval = builtin_set_query(cmd, opts, argc, argv, parser, streams);
     } else if (opts.erase) {
         retval = builtin_set_erase(cmd, opts, argc, argv, parser, streams);

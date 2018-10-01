@@ -71,4 +71,16 @@
 
 ####################
 # Test delimiters
-one two three one:two:three
+TEST_DELIMITER: one two three one two three
+TEST_DELIMITER_PATH: one two three one:two:three
+Delimiters:  ' ' :
+delimited 1: 1!2!3
+delimited 2: 4!5!6
+Entering delimit function
+7 8 9
+11@12@13
+local: @ global: !
+now global: !
+\n\*\\ 14
+*\15
+*\16
