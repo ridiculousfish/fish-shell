@@ -39,6 +39,7 @@
 #include "common.h"
 #include "event.h"
 #include "fallback.h"  // IWYU pragma: keep
+#include "gil.h"
 #include "io.h"
 #include "output.h"
 #include "parse_tree.h"
@@ -53,8 +54,8 @@
 /// Size of buffer for reading buffered output.
 #define BUFFER_SIZE 4096
 
-/// Status of last process to exit.
-static int last_status = 0;
+/// Status of last process to exit. Naturally this is local to an exec thread.
+static fish_exec_tld_t<int> tld_last_status = 0;
 
 /// The signals that signify crashes to us.
 static const int crashsignals[] = {SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGSEGV, SIGSYS};
@@ -155,12 +156,9 @@ void proc_destroy() {
     }
 }
 
-void proc_set_last_status(int s) {
-    ASSERT_IS_MAIN_THREAD();
-    last_status = s;
-}
+void proc_set_last_status(int s) { *tld_last_status = s; }
 
-int proc_get_last_status() { return last_status; }
+int proc_get_last_status() { return *tld_last_status; }
 
 // Basic thread safe job IDs. The vector consumed_job_ids has a true value wherever the job ID
 // corresponding to that slot is in use. The job ID corresponding to slot 0 is 1.

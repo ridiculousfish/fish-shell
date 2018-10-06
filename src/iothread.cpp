@@ -10,6 +10,7 @@
 #include <atomic>
 
 #include <condition_variable>
+#include <mutex>
 #include <queue>
 
 #include "common.h"
@@ -81,10 +82,8 @@ static std::queue<main_thread_request_t *> s_main_thread_request_queue;
 static int s_read_pipe, s_write_pipe;
 
 static void iothread_init() {
-    static bool inited = false;
-    if (!inited) {
-        inited = true;
-
+    static std::once_flag inited;
+    std::call_once(inited, [] {
         // Initialize the completion pipes.
         int pipes[2] = {0, 0};
         assert_with_errno(pipe(pipes) != -1);
@@ -93,7 +92,7 @@ static void iothread_init() {
 
         set_cloexec(s_read_pipe);
         set_cloexec(s_write_pipe);
-    }
+    });
 }
 
 static bool dequeue_spawn_request(spawn_request_t *result) {

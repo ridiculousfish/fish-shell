@@ -29,7 +29,7 @@
 // programs. Possibly with a duplicate dir if PREFIX is empty, "/", "/usr" or "/usr/". If the PREFIX
 // duplicates /bin or /usr/bin that is harmless other than a trivial amount of time testing a path
 // we've already tested.
-const wcstring_list_t dflt_pathsv({L"/bin", L"/usr/bin", PREFIX L"/bin"});
+static const wcstring_list_t dflt_pathsv{L"/bin", L"/usr/bin", PREFIX L"/bin"};
 
 static bool path_get_path_core(const wcstring &cmd, wcstring *out_path,
                                const maybe_t<env_var_t> &bin_path_var) {
