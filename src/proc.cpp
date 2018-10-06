@@ -458,16 +458,17 @@ typedef enum { JOB_STOPPED, JOB_ENDED } job_status_t;
 static void format_job_info(const job_t *j, job_status_t status) {
     const wchar_t *msg = L"Job %d, '%ls' has ended";  // this is the most common status msg
     if (status == JOB_STOPPED) msg = L"Job %d, '%ls' has stopped";
-
-    fwprintf(stdout, L"\r");
-    fwprintf(stdout, _(msg), j->job_id, truncate_command(j->command()).c_str());
-    fflush(stdout);
+    outputter_t outp;
+    outp.writestr("\r");
+    outp.writestr(format_string(_(msg), j->job_id, truncate_command(j->command()).c_str()));
     if (cur_term) {
-        tputs(clr_eol, 1, &writeb);
+        outp.term_puts(clr_eol, 1);
     } else {
-        fwprintf(stdout, L"\x1B[K");
+        outp.writestr(L"\x1B[K");
     }
-    fwprintf(stdout, L"\n");
+    outp.writestr(L"\n");
+    fflush(stdout);
+    outp.flush_to(STDOUT_FILENO);
 }
 
 void proc_fire_event(const wchar_t *msg, int type, pid_t pid, int status) {
@@ -570,7 +571,7 @@ static int process_clean_after_marking(bool allow_interactive) {
                 }
 
                 if (cur_term != NULL) {
-                    tputs(clr_eol, 1, &writeb);
+                    outputter_t::stdoutput().term_puts(clr_eol, 1);
                 } else {
                     fwprintf(stdout, L"\x1B[K");  // no term set up - do clr_eol manually
                 }

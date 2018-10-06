@@ -42,14 +42,6 @@ static void print_colors(io_streams_t &streams) {
     }
 }
 
-static std::string builtin_set_color_output;
-/// Function we set as the output writer.
-static int set_color_builtin_outputter(char c) {
-    ASSERT_IS_MAIN_THREAD();
-    builtin_set_color_output.push_back(c);
-    return 0;
-}
-
 static const wchar_t *const short_options = L":b:hvoidrcu";
 static const struct woption long_options[] = {{L"background", required_argument, NULL, 'b'},
                                               {L"help", no_argument, NULL, 'h'},
@@ -185,65 +177,55 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     if (cur_term == NULL || !exit_attribute_mode) {
         return STATUS_CMD_ERROR;
     }
-
-    // Save old output function so we can restore it.
-    int (*const saved_writer_func)(char) = output_get_writer();
-
-    // Set our output function, which writes to a std::string.
-    builtin_set_color_output.clear();
-    output_set_writer(set_color_builtin_outputter);
+    outputter_t outp;
 
     if (bold && enter_bold_mode) {
-        writembs_nofail(tparm(enter_bold_mode));
+        writembs_nofail(outp, tparm(enter_bold_mode));
     }
 
     if (underline && enter_underline_mode) {
-        writembs_nofail(enter_underline_mode);
+        writembs_nofail(outp, enter_underline_mode);
     }
 
     if (italics && enter_italics_mode) {
-        writembs_nofail(enter_italics_mode);
+        writembs_nofail(outp, enter_italics_mode);
     }
 
     if (dim && enter_dim_mode) {
-        writembs_nofail(enter_dim_mode);
+        writembs_nofail(outp, enter_dim_mode);
     }
 
     if (reverse && enter_reverse_mode) {
-        writembs_nofail(enter_reverse_mode);
+        writembs_nofail(outp, enter_reverse_mode);
     } else if (reverse && enter_standout_mode) {
-        writembs_nofail(enter_standout_mode);
+        writembs_nofail(outp, enter_standout_mode);
     }
 
     if (bgcolor != NULL && bg.is_normal()) {
-        write_color(rgb_color_t::black(), false /* not is_fg */);
-        writembs_nofail(tparm(exit_attribute_mode));
+        outp.write_color(rgb_color_t::black(), false /* not is_fg */);
+        writembs_nofail(outp, tparm(exit_attribute_mode));
     }
 
     if (!fg.is_none()) {
         if (fg.is_normal() || fg.is_reset()) {
-            write_color(rgb_color_t::black(), true /* is_fg */);
-            writembs_nofail(tparm(exit_attribute_mode));
+            outp.write_color(rgb_color_t::black(), true /* is_fg */);
+            writembs_nofail(outp, tparm(exit_attribute_mode));
         } else {
-            if (!write_color(fg, true /* is_fg */)) {
+            if (!outp.write_color(fg, true /* is_fg */)) {
                 // We need to do *something* or the lack of any output messes up
                 // when the cartesian product here would make "foo" disappear:
                 //  $ echo (set_color foo)bar
-                set_color(rgb_color_t::reset(), rgb_color_t::none());
+                outp.set_color(rgb_color_t::reset(), rgb_color_t::none());
             }
         }
     }
 
     if (bgcolor != NULL && !bg.is_normal() && !bg.is_reset()) {
-        write_color(bg, false /* not is_fg */);
+        outp.write_color(bg, false /* not is_fg */);
     }
 
-    // Restore saved writer function.
-    output_set_writer(saved_writer_func);
-
     // Output the collected string.
-    streams.out.append(str2wcstring(builtin_set_color_output));
-    builtin_set_color_output.clear();
+    streams.out.append(str2wcstring(outp.contents()));
 
     return STATUS_CMD_OK;
 }
