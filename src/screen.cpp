@@ -52,28 +52,18 @@
 
 static void invalidate_soft_wrap(screen_t *scr);
 
-/// Ugly kludge. The internal buffer used to store output of tputs. Since tputs external function
-/// can only take an integer and not a pointer as parameter we need a static storage buffer.
 typedef std::vector<char> data_buffer_t;
-static data_buffer_t *s_writeb_buffer = 0;
 
-static int s_writeb(char character);
-
-/// Class to temporarily set s_writeb_buffer and the writer function in a scoped way.
-class scoped_buffer_t {
-    data_buffer_t *const old_buff;
-    int (*const old_writer)(char);
+/// Subclass of outputter_t that accumulates output and then appends it to a given buffer.
+class scoped_buffer_t : public outputter_t {
+    data_buffer_t * const buff_;
 
    public:
-    explicit scoped_buffer_t(data_buffer_t *buff)
-        : old_buff(s_writeb_buffer), old_writer(output_get_writer()) {
-        s_writeb_buffer = buff;
-        output_set_writer(s_writeb);
-    }
+    explicit scoped_buffer_t(data_buffer_t *buff) : buff_(buff) {}
 
     ~scoped_buffer_t() {
-        s_writeb_buffer = old_buff;
-        output_set_writer(old_writer);
+        auto &contents = this->contents();
+        buff_->insert(buff_->end(), contents.begin(), contents.end());
     }
 };
 
@@ -439,12 +429,6 @@ static void s_desired_append_char(screen_t *s, wchar_t b, int c, int indent, siz
     }
 }
 
-/// The writeb function offered to tputs.
-static int s_writeb(char c) {
-    s_writeb_buffer->push_back(c);
-    return 0;
-}
-
 /// Write the bytes needed to move screen cursor to the specified position to the specified buffer.
 /// The actual_cursor field of the specified screen_t will be updated.
 ///
@@ -474,7 +458,7 @@ static void s_move(screen_t *s, data_buffer_t *b, int new_x, int new_y) {
     int x_steps, y_steps;
 
     char *str;
-    scoped_buffer_t scoped_buffer(b);
+    scoped_buffer_t outp(b);
 
     y_steps = new_y - s->actual.cursor.y;
 
@@ -492,7 +476,7 @@ static void s_move(screen_t *s, data_buffer_t *b, int new_x, int new_y) {
     }
 
     for (i = 0; i < abs(y_steps); i++) {
-        writembs(str);
+        writembs(outp, str);
     }
 
     x_steps = new_x - s->actual.cursor.x;
@@ -517,10 +501,10 @@ static void s_move(screen_t *s, data_buffer_t *b, int new_x, int new_y) {
         multi_str != NULL && multi_str[0] != '\0' && abs(x_steps) * strlen(str) > strlen(multi_str);
     if (use_multi && cur_term) {
         char *multi_param = tparm(multi_str, abs(x_steps));
-        writembs(multi_param);
+        writembs(outp, multi_param);
     } else {
         for (i = 0; i < abs(x_steps); i++) {
-            writembs(str);
+            writembs(outp, str);
         }
     }
 
@@ -532,18 +516,18 @@ static void s_move(screen_t *s, data_buffer_t *b, int new_x, int new_y) {
 static void s_set_color(screen_t *s, data_buffer_t *b, const environment_t &vars,
                         highlight_spec_t c) {
     UNUSED(s);
-    scoped_buffer_t scoped_buffer(b);
+    scoped_buffer_t outp(b);
 
     unsigned int uc = (unsigned int)c;
-    set_color(highlight_get_color(uc & 0xffff, vars, false),
+    outp.set_color(highlight_get_color(uc & 0xffff, vars, false),
               highlight_get_color((uc >> 16) & 0xffff, vars, true));
 }
 
 /// Convert a wide character to a multibyte string and append it to the buffer.
 static void s_write_char(screen_t *s, data_buffer_t *b, wchar_t c) {
-    scoped_buffer_t scoped_buffer(b);
+    scoped_buffer_t outp(b);
     s->actual.cursor.x += fish_wcwidth_min_0(c);
-    writech(c);
+    outp.writech(c);
     if (s->actual.cursor.x == s->actual_width && allow_soft_wrap()) {
         s->soft_wrap_location.x = 0;
         s->soft_wrap_location.y = s->actual.cursor.y + 1;
@@ -558,14 +542,14 @@ static void s_write_char(screen_t *s, data_buffer_t *b, wchar_t c) {
 
 /// Send the specified string through tputs and append the output to the specified buffer.
 static void s_write_mbs(data_buffer_t *b, char *s) {
-    scoped_buffer_t scoped_buffer(b);
-    writembs(s);
+    scoped_buffer_t outp(b);
+    writembs(outp, s);
 }
 
 /// Convert a wide string to a multibyte string and append it to the buffer.
 static void s_write_str(data_buffer_t *b, const wchar_t *s) {
-    scoped_buffer_t scoped_buffer(b);
-    writestr(s);
+    scoped_buffer_t outp(b);
+    outp.writestr(s);
 }
 
 /// Returns the length of the "shared prefix" of the two lines, which is the run of matching text
