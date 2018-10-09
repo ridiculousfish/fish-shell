@@ -604,8 +604,8 @@ typedef std::lock_guard<std::recursive_mutex> scoped_rlock;
 //
 template <typename DATA>
 class acquired_lock {
-    std::unique_lock<fish_mutex_t> lock;
-    acquired_lock(fish_mutex_t &lk, DATA *v) : lock(lk), value(v) {}
+    std::unique_lock<std::mutex> lock;
+    acquired_lock(std::mutex &lk, DATA *v) : lock(lk), value(v) {}
 
     template <typename T>
     friend class owning_lock;
@@ -623,6 +623,9 @@ class acquired_lock {
     const DATA *operator->() const { return value; }
     DATA &operator*() { return *value; }
     const DATA &operator*() const { return *value; }
+
+    // Access the underlying unique lock. This is used to support condition variables.
+    std::unique_lock<std::mutex> &get_ulock() { return lock; }
 };
 
 // A lock that owns a piece of data
@@ -642,7 +645,7 @@ class owning_lock {
     owning_lock(DATA &&d) : data(std::move(d)) {}
     owning_lock() : data() {}
 
-    acquired_lock<DATA> acquire() { return {lock, &data}; }
+    acquired_lock<DATA> acquire() { return {lock.get_mutex(), &data}; }
 };
 
 /// A scoped manager to save the current value of some variable, and optionally set it to a new

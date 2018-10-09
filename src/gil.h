@@ -14,21 +14,55 @@ class scheduler_observer_t {
     virtual ~scheduler_observer_t();
     virtual void did_spawn(thread_id_t tid);
     virtual void will_destroy(thread_id_t tid);
-    virtual void will_schedule(thread_id_t oldtid, thread_id_t newtid);
+    virtual void did_schedule(thread_id_t tid);
+    virtual void will_unschedule(thread_id_t tid);
 };
+
+class gil_thread_t;
+using gil_thread_ref_t = std::shared_ptr<gil_thread_t>;
 
 class gil_t {
     struct impl_t;
-    std::unique_ptr<impl_t> impl_;
+    owning_lock<std::unique_ptr<impl_t>> impl_;
     gil_t();
-    ~gil_t();
     gil_t(gil_t &&) = default;
 
-    static gil_t create_principal_gil();
+    static std::unique_ptr<gil_t> create_principal_gil();
+
+    /// Schedule the next thread if nothing is scheduled. This must be invoked while the owning lock
+    /// for impl is held.
+    void schedule_if_needed(impl_t &impl);
 
    public:
+    /// Acquire the run lock. Upon return, the thread will be scheduled.
+    void run(gil_thread_ref_t thread);
+
+    /// Release the given thread, which must own the lock. The thread must call run() again to be
+    /// rescheduled.
+    void release(gil_thread_ref_t thread);
+
+    /// Yield the given thread, which must own the lock. Upon return, the thread reacquires the
+    /// lock.
+    void yield(gil_thread_ref_t thread);
+
     static gil_t &gil();
     void add_observer(std::unique_ptr<scheduler_observer_t> var);
+
+    /// \returns true if the given thread is scheduled. This is racey unless called from that
+    /// thread.
+    bool is_scheduled(gil_thread_ref_t thread);
+
+    ~gil_t();
+};
+
+class gil_thread_t {
+    friend gil_t;
+    const thread_id_t tid;
+    std::condition_variable monitor;
+
+   public:
+    explicit gil_thread_t();
+    virtual ~gil_thread_t();
 };
 
 /// variable_t stores a reference to a "thread local" variable, where thread local refers
@@ -57,13 +91,16 @@ class variable_t : public scheduler_observer_t {
         (void)erased;
     }
 
-    void will_schedule(thread_id_t oldtid, thread_id_t newtid) override {
-        auto olditer = tid_to_vals_.find(oldtid);
-        auto newiter = tid_to_vals_.find(newtid);
-        assert(olditer != tid_to_vals_.end() && "can't find olditer in variable_t::will_schedule");
-        assert(olditer != tid_to_vals_.end() && "can't find newiter in variable_t::will_schedule");
-        olditer->second = std::move(*published_);
-        *published_ = std::move(newiter->second);
+    void will_unschedule(thread_id_t tid) override {
+        auto iter = tid_to_vals_.find(tid);
+        assert(iter != tid_to_vals_.end() && "can't find olditer in variable_t::will_unschedule");
+        std::swap(iter->second, *published_);
+    }
+
+    void did_schedule(thread_id_t tid) override {
+        auto iter = tid_to_vals_.find(tid);
+        assert(iter != tid_to_vals_.end() && "can't find olditer in variable_t::will_schedule");
+        std::swap(iter->second, *published_);
     }
 };
 }  // namespace gil_details
