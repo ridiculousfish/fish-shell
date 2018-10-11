@@ -205,6 +205,7 @@ class env_stack_t final : public environment_t {
     /// Returns an array containing all exported variables in a format suitable for execv
     const char *const *export_arr();
 
+
     /// Returns all variable names.
     wcstring_list_t get_names(int flags) const override;
 

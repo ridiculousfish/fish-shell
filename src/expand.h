@@ -108,12 +108,13 @@ enum expand_error_t {
 /// \param output The list to which the result will be appended.
 /// \param flags Specifies if any expansion pass should be skipped. Legal values are any combination
 /// of EXPAND_SKIP_CMDSUBST EXPAND_SKIP_VARIABLES and EXPAND_SKIP_WILDCARDS
+/// \param vars variables used during expansion.
 /// \param errors Resulting errors, or NULL to ignore
 ///
 /// \return One of EXPAND_OK, EXPAND_ERROR, EXPAND_WILDCARD_MATCH and EXPAND_WILDCARD_NO_MATCH.
 /// EXPAND_WILDCARD_NO_MATCH and EXPAND_WILDCARD_MATCH are normal exit conditions used only on
 /// strings containing wildcards to tell if the wildcard produced any matches.
-__warn_unused expand_error_t expand_string(const wcstring &input, std::vector<completion_t> *output,
+__warn_unused expand_error_t expand_string(wcstring input, std::vector<completion_t> *output,
                                            expand_flags_t flags, const environment_t &vars,
                                            parse_error_list_t *errors);
 
