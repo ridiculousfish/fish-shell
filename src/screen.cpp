@@ -592,8 +592,8 @@ static bool perform_any_impending_soft_wrap(screen_t *scr, int x, int y) {
 static void invalidate_soft_wrap(screen_t *scr) { scr->soft_wrap_location = INVALID_LOCATION; }
 
 /// Update the screen to match the desired output.
-static void s_update(screen_t *scr, const wcstring &left_prompt, const wcstring &right_prompt) {
-    const environment_t &vars = env_stack_t::principal();
+static void s_update(screen_t *scr, const environment_t &vars, const wcstring &left_prompt,
+                     const wcstring &right_prompt) {
     const size_t left_prompt_width =
         calc_prompt_layout(left_prompt, cached_layouts).last_line_width;
     const size_t right_prompt_width =
@@ -969,10 +969,10 @@ static screen_layout_t compute_layout(screen_t *s, size_t screen_width,
     return result;
 }
 
-void s_write(screen_t *s, const wcstring &left_prompt, const wcstring &right_prompt,
-             const wcstring &commandline, size_t explicit_len, const highlight_spec_t *colors,
-             const int *indent, size_t cursor_pos, const page_rendering_t &pager,
-             bool cursor_is_within_pager) {
+void s_write(screen_t *s, const environment_t &vars, const wcstring &left_prompt,
+             const wcstring &right_prompt, const wcstring &commandline, size_t explicit_len,
+             const highlight_spec_t *colors, const int *indent, size_t cursor_pos,
+             const page_rendering_t &pager, bool cursor_is_within_pager) {
     screen_data_t::cursor_t cursor_arr;
     CHECK(s, );
     CHECK(indent, );
@@ -1057,7 +1057,7 @@ void s_write(screen_t *s, const wcstring &left_prompt, const wcstring &right_pro
     // Append pager_data (none if empty).
     s->desired.append_lines(pager.screen_data);
 
-    s_update(s, layout.left_prompt, layout.right_prompt);
+    s_update(s, vars, layout.left_prompt, layout.right_prompt);
     s_save_status(s);
 }
 void s_reset(screen_t *s, screen_reset_mode_t mode) {
