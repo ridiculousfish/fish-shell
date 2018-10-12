@@ -104,7 +104,7 @@ static void autoload_names(std::unordered_set<wcstring> &names, int get_hidden) 
     size_t i;
 
     // TODO: justfy this.
-    auto &vars = env_stack_t::principal();
+    auto &vars = env_stack_t::globals();
     const auto path_var = vars.get(L"fish_function_path");
     if (path_var.missing_or_empty()) return;
 
