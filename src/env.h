@@ -156,14 +156,13 @@ class env_stack_t final : public environment_t {
     bool try_remove(std::shared_ptr<env_node_t> n, const wchar_t *key, int var_mode);
     std::shared_ptr<env_node_t> get_node(const wcstring &key);
 
-    static env_stack_t make_principal();
+    static std::shared_ptr<env_stack_t> make_principal();
 
     var_stack_t &vars_stack();
     const var_stack_t &vars_stack() const;
 
     explicit env_stack_t(std::unique_ptr<var_stack_t> vars_);
     env_stack_t();
-    ~env_stack_t() override;
 
     env_stack_t(env_stack_t &&);
 
@@ -205,7 +204,6 @@ class env_stack_t final : public environment_t {
     /// Returns an array containing all exported variables in a format suitable for execv
     const char *const *export_arr();
 
-
     /// Returns all variable names.
     wcstring_list_t get_names(int flags) const override;
 
@@ -225,11 +223,13 @@ class env_stack_t final : public environment_t {
     void mark_changed_exported();
 
     // Compatibility hack; access the "environment stack" from back when there was just one.
-    static env_stack_t &principal();
+    static std::shared_ptr<env_stack_t> principal();
 
     // Access a variable stack that only represents globals.
     // Do not push or pop from this.
     static env_stack_t &globals();
+
+    ~env_stack_t() override;
 };
 
 class env_vars_snapshot_t : public environment_t {
