@@ -151,7 +151,7 @@ static wcstring comma_join(const wcstring_list_t &lst) {
     return result;
 }
 
-static std::vector<const char *> pushed_dirs;
+static std::vector<std::string> pushed_dirs;
 
 /// Helper to chdir and then update $PWD.
 static bool pushd(const char *path) {
@@ -160,7 +160,7 @@ static bool pushd(const char *path) {
         err(L"getcwd() from pushd() failed: errno = %d", errno);
         return false;
     }
-    pushed_dirs.push_back(strdup(cwd));
+    pushed_dirs.push_back(cwd);
 
     // We might need to create the directory. We don't care if this fails due to the directory
     // already being present.
@@ -177,11 +177,10 @@ static bool pushd(const char *path) {
 }
 
 static void popd() {
-    const char *old_cwd = pushed_dirs.back();
-    if (chdir(old_cwd) == -1) {
-        err(L"chdir(\"%s\") from popd() failed: errno = %d", old_cwd, errno);
+    const std::string &old_cwd = pushed_dirs.back();
+    if (chdir(old_cwd.c_str()) == -1) {
+        err(L"chdir(\"%s\") from popd() failed: errno = %d", old_cwd.c_str(), errno);
     }
-    free((void *)old_cwd);
     pushed_dirs.pop_back();
     parser_t::principal_parser().vars().set_pwd_from_getcwd();
 }
@@ -4720,7 +4719,15 @@ void test_normalize_path() {
     do_test(normalize_path(L"") == L".");
     do_test(normalize_path(L"..") == L"..");
     do_test(normalize_path(L"./") == L".");
-    do_test(normalize_path(L"////abc") == L"//abc");
+    do_test(normalize_path(L"./.") == L".");
+    do_test(normalize_path(L"/") == L"/");
+    do_test(normalize_path(L"//") == L"//");
+    do_test(normalize_path(L"///") == L"/");
+    do_test(normalize_path(L"////") == L"/");
+    do_test(normalize_path(L"/.///") == L"/");
+    do_test(normalize_path(L".//") == L".");
+    do_test(normalize_path(L"/.//../") == L"/");
+    do_test(normalize_path(L"////abc") == L"/abc");
     do_test(normalize_path(L"/abc") == L"/abc");
     do_test(normalize_path(L"/abc/") == L"/abc");
     do_test(normalize_path(L"/abc/..def/") == L"/abc/..def");
@@ -4728,6 +4735,9 @@ void test_normalize_path() {
     do_test(normalize_path(L"abc/../abc/../abc/../abc") == L"abc");
     do_test(normalize_path(L"../../") == L"../..");
     do_test(normalize_path(L"foo/./bar") == L"foo/bar");
+    do_test(normalize_path(L"foo/../") == L".");
+    do_test(normalize_path(L"foo/../foo") == L"foo");
+    do_test(normalize_path(L"foo/../foo/") == L"foo");
     do_test(normalize_path(L"foo/././bar/.././baz") == L"foo/baz");
 }
 
@@ -4823,7 +4833,10 @@ int main(int argc, char **argv) {
     if (should_test_function("autosuggest_suggest_special")) test_autosuggest_suggest_special();
     if (should_test_function("history")) history_tests_t::test_history();
     if (should_test_function("history_merge")) history_tests_t::test_history_merge();
-    if (should_test_function("history_races")) history_tests_t::test_history_races();
+    if (!is_windows_subsystem_for_linux()) {
+        // this test always fails under WSL
+        if (should_test_function("history_races")) history_tests_t::test_history_races();
+    }
     if (should_test_function("history_formats")) history_tests_t::test_history_formats();
     if (should_test_function("string")) test_string();
     if (should_test_function("illegal_command_exit_code")) test_illegal_command_exit_code();
