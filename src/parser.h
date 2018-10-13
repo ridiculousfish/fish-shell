@@ -174,7 +174,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// The 'depth' of the fish call stack.
     int eval_level = -1;
     /// Set of variables for the parser
-    env_stack_t &variables;
+    std::shared_ptr<env_stack_t> variables;
 #if 0
 // TODO: Lint says this isn't used (which is true). Should this be removed?
     /// Gets a description of the block stack, for debugging.
@@ -276,8 +276,8 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     job_list_t &job_list() { return my_job_list; }
 
     /// Get the variables.
-    env_stack_t &vars() { return variables; }
-    const env_stack_t &vars() const { return variables; }
+    env_stack_t &vars() { return *variables; }
+    const env_stack_t &vars() const { return *variables; }
 
     /// Pushes a new block created with the given arguments
     /// Returns a pointer to the block. The pointer is valid

@@ -259,9 +259,9 @@ void var_stack_t::pop() {
     }
 
     // TODO: instantize this locale and curses
-    const auto &vars = env_stack_t::principal();
-    if (locale_changed) init_locale(vars);
-    if (curses_changed) init_curses(vars);
+    auto vars = env_stack_t::principal();
+    if (locale_changed) init_locale(*vars);
+    if (curses_changed) init_curses(*vars);
 }
 
 env_node_ref_t var_stack_t::next_scope_to_search(const env_node_ref_t &node) const {
@@ -1035,7 +1035,7 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
     s_universal_variables = new env_universal_t(L"");
     callback_data_list_t callbacks;
     s_universal_variables->initialize(callbacks);
-    env_universal_callbacks(&env_stack_t::principal(), callbacks);
+    env_universal_callbacks(env_stack_t::principal().get(), callbacks);
 }
 
 /// Search all visible scopes in order for the specified key. Return the first scope in which it was
@@ -1403,7 +1403,7 @@ maybe_t<env_var_t> env_stack_t::get(const wcstring &key, env_mode_flags_t mode) 
     return none();
 }
 
-void env_universal_barrier() { env_stack_t::principal().universal_barrier(); }
+void env_universal_barrier() { env_stack_t::principal()->universal_barrier(); }
 
 /// Returns true if the specified scope or any non-shadowed non-global subscopes contain an exported
 /// variable.
@@ -1589,14 +1589,15 @@ maybe_t<env_var_t> null_environment_t::get(const wcstring &key, env_mode_flags_t
 }
 wcstring_list_t null_environment_t::get_names(int flags) const { return {}; }
 
-env_stack_t env_stack_t::make_principal() {
+std::shared_ptr<env_stack_t> env_stack_t::make_principal() {
     const env_stack_t &gl = env_stack_t::globals();
     std::unique_ptr<var_stack_t> dup_stack = make_unique<var_stack_t>(gl.vars_stack().clone());
-    return env_stack_t{std::move(dup_stack)};
+    env_stack_t *stack = new env_stack_t{std::move(dup_stack)};
+    return std::shared_ptr<env_stack_t>(stack);
 }
 
-env_stack_t &env_stack_t::principal() {
-    static env_stack_t s_principal = make_principal();
+std::shared_ptr<env_stack_t> env_stack_t::principal() {
+    static std::shared_ptr<env_stack_t> s_principal = make_principal();
     return s_principal;
 }
 
