@@ -9,6 +9,7 @@
 
 #include <stddef.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -155,6 +156,9 @@ wcstring replace_home_directory_with_tilde(const wcstring &str, const environmen
 /// Abbreviation support. Expand src as an abbreviation, returning the expanded form if found,
 /// none() if not.
 maybe_t<wcstring> expand_abbreviation(const wcstring &src, const environment_t &vars);
+
+/// \return a snapshot of all abbreviations as a map abbreviation->expansion.
+std::map<wcstring, wcstring> get_abbreviations(const environment_t &vars);
 
 // Terrible hacks
 bool fish_xdm_login_hack_hack_hack_hack(std::vector<std::string> *cmds, int argc,

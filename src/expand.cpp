@@ -27,9 +27,9 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <memory>  // IWYU pragma: keep
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -261,6 +261,7 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
         }
 
         // debug( 0, L"Push idx %d", tmp );
+        literal_zero_index = literal_zero_index && tmp == 0;
         idx.push_back(i1);
         source_positions.push_back(i1_src_pos);
     }
@@ -1201,4 +1202,17 @@ maybe_t<wcstring> expand_abbreviation(const wcstring &src, const environment_t &
         return var_value->as_string();
     }
     return none();
+}
+
+std::map<wcstring, wcstring> get_abbreviations(const environment_t &vars) {
+    // TODO: try to make this cheaper
+    const size_t fish_abbr_len = wcslen(L"_fish_abbr_");
+    auto names = vars.get_names(0);
+    std::map<wcstring, wcstring> result;
+    for (const wcstring &name : names) {
+        if (string_prefixes_string(L"_fish_abbr_", name)) {
+            result[name.substr(fish_abbr_len)] = vars.get(name)->as_string();
+        }
+    }
+    return result;
 }
