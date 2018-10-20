@@ -2888,6 +2888,35 @@ static void test_universal() {
     (void)system("rm -Rf test/fish_uvars_test/");
 }
 
+static void test_universal_output() {
+    say(L"Testing universal variable output");
+    var_table_t vars;
+    vars[L"varA"] = env_var_t(wcstring_list_t{L"ValA1", L"ValA2"}, 0);
+    vars[L"varB"] = env_var_t(wcstring_list_t{L"ValB1"}, env_var_t::flag_export);
+    std::string text = env_universal_t::serialize_with_vars(vars);
+    const char *expected =
+        "# This file contains fish universal variable definitions.\n"
+        "SET varA:ValA1\\x1eValA2\n"
+        "SET_EXPORT varB:ValB1\n";
+    do_test(text == expected);
+}
+
+static void test_universal_parsing() {
+    say(L"Testing universal variable parsing");
+    const char *input =
+        "# This file contains fish universal variable definitions.\n"
+        "SET varA:ValA1\\x1eValA2\n"
+        "SET_EXPORT varB:ValB1\n";
+
+    var_table_t vars;
+    vars[L"varA"] = env_var_t(wcstring_list_t{L"ValA1", L"ValA2"}, 0);
+    vars[L"varB"] = env_var_t(wcstring_list_t{L"ValB1"}, env_var_t::flag_export);
+
+    var_table_t parsed_vars;
+    env_universal_t::populate_variables(input, &parsed_vars);
+    do_test(vars == parsed_vars);
+}
+
 static bool callback_data_less_than(const callback_data_t &a, const callback_data_t &b) {
     return a.key < b.key;
 }
@@ -4844,6 +4873,8 @@ int main(int argc, char **argv) {
     if (should_test_function("input")) test_input();
     if (should_test_function("line_iterator")) test_line_iterator();
     if (should_test_function("universal")) test_universal();
+    if (should_test_function("universal")) test_universal_output();
+    if (should_test_function("universal")) test_universal_parsing();
     if (should_test_function("universal")) test_universal_callbacks();
     if (should_test_function("universal")) test_universal_formats();
     if (should_test_function("notifiers")) test_universal_notifiers();
