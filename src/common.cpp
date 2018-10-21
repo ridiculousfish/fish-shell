@@ -330,9 +330,9 @@ wcstring str2wcstring(const std::string &in, size_t len) {
     return str2wcs_internal(in.data(), len);
 }
 
-char *wcs2str(const wchar_t *in) {
+char *wcs2str(const wchar_t *in, size_t len) {
     if (!in) return NULL;
-    size_t desired_size = MAX_UTF8_BYTES * wcslen(in) + 1;
+    size_t desired_size = MAX_UTF8_BYTES * len + 1;
     char local_buff[512];
     if (desired_size <= sizeof local_buff / sizeof *local_buff) {
         // Convert into local buff, then use strdup() so we don't waste malloc'd space.
@@ -346,7 +346,7 @@ char *wcs2str(const wchar_t *in) {
     }
 
     // Here we probably allocate a buffer probably much larger than necessary.
-    char *out = (char *)malloc(MAX_UTF8_BYTES * wcslen(in) + 1);
+    char *out = (char *)malloc(MAX_UTF8_BYTES * len + 1);
     assert(out);
     // Instead of returning the return value of wcs2str_internal, return `out` directly.
     // This eliminates false warnings in coverity about resource leaks.
@@ -354,7 +354,8 @@ char *wcs2str(const wchar_t *in) {
     return out;
 }
 
-char *wcs2str(const wcstring &in) { return wcs2str(in.c_str()); }
+char *wcs2str(const wchar_t *in) { return wcs2str(in, wcslen(in)); }
+char *wcs2str(const wcstring &in) { return wcs2str(in.c_str(), in.length()); }
 
 /// This function is distinguished from wcs2str_internal in that it allows embedded null bytes.
 std::string wcs2string(const wcstring &input) {
@@ -1040,6 +1041,7 @@ static void escape_string_script(const wchar_t *orig_in, size_t in_len, wcstring
                 case L'|':
                 case L';':
                 case L'"':
+                case L'%':
                 case L'~': {
                     bool char_is_normal = (c == L'~' && no_tilde) || (c == L'^' && no_caret) ||
                                           (c == L'?' && no_qmark);
@@ -1395,6 +1397,17 @@ static bool unescape_string_internal(const wchar_t *const input, const size_t in
                 case L'~': {
                     if (unescape_special && (input_position == 0)) {
                         to_append_or_none = HOME_DIRECTORY;
+                    }
+                    break;
+                }
+                case L'%': {
+                    // Note that this only recognizes %self if the string is literally %self.
+                    // %self/foo will NOT match this.
+                    if (unescape_special && input_position == 0 &&
+                        !wcscmp(input, PROCESS_EXPAND_SELF_STR)) {
+                        to_append_or_none = PROCESS_EXPAND_SELF;
+                        input_position +=
+                            wcslen(PROCESS_EXPAND_SELF_STR) - 1;  // skip over 'self' part.
                     }
                     break;
                 }
@@ -1887,7 +1900,18 @@ wcstring_list_t split_string(const wcstring &val, wchar_t sep) {
 }
 
 wcstring join_strings(const wcstring_list_t &vals, wchar_t sep) {
+    if (vals.empty()) return wcstring{};
+
+    // Reserve the size we will need.
+    // count-1 separators, plus the length of all strings.
+    size_t size = vals.size() - 1;
+    for (const wcstring &s : vals) {
+        size += s.size();
+    }
+
+    // Construct the string.
     wcstring result;
+    result.reserve(size);
     bool first = true;
     for (const wcstring &s : vals) {
         if (!first) {

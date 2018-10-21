@@ -121,6 +121,7 @@ bool is_potential_path(const wcstring &potential_path_fragment, const wcstring_l
     for (size_t i = 0; i < path_with_magic.size(); i++) {
         wchar_t c = path_with_magic.at(i);
         switch (c) {
+            case PROCESS_EXPAND_SELF:
             case VARIABLE_EXPAND:
             case VARIABLE_EXPAND_SINGLE:
             case BRACE_BEGIN:
@@ -442,6 +443,12 @@ static void color_string_internal(const wcstring &buffstr, highlight_spec_t base
            "Unexpected base color");
     const size_t buff_len = buffstr.size();
     std::fill(colors, colors + buff_len, base_color);
+
+    // Hacky support for %self which must be an unquoted literal argument.
+    if (buffstr == PROCESS_EXPAND_SELF_STR) {
+        std::fill_n(colors, wcslen(PROCESS_EXPAND_SELF_STR), highlight_spec_operator);
+        return;
+    }
 
     enum { e_unquoted, e_single_quoted, e_double_quoted } mode = e_unquoted;
     int bracket_count = 0;
