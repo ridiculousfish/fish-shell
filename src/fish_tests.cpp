@@ -4134,6 +4134,13 @@ static void test_highlighting() {
         {L"end", highlight_spec_command},
     });
 
+    highlight_tests.push_back({
+        {L"echo", highlight_spec_command},
+        {L"%self", highlight_spec_operator},
+        {L"not%self", highlight_spec_param},
+        {L"self%not", highlight_spec_param},
+    });
+
     auto &vars = parser_t::principal_parser().vars();
 
     // Verify variables and wildcards in commands using /bin/cat.
