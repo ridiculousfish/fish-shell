@@ -986,6 +986,7 @@ static bool exec_process_in_job(parser_t &parser, process_t *p, job_t *j,
 }
 
 void exec_job(parser_t &parser, job_t *j) {
+    assert(parser.owns_job(j));
     // Set to true if something goes wrong while exec:ing the job, in which case the cleanup code
     // will kick in.
     bool exec_error = false;
@@ -1114,7 +1115,7 @@ void exec_job(parser_t &parser, job_t *j) {
     }
 
     if (!exec_error) {
-        job_continue(j, false);
+        job_continue(j, parser, false);
     } else {
         // Mark the errored job as not in the foreground. I can't fully justify whether this is the
         // right place, but it prevents sanity_lose from complaining.

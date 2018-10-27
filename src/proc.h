@@ -20,6 +20,8 @@
 #include "parse_tree.h"
 #include "tnode.h"
 
+class parser_t;
+
 /// Types of processes.
 enum process_type_t {
     /// A regular external command.
@@ -313,8 +315,9 @@ bool job_is_completed(const job_t *j);
 /// saved terminal modes and send the process group a SIGCONT signal to wake it up before we block.
 ///
 /// \param j The job
+/// \param p The parser owning this job
 /// \param cont Whether the function should wait for the job to complete before returning
-void job_continue(job_t *j, bool cont);
+void job_continue(job_t *j, parser_t &parser, bool cont);
 
 /// Notify the user about stopped or terminated jobs. Delete terminated jobs from the job list.
 ///

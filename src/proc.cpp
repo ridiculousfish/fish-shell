@@ -919,9 +919,9 @@ static bool terminal_return_from_job(job_t *j) {
     return true;
 }
 
-void job_continue(job_t *j, bool cont) {
+void job_continue(job_t *j, parser_t &parser, bool cont) {
     // Put job first in the job list.
-    auto &parser = parser_t::principal_parser(); // TODO: remove me
+    assert(parser.owns_job(j));
     parser.job_promote(j);
     j->set_flag(JOB_NOTIFIED, false);
 
