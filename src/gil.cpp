@@ -1,5 +1,6 @@
 #include "gil.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 

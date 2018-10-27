@@ -3,6 +3,7 @@
 #define FISH_GIL_H
 #include "config.h"  // IWYU pragma: keep
 
+#include <condition_variable>
 #include <unordered_map>
 #include "common.h"
 
