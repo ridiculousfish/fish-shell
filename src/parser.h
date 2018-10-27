@@ -340,6 +340,14 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Return a string representing the current stack trace.
     wcstring stack_trace() const;
 
+    /// \return whether this parser owns a given job.
+    bool owns_job(const job_t *job) const {
+        for (const auto &j : my_job_list) {
+            if (j.get() == job) return true;
+        }
+        return false;
+    }
+
     ~parser_t();
 };
 

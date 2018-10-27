@@ -110,6 +110,6 @@ int builtin_fg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     parser.job_promote(j);
     j->set_flag(JOB_FOREGROUND, true);
 
-    job_continue(j, job_is_stopped(j));
+    job_continue(j, parser, job_is_stopped(j));
     return STATUS_CMD_OK;
 }
