@@ -8,24 +8,15 @@ function funcsave --description "Save the current definition of all specified fu
         return 0
     end
 
-    set -l configdir ~/.config
-    if set -q XDG_CONFIG_HOME
-        set configdir $XDG_CONFIG_HOME
-    end
-
-    for i in $configdir $configdir/fish $configdir/fish/functions
-        if not test -d $i
-            if not command mkdir $i >/dev/null
-                printf (_ "%s: Could not create configuration directory\n") funcsave
-                return 1
-            end
-        end
+    if not mkdir -p $__fish_config_dir/functions
+        printf (_ "%s: Could not create configuration directory\n") funcsave
+        return 1
     end
 
     set -l retval 0
     for funcname in $argv
         if functions -q -- $funcname
-            functions -- $funcname >$configdir/fish/functions/$funcname.fish
+            functions -- $funcname >$__fish_config_dir/functions/$funcname.fish
         else
             printf (_ "%s: Unknown function '%s'\n") funcsave $funcname
             set retval 1
