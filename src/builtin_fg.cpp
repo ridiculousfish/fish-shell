@@ -107,7 +107,7 @@ int builtin_fg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     if (!ft.empty()) parser.vars().set_one(L"_", ENV_EXPORT, ft);
     reader_write_title(j->command());
 
-    job_promote(j);
+    parser.job_promote(j);
     j->set_flag(JOB_FOREGROUND, true);
 
     job_continue(j, job_is_stopped(j));

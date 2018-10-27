@@ -297,9 +297,6 @@ void proc_set_last_status(int s);
 /// Returns the status of the last process to exit.
 int proc_get_last_status();
 
-/// Promotes a job to the front of the job list.
-void job_promote(job_t *job);
-
 /// Return the job with the specified job id. If id is 0 or less, return the last job used.
 job_t *job_get(job_id_t id);
 
