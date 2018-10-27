@@ -136,23 +136,13 @@ static std::vector<int> interactive_stack;
 
 void proc_init() { proc_push_interactive(0); }
 
-/// Remove job from list of jobs.
-static int job_remove(job_t *j) {
-    ASSERT_IS_MAIN_THREAD();
-    return parser_t::principal_parser().job_remove(j);
-}
-
-void job_promote(job_t *job) {
-    ASSERT_IS_MAIN_THREAD();
-    parser_t::principal_parser().job_promote(job);
-}
-
 void proc_destroy() {
-    job_list_t &jobs = parser_t::principal_parser().job_list();
+    auto &parser = parser_t::principal_parser();
+    job_list_t &jobs = parser.job_list();
     while (!jobs.empty()) {
         job_t *job = jobs.front().get();
         debug(2, L"freeing leaked job %ls", job->command_wcstr());
-        job_remove(job);
+        parser.job_remove(job);
     }
 }
 
@@ -484,6 +474,7 @@ void proc_fire_event(const wchar_t *msg, int type, pid_t pid, int status) {
 
 static int process_clean_after_marking(bool allow_interactive) {
     ASSERT_IS_MAIN_THREAD();
+    auto &parser = parser_t::principal_parser(); // TODO: remove me
     job_t *jnext;
     int found = 0;
 
@@ -600,7 +591,7 @@ static int process_clean_after_marking(bool allow_interactive) {
             }
             proc_fire_event(L"JOB_EXIT", EVENT_JOB_ID, j->job_id, 0);
 
-            job_remove(j);
+            parser.job_remove(j);
         } else if (job_is_stopped(j) && !j->get_flag(JOB_NOTIFIED)) {
             // Notify the user about newly stopped jobs.
             if (!j->get_flag(JOB_SKIP_NOTIFICATION)) {
@@ -930,7 +921,8 @@ static bool terminal_return_from_job(job_t *j) {
 
 void job_continue(job_t *j, bool cont) {
     // Put job first in the job list.
-    job_promote(j);
+    auto &parser = parser_t::principal_parser(); // TODO: remove me
+    parser.job_promote(j);
     j->set_flag(JOB_NOTIFIED, false);
 
     CHECK_BLOCK();

@@ -12,6 +12,7 @@
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "io.h"
+#include "parser.h"
 #include "proc.h"
 #include "wutil.h"  // IWYU pragma: keep
 
@@ -28,7 +29,7 @@ static int send_to_bg(parser_t &parser, io_streams_t &streams, job_t *j) {
 
     streams.err.append_format(_(L"Send job %d '%ls' to background\n"), j->job_id,
                               j->command_wcstr());
-    job_promote(j);
+    parser.job_promote(j);
     j->set_flag(JOB_FOREGROUND, false);
     job_continue(j, job_is_stopped(j));
     return STATUS_CMD_OK;
