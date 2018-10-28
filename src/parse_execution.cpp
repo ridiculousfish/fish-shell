@@ -1188,7 +1188,7 @@ parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> jo
         return result;
     }
 
-    shared_ptr<job_t> job = std::make_shared<job_t>(acquire_job_id(), block_io);
+    shared_ptr<job_t> job = std::make_shared<job_t>(acquire_job_id(), parser->shared_from_this(), block_io);
     job->tmodes = tmodes;
     job->set_flag(job_flag_t::JOB_CONTROL,
                   (job_control_mode == JOB_CONTROL_ALL) ||

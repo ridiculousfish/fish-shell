@@ -53,6 +53,8 @@ enum class select_try_t {
     IO_ERROR,
 };
 
+class parser_t;
+
 /// A structure representing a single fish process. Contains variables for tracking process state
 /// and the process argument list. Actually, a fish process can be either a regular external
 /// process, an internal builtin which may or may not spawn a fake IO process during execution, a
@@ -78,6 +80,9 @@ class process_t {
     null_terminated_array_t<wchar_t> argv_array;
 
     io_chain_t process_io_chain;
+
+    // The owning parser. Note this forms a reference cycle which must be explicitly broken.
+    shared_ptr<parser_t> parser;
 
     // No copying.
     process_t(const process_t &rhs);
@@ -192,12 +197,16 @@ class job_t {
     // The IO chain associated with the block.
     const io_chain_t block_io;
 
+    // The owning parser. Note this forms a reference cycle which must be explicitly broken,
+    // when the job completes and the parser removes it.
+    shared_ptr<parser_t> parser;
+
     // No copying.
     job_t(const job_t &rhs) = delete;
     void operator=(const job_t &) = delete;
 
    public:
-    job_t(job_id_t jobid, io_chain_t bio);
+    job_t(job_id_t jobid, shared_ptr<parser_t> parser, io_chain_t bio);
     ~job_t();
 
     /// Returns whether the command is empty.
@@ -268,6 +277,9 @@ class job_t {
 
     /// Promotes the job to the front of the job list.
     void promote();
+
+    /// Removes the job from its parser.
+    void remove();
 
     /// Send the specified signal to all processes in this job.
     /// \return true on success, false on failure.

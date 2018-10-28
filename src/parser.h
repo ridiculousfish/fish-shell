@@ -19,6 +19,7 @@
 #include "proc.h"
 
 class io_chain_t;
+class job_t;
 
 /// event_blockage_t represents a block on events of the specified type.
 struct event_blockage_t {

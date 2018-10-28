@@ -118,12 +118,15 @@ static event_t event(0);
 /// proc_pop_interactive.
 static std::vector<int> interactive_stack;
 
+void proc_init() { proc_push_interactive(0); }
+
 void job_t::promote() {
-    ASSERT_IS_MAIN_THREAD();
-    parser_t::principal_parser().job_promote(this);
+    parser->job_promote(this);
 }
 
-void proc_init() { proc_push_interactive(0); }
+void job_t::remove() {
+    parser->job_remove(this);
+}
 
 void proc_destroy() {
     auto &parser = parser_t::principal_parser();
@@ -131,7 +134,7 @@ void proc_destroy() {
     while (!jobs.empty()) {
         job_t *job = jobs.front().get();
         debug(2, L"freeing leaked job %ls", job->command_wcstr());
-        parser.job_remove(job);
+        job->remove();
     }
 }
 
@@ -314,8 +317,8 @@ static void handle_child_status(pid_t pid, int status) {
 
 process_t::process_t() {}
 
-job_t::job_t(job_id_t jobid, io_chain_t bio)
-    : block_io(std::move(bio)), pgid(INVALID_PID), tmodes(), job_id(jobid), flags{} {}
+job_t::job_t(job_id_t jobid, shared_ptr<parser_t> parser, io_chain_t bio)
+    : block_io(std::move(bio)), parser(parser), pgid(INVALID_PID), tmodes(), job_id(jobid), flags{} {}
 
 job_t::~job_t() { release_job_id(job_id); }
 
@@ -671,7 +674,7 @@ static int process_clean_after_marking(bool allow_interactive) {
                 proc_fire_event(L"JOB_EXIT", EVENT_EXIT, -j->pgid, 0);
             }
             proc_fire_event(L"JOB_EXIT", EVENT_JOB_ID, j->job_id, 0);
-            parser_t::principal_parser().job_remove(j); // TODO: Remove this
+            j->remove();
         } else if (j->is_stopped() && !j->get_flag(job_flag_t::NOTIFIED)) {
             // Notify the user about newly stopped jobs.
             if (!j->get_flag(job_flag_t::SKIP_NOTIFICATION)) {
