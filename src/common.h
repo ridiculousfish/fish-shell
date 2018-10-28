@@ -18,6 +18,7 @@
 #endif
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -363,8 +364,8 @@ bool string_prefixes_string_case_insensitive(const wcstring &proposed_prefix,
 template <typename T>
 size_t ifind(const T &haystack, const T &needle) {
     using char_t = typename T::value_type;
-    auto icase_eq = [](char_t c1, char_t c2) {
-        auto locale = std::locale();
+    auto locale = std::locale();
+    auto icase_eq = [&locale](char_t c1, char_t c2) {
         return std::toupper(c1, locale) == std::toupper(c2, locale);
     };
     auto result =
@@ -1095,5 +1096,18 @@ struct hash<const wcstring> {
 
 /// Get the absolute path to the fish executable itself
 std::string get_executable_path(const char *fallback);
+
+/// A RAII wrapper for resources that don't recur, so we don't have to create a separate RAII
+/// wrapper for each function. Avoids needing to call "return cleanup()" or similar / everywhere.
+struct cleanup_t {
+private:
+    const std::function<void()> cleanup;
+public:
+    cleanup_t(std::function<void()> exit_actions)
+        : cleanup{exit_actions} {}
+    ~cleanup_t() {
+        cleanup();
+    }
+};
 
 #endif

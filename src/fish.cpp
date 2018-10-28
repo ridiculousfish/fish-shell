@@ -183,9 +183,9 @@ static void source_config_in_directory(const wcstring &dir) {
 
     const wcstring cmd = L"builtin source " + escaped_pathname;
     parser_t &parser = parser_t::principal_parser();
-    set_is_within_fish_initialization(true);
+    parser.set_is_within_fish_initialization(true);
     parser.eval(cmd, io_chain_t(), TOP);
-    set_is_within_fish_initialization(false);
+    parser.set_is_within_fish_initialization(false);
 }
 
 /// Parse init files. exec_path is the path of fish executable as determined by argv[0].

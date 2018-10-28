@@ -113,6 +113,10 @@ parser_t &parser_t::principal_parser() {
     return *principal;
 }
 
+void parser_t::set_is_within_fish_initialization(bool flag) {
+    is_within_fish_initialization = flag;
+}
+
 void parser_t::skip_all_blocks() {
     // Tell all blocks to skip.
     // This may be called from a signal handler!
@@ -398,7 +402,7 @@ void parser_t::stack_trace_internal(size_t block_idx, wcstring *buff) const {
         if (file) {
             append_format(*buff, _(L"\tcalled on line %d of file %ls\n"), b->src_lineno,
                           user_presentable_path(file).c_str());
-        } else if (is_within_fish_initialization()) {
+        } else if (is_within_fish_initialization) {
             append_format(*buff, _(L"\tcalled during startup\n"));
         } else {
             append_format(*buff, _(L"\tcalled on standard input\n"));
@@ -535,7 +539,7 @@ wcstring parser_t::current_line() {
         if (file) {
             append_format(prefix, _(L"%ls (line %d): "), user_presentable_path(file).c_str(),
                           lineno);
-        } else if (is_within_fish_initialization()) {
+        } else if (is_within_fish_initialization) {
             append_format(prefix, L"%ls (line %d): ", _(L"Startup"), lineno);
         } else {
             append_format(prefix, L"%ls (line %d): ", _(L"Standard input"), lineno);
@@ -589,7 +593,7 @@ void parser_t::job_promote(job_t *job) {
     assert(loc != my_job_list.end());
 
     // Move the job to the beginning.
-    my_job_list.splice(my_job_list.begin(), my_job_list, loc);
+    std::rotate(my_job_list.begin(), loc, my_job_list.end());
 }
 
 job_t *parser_t::job_get(job_id_t id) {

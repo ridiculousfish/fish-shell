@@ -40,9 +40,9 @@ int builtin_fg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         // the foreground.
         job_iterator_t jobs;
         while ((j = jobs.next())) {
-            if (j->get_flag(JOB_CONSTRUCTED) && (!job_is_completed(j)) &&
-                ((job_is_stopped(j) || (!j->get_flag(JOB_FOREGROUND))) &&
-                 j->get_flag(JOB_CONTROL))) {
+            if (j->is_constructed() && (!j->is_completed()) &&
+                ((j->is_stopped() || (!j->is_foreground())) &&
+                 j->get_flag(job_flag_t::JOB_CONTROL))) {
                 break;
             }
         }
@@ -58,7 +58,7 @@ int builtin_fg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
         pid = fish_wcstoi(argv[optind]);
         if (!(errno || pid < 0)) {
-            j = job_get_from_pid(pid);
+            j = job_t::from_pid(pid);
             if (j) found_job = 1;
         }
 
@@ -77,11 +77,11 @@ int builtin_fg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             streams.err.append_format(BUILTIN_ERR_NOT_NUMBER, cmd, argv[optind]);
             builtin_print_help(parser, streams, cmd, streams.err);
         } else {
-            j = job_get_from_pid(pid);
-            if (!j || !j->get_flag(JOB_CONSTRUCTED) || job_is_completed(j)) {
+            j = job_t::from_pid(pid);
+            if (!j || !j->is_constructed() || j->is_completed()) {
                 streams.err.append_format(_(L"%ls: No suitable job: %d\n"), cmd, pid);
                 j = 0;
-            } else if (!j->get_flag(JOB_CONTROL)) {
+            } else if (!j->get_flag(job_flag_t::JOB_CONTROL)) {
                 streams.err.append_format(_(L"%ls: Can't put job %d, '%ls' to foreground because "
                                             L"it is not under job control\n"),
                                           cmd, pid, j->command_wcstr());
@@ -107,9 +107,8 @@ int builtin_fg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     if (!ft.empty()) parser.vars().set_one(L"_", ENV_EXPORT, ft);
     reader_write_title(j->command());
 
-    parser.job_promote(j);
-    j->set_flag(JOB_FOREGROUND, true);
-
-    job_continue(j, parser, job_is_stopped(j));
+    j->promote();
+    j->set_flag(job_flag_t::FOREGROUND, true);
+    j->continue_job(j->is_stopped());
     return STATUS_CMD_OK;
 }
