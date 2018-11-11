@@ -148,8 +148,8 @@ function __fish_git_files
     # and so git shows untracked files (even in untracked dirs) for that.
     # If the current token is empty, this matches everything in $PWD.
     set -l files (commandline -ct)
-    # With the trailing "/", it will match directories, but won't descend.
-    set files "$files*" "$files*/"
+    # The trailing "**" is necessary to match files inside the given directories.
+    set files "$files*" "$files*/**"
     set -q untracked; and set -a status_opt -unormal
     or set -a status_opt -uno
 
@@ -737,12 +737,13 @@ complete -r -c git -n '__fish_git_using_command filter-branch' -s d -d 'Use this
 complete -c git -n '__fish_git_using_command filter-branch' -s f -l force -d 'Force filter branch to start even w/ refs in refs/original or existing temp directory'
 
 ### remote
-set -l remotecommands add rm show prune update rename set-head set-url set-branches
+set -l remotecommands add rm remove show prune update rename set-head set-url set-branches
 complete -f -c git -n '__fish_git_needs_command' -a remote -d 'Manage set of tracked repositories'
 complete -f -c git -n '__fish_git_using_command remote' -a '(__fish_git_remotes)'
 complete -f -c git -n "__fish_git_using_command remote; and not __fish_seen_subcommand_from $remotecommands" -s v -l verbose -d 'Be verbose'
 complete -f -c git -n "__fish_git_using_command remote; and not __fish_seen_subcommand_from $remotecommands" -a add -d 'Adds a new remote'
 complete -f -c git -n "__fish_git_using_command remote; and not __fish_seen_subcommand_from $remotecommands" -a rm -d 'Removes a remote'
+complete -f -c git -n "__fish_git_using_command remote; and not __fish_seen_subcommand_from $remotecommands" -a remove -d 'Removes a remote'
 complete -f -c git -n "__fish_git_using_command remote; and not __fish_seen_subcommand_from $remotecommands" -a show -d 'Shows a remote'
 complete -f -c git -n "__fish_git_using_command remote; and not __fish_seen_subcommand_from $remotecommands" -a prune -d 'Deletes all stale tracking branches'
 complete -f -c git -n "__fish_git_using_command remote; and not __fish_seen_subcommand_from $remotecommands" -a update -d 'Fetches updates'
@@ -753,6 +754,7 @@ complete -f -c git -n "__fish_git_using_command remote; and not __fish_seen_subc
 complete -f -c git -n "__fish_git_using_command remote; and __fish_seen_subcommand_from add " -s f -d 'Once the remote information is set up git fetch <name> is run'
 complete -f -c git -n "__fish_git_using_command remote; and __fish_seen_subcommand_from add " -l tags -d 'Import every tag from a remote with git fetch <name>'
 complete -f -c git -n "__fish_git_using_command remote; and __fish_seen_subcommand_from add " -l no-tags -d "Don't import tags from a remote with git fetch <name>"
+complete -f -c git -n '__fish_git_using_command remote; and __fish_seen_subcommand_from remove' -xa '(__fish_git_remotes)'
 complete -f -c git -n "__fish_git_using_command remote; and __fish_seen_subcommand_from set-branches" -l add -d 'Add to the list of currently tracked branches instead of replacing it'
 complete -f -c git -n "__fish_git_using_command remote; and __fish_seen_subcommand_from set-url" -l push -d 'Manipulate push URLs instead of fetch URLs'
 complete -f -c git -n "__fish_git_using_command remote; and __fish_seen_subcommand_from set-url" -l add -d 'Add new URL instead of changing the existing URLs'

@@ -700,6 +700,29 @@ unsigned long long fish_wcstoull(const wchar_t *str, const wchar_t **endptr, int
     return result;
 }
 
+/// Like wcstod(), but wcstod() is enormously expensive on some platforms so this tries to have a
+/// fast path.
+double fish_wcstod(const wchar_t *str, wchar_t **endptr) {
+    // The "fast path." If we're all ASCII and we fit inline, use strtod().
+    char narrow[128];
+    size_t len = wcslen(str);
+    size_t len_plus_0 = 1 + len;
+    auto is_digit = [](wchar_t c) { return '0' <= c && c <= '9'; };
+    if (len_plus_0 <= sizeof narrow && std::all_of(str, str + len, is_digit)) {
+        // Fast path. Copy the string into a local buffer and run strtod() on it.
+        // We can ignore the locale-taking version because we are limited to ASCII digits.
+        std::copy(str, str + len_plus_0, narrow);
+        char *narrow_endptr = nullptr;
+        double ret = strtod(narrow, endptr ? &narrow_endptr : nullptr);
+        if (endptr) {
+            assert(narrow_endptr && "narrow_endptr should not be null");
+            *endptr = const_cast<wchar_t *>(str + (narrow_endptr - narrow));
+        }
+        return ret;
+    }
+    return wcstod_l(str, endptr, fish_c_locale());
+}
+
 file_id_t file_id_t::from_stat(const struct stat &buf) {
     file_id_t result = {};
     result.device = buf.st_dev;
