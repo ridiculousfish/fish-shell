@@ -11,6 +11,7 @@
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "io.h"
+#include "parser.h"
 #include "proc.h"
 #include "wgetopt.h"
 #include "wutil.h"  // IWYU pragma: keep
@@ -174,11 +175,9 @@ int builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
     if (print_last) {
         // Ignore unconstructed jobs, i.e. ourself.
-        job_iterator_t jobs;
-        const job_t *j;
-        while ((j = jobs.next())) {
+        for (const auto &j : parser.job_list()) {
             if (j->is_constructed() && !j->is_completed()) {
-                builtin_jobs_print(j, mode, !streams.out_is_redirected, streams);
+                builtin_jobs_print(j.get(), mode, !streams.out_is_redirected, streams);
                 return STATUS_CMD_ERROR;
             }
         }
@@ -217,12 +216,11 @@ int builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                 }
             }
         } else {
-            job_iterator_t jobs;
-            const job_t *j;
-            while ((j = jobs.next())) {
+            for (const auto &j : parser.job_list()) {
                 // Ignore unconstructed jobs, i.e. ourself.
                 if (j->is_constructed() && !j->is_completed()) {
-                    builtin_jobs_print(j, mode, !found && !streams.out_is_redirected, streams);
+                    builtin_jobs_print(j.get(), mode, !found && !streams.out_is_redirected,
+                                       streams);
                     found = 1;
                 }
             }

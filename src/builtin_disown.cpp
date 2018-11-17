@@ -51,14 +51,14 @@ int builtin_disown(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     }
 
     if (argv[1] == 0) {
-        job_t *j;
+        job_t *j = nullptr;
         // Select last constructed job (ie first job in the job queue) that is possible to disown.
         // Stopped jobs can be disowned (they will be continued).
         // Foreground jobs can be disowned.
         // Even jobs that aren't under job control can be disowned!
-        job_iterator_t jobs;
-        while ((j = jobs.next())) {
-            if (j->is_constructed() && (!j->is_completed())) {
+        for (auto &candidate : parser.job_list()) {
+            if (candidate->is_constructed() && (!candidate->is_completed())) {
+                j = candidate.get();
                 break;
             }
         }

@@ -2007,7 +2007,7 @@ void reader_run_command(parser_t &parser, const wcstring &cmd) {
     gettimeofday(&time_before, NULL);
 
     parser.eval(cmd, io_chain_t(), TOP);
-    job_reap(1);
+    job_reap(parser, 1);
 
     gettimeofday(&time_after, NULL);
 
@@ -2021,7 +2021,7 @@ void reader_run_command(parser_t &parser, const wcstring &cmd) {
     parser.vars().set_one(L"_", ENV_GLOBAL, program_name);
 
 #ifdef HAVE__PROC_SELF_STAT
-    proc_update_jiffies();
+    proc_update_jiffies(parser);
 #endif
 }
 
@@ -2251,12 +2251,11 @@ bool shell_is_exiting() {
     return end_loop;
 }
 
-void reader_bg_job_warning() {
+void reader_bg_job_warning(const parser_t &parser) {
     fputws(_(L"There are still jobs active:\n"), stdout);
     fputws(_(L"\n   PID  Command\n"), stdout);
 
-    job_iterator_t jobs;
-    while (job_t *j = jobs.next()) {
+    for (const auto &j : parser.job_list()) {
         if (!j->is_completed()) {
             fwprintf(stdout, L"%6d  %ls\n", j->processes[0]->pid, j->command_wcstr());
         }
@@ -2280,8 +2279,7 @@ static void handle_end_loop() {
         }
 
         bool bg_jobs = false;
-        job_iterator_t jobs;
-        while (const job_t *j = jobs.next()) {
+        for (const auto &j : parser.job_list()) {
             if (!j->is_completed()) {
                 bg_jobs = true;
                 break;
@@ -2290,7 +2288,7 @@ static void handle_end_loop() {
 
         reader_data_t *data = current_data();
         if (!data->prev_end_loop && bg_jobs) {
-            reader_bg_job_warning();
+            reader_bg_job_warning(parser);
             reader_exit(0, 0);
             data->prev_end_loop = 1;
             return;

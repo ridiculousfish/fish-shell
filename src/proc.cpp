@@ -65,20 +65,6 @@ bool job_list_is_empty() {
     return parser_t::principal_parser().job_list().empty();
 }
 
-void job_iterator_t::reset() {
-    this->current = job_list->begin();
-    this->end = job_list->end();
-}
-
-job_iterator_t::job_iterator_t(job_list_t &jobs) : job_list(&jobs) { this->reset(); }
-
-job_iterator_t::job_iterator_t() : job_list(&parser_t::principal_parser().job_list()) {
-    ASSERT_IS_MAIN_THREAD();
-    this->reset();
-}
-
-size_t job_iterator_t::count() const { return this->job_list->size(); }
-
 bool is_interactive_session = false;
 bool is_subshell = false;
 bool is_block = false;
@@ -285,12 +271,10 @@ void job_mark_process_as_failed(const std::shared_ptr<job_t> &job, const process
 ///
 /// \param pid the pid of the process whose status changes
 /// \param status the status as returned by wait
-static void handle_child_status(pid_t pid, int status) {
-    job_t *j = NULL;
+static void handle_child_status(const parser_t &parser, pid_t pid, int status) {
     const process_t *found_proc = NULL;
 
-    job_iterator_t jobs;
-    while (!found_proc && (j = jobs.next())) {
+    for (const auto &j : parser.job_list()) {
         process_t *prev = NULL;
         for (process_ptr_t &p : j->processes) {
             if (pid == p->pid) {
@@ -300,6 +284,7 @@ static void handle_child_status(pid_t pid, int status) {
             }
             prev = p.get();
         }
+        if (found_proc) break;
     }
 
     // If the child process was not killed by a signal or other than SIGINT or SIGQUIT we're done.
@@ -357,7 +342,7 @@ static volatile process_generation_count_t s_sigchld_generation_cnt = 0;
 /// launch and join its pgrp (#5219).
 /// \param block_on_fg when true, blocks waiting for the foreground job to finish.
 /// \return whether the operation completed without incident
-static bool process_mark_finished_children(bool block_on_fg) {
+static bool process_mark_finished_children(const parser_t &parser, bool block_on_fg) {
     ASSERT_IS_MAIN_THREAD();
 
     // We can't always use SIGCHLD to determine if waitpid() should be called since it is not
@@ -390,12 +375,11 @@ static bool process_mark_finished_children(bool block_on_fg) {
     last_sigchld_count = s_sigchld_generation_cnt;
     bool jobs_skipped = false;
     bool has_error = false;
-    job_t *job_fg = nullptr;
+    shared_ptr<job_t> job_fg = nullptr;
 
     // Reap only processes belonging to fully-constructed jobs to prevent reaping of processes
     // before others in the same process group have a chance to join their pgrp.
-    job_iterator_t jobs;
-    while (auto j = jobs.next()) {
+    for (const auto &j : parser.job_list()) {
         // (A job can have pgrp INVALID_PID if it consists solely of builtins that perform no IO)
         if (j->pgid == INVALID_PID || !j->is_constructed()) {
             debug(5, "Skipping wait on incomplete job %d (%ls)", j->job_id, j->preview().c_str());
@@ -470,7 +454,7 @@ static bool process_mark_finished_children(bool block_on_fg) {
 
             if (pid > 0) {
                 // A child process has been reaped
-                handle_child_status(pid, status);
+                handle_child_status(parser, pid, status);
             } else if (pid == 0 || errno == ECHILD) {
                 // No killed/dead children in this particular process group
                 if (!wait_by_process) {
@@ -567,9 +551,8 @@ void proc_fire_event(const wchar_t *msg, int type, pid_t pid, int status) {
     event.arguments.resize(0);
 }
 
-static int process_clean_after_marking(bool allow_interactive) {
+static int process_clean_after_marking(parser_t &parser, bool allow_interactive) {
     ASSERT_IS_MAIN_THREAD();
-    job_t *jnext;
     int found = 0;
 
     // this function may fire an event handler, we do not want to call ourselves recursively (to
@@ -584,13 +567,9 @@ static int process_clean_after_marking(bool allow_interactive) {
     // don't try to print in that case (#3222)
     const bool interactive = allow_interactive && cur_term != NULL;
 
-    job_iterator_t jobs;
-    const size_t job_count = jobs.count();
-    jnext = jobs.next();
-    while (jnext) {
-        job_t *j = jnext;
-        jnext = jobs.next();
-
+    job_list_t jobs_to_remove;
+    const size_t job_count = parser.job_list().size();
+    for (const auto &j : parser.job_list()) {
         // If we are reaping only jobs who do not need status messages sent to the console, do not
         // consider reaping jobs that need status messages.
         if ((!j->get_flag(job_flag_t::SKIP_NOTIFICATION)) && (!interactive) &&
@@ -673,7 +652,7 @@ static int process_clean_after_marking(bool allow_interactive) {
         if (j->is_completed()) {
             if (!j->is_foreground() && !j->get_flag(job_flag_t::NOTIFIED) &&
                 !j->get_flag(job_flag_t::SKIP_NOTIFICATION)) {
-                format_job_info(j, JOB_ENDED);
+                format_job_info(j.get(), JOB_ENDED);
                 found = 1;
             }
             // TODO: The generic process-exit event is useless and unused.
@@ -686,15 +665,19 @@ static int process_clean_after_marking(bool allow_interactive) {
                 proc_fire_event(L"JOB_EXIT", EVENT_EXIT, -j->pgid, 0);
             }
             proc_fire_event(L"JOB_EXIT", EVENT_JOB_ID, j->job_id, 0);
-            j->remove();
+            jobs_to_remove.push_back(j);
         } else if (j->is_stopped() && !j->get_flag(job_flag_t::NOTIFIED)) {
             // Notify the user about newly stopped jobs.
             if (!j->get_flag(job_flag_t::SKIP_NOTIFICATION)) {
-                format_job_info(j, JOB_STOPPED);
+                format_job_info(j.get(), JOB_STOPPED);
                 found = 1;
             }
             j->set_flag(job_flag_t::NOTIFIED, true);
         }
+    }
+
+    for (auto job : jobs_to_remove) {
+        job->remove();
     }
 
     if (found) fflush(stdout);
@@ -704,16 +687,16 @@ static int process_clean_after_marking(bool allow_interactive) {
     return found;
 }
 
-int job_reap(bool allow_interactive) {
+int job_reap(parser_t &parser, bool allow_interactive) {
     ASSERT_IS_MAIN_THREAD();
     int found = 0;
 
-    process_mark_finished_children(false);
+    process_mark_finished_children(parser, false);
 
     // Preserve the exit status.
     const int saved_status = proc_get_last_status();
 
-    found = process_clean_after_marking(allow_interactive);
+    found = process_clean_after_marking(parser, allow_interactive);
 
     // Restore the exit status.
     proc_set_last_status(saved_status);
@@ -761,11 +744,8 @@ unsigned long proc_get_jiffies(process_t *p) {
 }
 
 /// Update the CPU time for all jobs.
-void proc_update_jiffies() {
-    job_t *job;
-    job_iterator_t j;
-
-    for (job = j.next(); job; job = j.next()) {
+void proc_update_jiffies(parser_t &parser) {
+    for (auto &job : parser.job_list()) {
         for (process_ptr_t &p : job->processes) {
             gettimeofday(&p->last_time, 0);
             p->last_jiffies = proc_get_jiffies(p.get());
@@ -1079,7 +1059,7 @@ void job_t::continue_job(bool send_sigcont) {
             // calling it here before calling `select_try()` below, shell responsiveness can be
             // dramatically improved (noticably so, not just "theoretically speaking" per the
             // discussion in #5219).
-            process_mark_finished_children(false);
+            process_mark_finished_children(*parser, false);
 
             // If this is a child job and the parent job is still under construction (i.e. job1 |
             // some_func), we can't block on execution of the nested job for `some_func`. Doing
@@ -1101,19 +1081,19 @@ void job_t::continue_job(bool send_sigcont) {
                         // but do not block. We don't block so long as we have IO to process, once the
                         // fd buffers are empty we'll block in the second case below.
                         read_try(this);
-                        process_mark_finished_children(false);
+                        process_mark_finished_children(*parser, false);
                         break;
 
                     case select_try_t::TIMEOUT:
                         // No FDs are ready. Look for finished processes instead.
                         debug(4, L"select_try: no fds returned valid data within the timeout" );
-                        process_mark_finished_children(block_on_fg);
+                        process_mark_finished_children(*parser, block_on_fg);
                         break;
 
                     case select_try_t::IOCHAIN_EMPTY:
                         // There were no IO fds to select on.
                         debug(4, L"select_try: no IO fds" );
-                        process_mark_finished_children(true);
+                        process_mark_finished_children(*parser, true);
 
                         // If it turns out that we encountered this because the file descriptor we were
                         // reading from has died, process_mark_finished_children() should take care of
@@ -1159,8 +1139,8 @@ int proc_format_status(int status) {
 void proc_sanity_check() {
     const job_t *fg_job = NULL;
 
-    job_iterator_t jobs;
-    while (const job_t *j = jobs.next()) {
+    const auto &jobs = parser_t::principal_parser().job_list();
+    for (const auto &j : jobs) {
         if (!j->is_constructed()) continue;
 
         // More than one foreground job?
@@ -1170,7 +1150,7 @@ void proc_sanity_check() {
                       fg_job->command_wcstr(), j->command_wcstr());
                 sanity_lose();
             }
-            fg_job = j;
+            fg_job = j.get();
         }
 
         for (const process_ptr_t &p : j->processes) {
@@ -1211,18 +1191,18 @@ void proc_pop_interactive() {
 }
 
 pid_t proc_wait_any() {
+    // TODO: remove this principal_parser().
     int pid_status;
     pid_t pid = waitpid(-1, &pid_status, WUNTRACED);
     if (pid == -1) return -1;
-    handle_child_status(pid, pid_status);
-    process_clean_after_marking(is_interactive);
+    handle_child_status(parser_t::principal_parser(), pid, pid_status);
+    process_clean_after_marking(parser_t::principal_parser(), is_interactive);
     return pid;
 }
 
 void hup_background_jobs() {
-    job_iterator_t jobs;
-
-    while (job_t *j = jobs.next()) {
+    // TODO: remove this principal_parser().
+    for (const auto &j : parser_t::principal_parser().job_list()) {
         // Make sure we don't try to SIGHUP the calling builtin
         if (j->pgid == INVALID_PID || !j->get_flag(job_flag_t::JOB_CONTROL)) {
             continue;

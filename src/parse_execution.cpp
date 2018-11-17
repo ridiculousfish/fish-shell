@@ -770,12 +770,11 @@ parse_execution_result_t parse_execution_context_t::populate_plain_process(
     }
 
     // Protect against exec with background processes running
+    // TODO: what if they're running in another thread?
     static uint32_t last_exec_run_counter =  -1;
     if (process_type == INTERNAL_EXEC) {
-        job_iterator_t jobs;
         bool have_bg = false;
-        const job_t *bg = nullptr;
-        while ((bg = jobs.next())) {
+        for (const auto &bg : parser->job_list()) {
             if (!bg->is_completed()) {
                 have_bg = true;
                 break;
@@ -785,7 +784,7 @@ parse_execution_result_t parse_execution_context_t::populate_plain_process(
         if (have_bg) {
             /* debug(1, "Background jobs remain! run_counter: %u, last_exec_run_count: %u", reader_run_count(), last_exec_run_counter); */
             if (isatty(STDIN_FILENO) && reader_run_count() - 1 != last_exec_run_counter) {
-                reader_bg_job_warning();
+                reader_bg_job_warning(*parser);
                 last_exec_run_counter = reader_run_count();
                 return parse_execution_errored;
             }
@@ -1254,7 +1253,7 @@ parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> jo
         profile_item->skipped = !populated_job;
     }
 
-    job_reap(0);  // clean up jobs
+    job_reap(*parser, 0);  // clean up jobs
     return parse_execution_success;
 }
 

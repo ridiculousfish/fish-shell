@@ -38,11 +38,11 @@ int builtin_fg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     if (optind == argc) {
         // Select last constructed job (I.e. first job in the job que) that is possible to put in
         // the foreground.
-        job_iterator_t jobs;
-        while ((j = jobs.next())) {
-            if (j->is_constructed() && (!j->is_completed()) &&
-                ((j->is_stopped() || (!j->is_foreground())) &&
-                 j->get_flag(job_flag_t::JOB_CONTROL))) {
+        for (const auto &cand : parser.job_list()) {
+            if (cand->is_constructed() && (!cand->is_completed()) &&
+                ((cand->is_stopped() || (!cand->is_foreground())) &&
+                 cand->get_flag(job_flag_t::JOB_CONTROL))) {
+                j = cand.get();
                 break;
             }
         }

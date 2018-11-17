@@ -52,10 +52,11 @@ int builtin_bg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
     if (optind == argc) {
         // No jobs were specified so use the most recent (i.e., last) job.
-        job_t *j;
-        job_iterator_t jobs;
-        while ((j = jobs.next())) {
-            if (j->is_stopped() && j->get_flag(job_flag_t::JOB_CONTROL) && (!j->is_completed())) {
+        job_t *j = nullptr;
+        for (auto &candidate : parser.job_list()) {
+            if (candidate->is_stopped() && candidate->get_flag(job_flag_t::JOB_CONTROL) &&
+                (!candidate->is_completed())) {
+                j = candidate.get();
                 break;
             }
         }

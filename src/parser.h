@@ -275,6 +275,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Get the list of jobs.
     job_list_t &job_list() { return my_job_list; }
+    const job_list_t &job_list() const { return my_job_list; }
 
     /// Get the variables.
     env_stack_t &vars() { return *variables; }

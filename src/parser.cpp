@@ -600,25 +600,22 @@ job_t *parser_t::job_get(job_id_t id) {
 }
 
 job_t *parser_t::job_get_from_pid(pid_t pid) const {
-    job_iterator_t jobs;
-    job_t *job;
-
     pid_t pgid = getpgid(pid);
 
     if (pgid == -1) {
         return 0;
     }
 
-    while ((job = jobs.next())) {
+    for (const auto &job : job_list()) {
         if (job->pgid == pgid) {
             for (const process_ptr_t &p : job->processes) {
                 if (p->pid == pid) {
-                    return job;
+                    return job.get();
                 }
             }
         }
     }
-    return 0;
+    return nullptr;
 }
 
 profile_item_t *parser_t::create_profile_item() {
@@ -682,7 +679,7 @@ int parser_t::eval_node(parsed_source_ref_t ps, tnode_t<T> node, const io_chain_
         return 1;
     }
 
-    job_reap(0);  // not sure why we reap jobs here
+    job_reap(*this, 0);  // not sure why we reap jobs here
 
     // Start it up
     scope_block_t *scope_block = this->push_block<scope_block_t>(block_type);
@@ -695,7 +692,7 @@ int parser_t::eval_node(parsed_source_ref_t ps, tnode_t<T> node, const io_chain_
     exc.restore();
     this->pop_block(scope_block);
 
-    job_reap(0);  // reap again
+    job_reap(*this, 0);  // reap again
     return result;
 }
 

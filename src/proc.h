@@ -313,28 +313,6 @@ typedef std::list<shared_ptr<job_t>> job_list_t;
 
 bool job_list_is_empty(void);
 
-/// A class to aid iteration over jobs list
-class job_iterator_t {
-    job_list_t *const job_list;
-    job_list_t::iterator current, end;
-
-   public:
-    void reset(void);
-
-    job_t *next() {
-        job_t *job = NULL;
-        if (current != end) {
-            job = current->get();
-            ++current;
-        }
-        return job;
-    }
-
-    explicit job_iterator_t(job_list_t &jobs);
-    job_iterator_t();
-    size_t count() const;
-};
-
 /// Whether a universal variable barrier roundtrip has already been made for the currently executing
 /// command. Such a roundtrip only needs to be done once on a given command, unless a universal
 /// variable value is changed. Once this has been done, this variable is set to 1, so that no more
@@ -363,7 +341,7 @@ int proc_get_last_status();
 /// Notify the user about stopped or terminated jobs. Delete terminated jobs from the job list.
 ///
 /// \param interactive whether interactive jobs should be reaped as well
-int job_reap(bool interactive);
+int job_reap(parser_t &parser, bool interactive);
 
 /// Signal handler for SIGCHLD. Mark any processes with relevant information.
 void job_handle_signal(int signal, siginfo_t *info, void *con);
@@ -378,7 +356,7 @@ unsigned long proc_get_jiffies(process_t *p);
 
 /// Update process time usage for all processes by calling the proc_get_jiffies function for every
 /// process of every job.
-void proc_update_jiffies();
+void proc_update_jiffies(parser_t &parser);
 #endif
 
 /// Perform a set of simple sanity checks on the job list. This includes making sure that only one

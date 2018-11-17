@@ -258,7 +258,8 @@ static int interrupt_handler() {
     // Fire any pending events.
     event_fire(NULL);
     // Reap stray processes, including printing exit status messages.
-    if (job_reap(1)) reader_repaint_needed();
+    // TODO: fix this use of principal_parser
+    if (job_reap(parser_t::principal_parser(), true)) reader_repaint_needed();
     // Tell the reader an event occured.
     if (reader_reading_interrupted()) {
         return shell_modes.c_cc[VINTR];
