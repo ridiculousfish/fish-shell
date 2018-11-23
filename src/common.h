@@ -18,17 +18,19 @@
 #endif
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
-#include <tuple>
 #include <vector>
 
 #include "fallback.h"  // IWYU pragma: keep
-#include "signal.h"    // IWYU pragma: keep
+#include "maybe.h"
+#include "signal.h"  // IWYU pragma: keep
 
 // Define a symbol we can use elsewhere in our code to determine if we're being built on MS Windows
 // under Cygwin.
@@ -186,7 +188,8 @@ extern struct termios shell_modes;
 /// The character to use where the text has been truncated. Is an ellipsis on unicode system and a $
 /// on other systems.
 extern wchar_t ellipsis_char;
-/// The character or string to use where text has been truncated (ellipsis if possible, otherwise ...)
+/// The character or string to use where text has been truncated (ellipsis if possible, otherwise
+/// ...)
 extern const wchar_t *ellipsis_str;
 
 /// Character representing an omitted newline at the end of text.
@@ -327,7 +330,8 @@ bool string_prefixes_string(const wchar_t *proposed_prefix, const wchar_t *value
 /// Test if a string is a suffix of another.
 bool string_suffixes_string(const wcstring &proposed_suffix, const wcstring &value);
 bool string_suffixes_string(const wchar_t *proposed_suffix, const wcstring &value);
-bool string_suffixes_string_case_insensitive(const wcstring &proposed_suffix, const wcstring &value);
+bool string_suffixes_string_case_insensitive(const wcstring &proposed_suffix,
+                                             const wcstring &value);
 
 /// Test if a string prefixes another without regard to case. Returns true if a is a prefix of b.
 bool string_prefixes_string_case_insensitive(const wcstring &proposed_prefix,
@@ -533,7 +537,7 @@ class null_terminated_array_t {
     void operator=(null_terminated_array_t rhs) = delete;
     null_terminated_array_t(const null_terminated_array_t &) = delete;
 
-    typedef std::vector<std::basic_string<CharType_t> > string_list_t;
+    typedef std::vector<std::basic_string<CharType_t>> string_list_t;
 
     size_t size() const {
         size_t len = 0;
@@ -771,9 +775,9 @@ wcstring debug_escape(const wcstring &in);
 /// defined in a private use area of Unicode. This assumes wchar_t is a unicode character set.
 
 /// Given a null terminated string starting with a backslash, read the escape as if it is unquoted,
-/// appending to result. Return the number of characters consumed, or 0 on error.
-size_t read_unquoted_escape(const wchar_t *input, wcstring *result, bool allow_incomplete,
-                            bool unescape_special);
+/// appending to result. Return the number of characters consumed, or none() on error.
+maybe_t<size_t> read_unquoted_escape(const wchar_t *input, wcstring *result, bool allow_incomplete,
+                                     bool unescape_special);
 
 /// Unescapes a string in-place. A true result indicates the string was unescaped, a false result
 /// indicates the string was unmodified.
@@ -881,19 +885,6 @@ struct enum_map {
     const wchar_t *const str;
 };
 
-
-/// Use for scoped enums (i.e. `enum class`) with bitwise operations
-#define ENUM_FLAG_OPERATOR(T,X,Y) \
-inline T operator X (T lhs, T rhs) { return (T) (static_cast<std::underlying_type<T>::type>(lhs) X static_cast<std::underlying_type<T>::type>(rhs)); } \
-inline T operator Y (T &lhs, T rhs) { return lhs = (T) (static_cast<std::underlying_type<T>::type>(lhs) X static_cast<std::underlying_type<T>::type>(rhs)); }
-#define ENUM_FLAGS(T) \
-enum class T; \
-inline T operator ~ (T t) { return (T) (~static_cast<std::underlying_type<T>::type>(t)); } \
-ENUM_FLAG_OPERATOR(T,|,|=) \
-ENUM_FLAG_OPERATOR(T,^,^=) \
-ENUM_FLAG_OPERATOR(T,&,&=) \
-enum class T
-
 /// Given a string return the matching enum. Return the sentinal enum if no match is made. The map
 /// must be sorted by the `str` member. A binary search is twice as fast as a linear search with 16
 /// elements in the map.
@@ -927,13 +918,13 @@ static const wchar_t *enum_to_str(T enum_val, const enum_map<T> map[]) {
     return NULL;
 };
 
-template<typename... Args>
+template <typename... Args>
 using tuple_list = std::vector<std::tuple<Args...>>;
 
-//Given a container mapping one X to many Y, return a list of {X,Y}
-template<typename X, typename Y>
+// Given a container mapping one X to many Y, return a list of {X,Y}
+template <typename X, typename Y>
 inline tuple_list<X, Y> flatten(const std::unordered_map<X, std::vector<Y>> &list) {
-    tuple_list<X, Y> results(list.size() * 1.5); //just a guess as to the initial size
+    tuple_list<X, Y> results(list.size() * 1.5);  // just a guess as to the initial size
     for (auto &kv : list) {
         for (auto &v : kv.second) {
             results.emplace_back(std::make_tuple(kv.first, v));
@@ -1015,7 +1006,7 @@ struct hash<const wcstring> {
         return hasher((wcstring)w);
     }
 };
-}
+}  // namespace std
 #endif
 
 #endif

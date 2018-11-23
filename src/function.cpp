@@ -52,7 +52,6 @@ public:
  function_info_t(const function_info_t &data, const wchar_t *filename, bool autoload);
 };
 
-
 /// Table containing all functions.
 typedef std::unordered_map<wcstring, function_info_t> function_map_t;
 static function_map_t loaded_functions;
@@ -114,12 +113,11 @@ static void autoload_names(std::unordered_set<wcstring> &names, int get_hidden) 
 
     for (i = 0; i < path_list.size(); i++) {
         const wcstring &ndir_str = path_list.at(i);
-        const wchar_t *ndir = (wchar_t *)ndir_str.c_str();
-        DIR *dir = wopendir(ndir);
-        if (!dir) continue;
+        dir_t dir(ndir_str);
+        if (!dir.valid()) continue;
 
         wcstring name;
-        while (wreaddir(dir, name)) {
+        while (dir.read(name)) {
             const wchar_t *fn = name.c_str();
             const wchar_t *suffix;
             if (!get_hidden && fn[0] == L'_') continue;
@@ -130,7 +128,6 @@ static void autoload_names(std::unordered_set<wcstring> &names, int get_hidden) 
                 names.insert(name);
             }
         }
-        closedir(dir);
     }
 }
 
@@ -237,6 +234,7 @@ void function_remove(const wcstring &name) {
     if (function_remove_ignore_autoload(name)) function_autoloader.unload(name);
 }
 
+/// Returns a function by name if it has been loaded, returns false otherwise. Does not autoload.
 static const function_info_t *function_get(const wcstring &name) {
     // The caller must lock the functions_lock before calling this; however our mutex is currently
     // recursive, so trylock will never fail. We need a way to correctly check if a lock is locked
@@ -249,11 +247,11 @@ static const function_info_t *function_get(const wcstring &name) {
     return &iter->second;
 }
 
-bool function_get_definition(const wcstring &name, wcstring *out_definition) {
+bool function_get_definition(const wcstring &name, wcstring &out_definition) {
     scoped_rlock locker(functions_lock);
     const function_info_t *func = function_get(name);
-    if (func && out_definition) {
-        out_definition->assign(func->props->body_node.get_source(func->props->parsed_source->src));
+    if (func) {
+        out_definition = func->props->body_node.get_source(func->props->parsed_source->src);
     }
     return func != NULL;
 }
@@ -264,12 +262,12 @@ std::map<wcstring, env_var_t> function_get_inherit_vars(const wcstring &name) {
     return func ? func->inherit_vars : std::map<wcstring, env_var_t>();
 }
 
-bool function_get_desc(const wcstring &name, wcstring *out_desc) {
+bool function_get_desc(const wcstring &name, wcstring &out_desc) {
     // Empty length string goes to NULL.
     scoped_rlock locker(functions_lock);
     const function_info_t *func = function_get(name);
-    if (out_desc && func && !func->description.empty()) {
-        out_desc->assign(_(func->description.c_str()));
+    if (func && !func->description.empty()) {
+        out_desc = _(func->description.c_str());
         return true;
     }
 
@@ -333,7 +331,8 @@ int function_get_definition_lineno(const wcstring &name) {
     scoped_rlock locker(functions_lock);
     const function_info_t *func = function_get(name);
     if (!func) return -1;
-    // return one plus the number of newlines at offsets less than the start of our function's statement (which includes the header).
+    // return one plus the number of newlines at offsets less than the start of our function's
+    // statement (which includes the header).
     // TODO: merge with line_offset_of_character_at_offset?
     auto block_stat = func->props->body_node.try_get_parent<grammar::block_statement>();
     assert(block_stat && "Function body is not part of block statement");

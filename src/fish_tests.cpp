@@ -575,7 +575,7 @@ static void test_tokenizer() {
         tokenizer_t t(L"abc\\", 0);
         do_test(t.next(&token));
         do_test(token.type == TOK_ERROR);
-        do_test(token.error == TOK_UNTERMINATED_ESCAPE);
+        do_test(token.error == tokenizer_error_t::unterminated_escape);
         do_test(token.error_offset == 3);
     }
 
@@ -584,7 +584,7 @@ static void test_tokenizer() {
         do_test(t.next(&token));
         do_test(t.next(&token));
         do_test(token.type == TOK_ERROR);
-        do_test(token.error == TOK_CLOSING_UNOPENED_SUBSHELL);
+        do_test(token.error == tokenizer_error_t::closing_unopened_subshell);
         do_test(token.error_offset == 4);
     }
 
@@ -593,7 +593,7 @@ static void test_tokenizer() {
         do_test(t.next(&token));
         do_test(t.next(&token));
         do_test(token.type == TOK_ERROR);
-        do_test(token.error == TOK_UNTERMINATED_SUBSHELL);
+        do_test(token.error == tokenizer_error_t::unterminated_subshell);
         do_test(token.error_offset == 4);
     }
 
@@ -602,7 +602,7 @@ static void test_tokenizer() {
         do_test(t.next(&token));
         do_test(t.next(&token));
         do_test(token.type == TOK_ERROR);
-        do_test(token.error == TOK_UNTERMINATED_SLICE);
+        do_test(token.error == tokenizer_error_t::unterminated_slice);
         do_test(token.error_offset == 4);
     }
 
@@ -1755,7 +1755,9 @@ static void test_abbreviations() {
     vars.push(true);
 
     const std::vector<std::pair<const wcstring, const wcstring>> abbreviations = {
-        {L"gc", L"git checkout"}, {L"foo", L"bar"}, {L"gx", L"git checkout"},
+        {L"gc", L"git checkout"},
+        {L"foo", L"bar"},
+        {L"gx", L"git checkout"},
     };
     for (const auto &abbr : abbreviations) {
         int ret = vars.set_one(L"_fish_abbr_" + abbr.first, ENV_LOCAL, abbr.second);
@@ -2598,9 +2600,9 @@ static void perform_one_autosuggestion_cd_test(const wcstring &command, const wc
 }
 
 static void perform_one_completion_cd_test(const wcstring &command, const wcstring &expected,
-                                           long line) {
+                                           const environment_t &vars, long line) {
     std::vector<completion_t> comps;
-    complete(command, &comps, COMPLETION_REQUEST_DEFAULT, env_vars_snapshot_t{});
+    complete(command, &comps, COMPLETION_REQUEST_DEFAULT, vars);
 
     bool expects_error = (expected == L"<error>");
 
@@ -2732,8 +2734,8 @@ static void test_autosuggest_suggest_special() {
     if (system("mkdir -p '~hahaha/path1/path2/'")) err(L"mkdir failed");
     perform_one_autosuggestion_cd_test(L"cd ~haha", L"ha/path1/path2/", vars, __LINE__);
     perform_one_autosuggestion_cd_test(L"cd ~hahaha/", L"path1/path2/", vars, __LINE__);
-    perform_one_completion_cd_test(L"cd ~haha", L"ha/", __LINE__);
-    perform_one_completion_cd_test(L"cd ~hahaha/", L"path1/", __LINE__);
+    perform_one_completion_cd_test(L"cd ~haha", L"ha/", vars, __LINE__);
+    perform_one_completion_cd_test(L"cd ~hahaha/", L"path1/", vars, __LINE__);
 
     popd();
     (void)system("rmdir ~/test_autosuggest_suggest_special/");
@@ -4228,6 +4230,7 @@ static void run_one_string_test(const wchar_t *const *argv, int expected_rc,
 }
 
 static void test_string() {
+    say(L"Testing builtin_string");
     const struct string_test {
         const wchar_t *argv[15];
         int expected_rc;
@@ -4417,6 +4420,7 @@ static void test_string() {
         {{L"string", L"replace", L"-r", L"a", L"$1", L"a", 0}, STATUS_INVALID_ARGS, L""},
         {{L"string", L"replace", L"-r", L"(a)", L"$2", L"a", 0}, STATUS_INVALID_ARGS, L""},
         {{L"string", L"replace", L"-r", L"*", L".", L"a", 0}, STATUS_INVALID_ARGS, L""},
+        {{L"string", L"replace", L"-ra", L"x", L"\\c", 0}, STATUS_CMD_ERROR, L""},
         {{L"string", L"replace", L"-r", L"^(.)", L"\t$1", L"abc", L"x", 0},
          STATUS_CMD_OK,
          L"\tabc\n\tx\n"},
@@ -4511,6 +4515,7 @@ static void test_string() {
         {{L"string", L"trim", L"-c", L"\\/", L"a/"}, STATUS_CMD_OK, L"a\n"},
         {{L"string", L"trim", L"-c", L"\\/", L"\\a/"}, STATUS_CMD_OK, L"a\n"},
         {{L"string", L"trim", L"-c", L"", L".a."}, STATUS_CMD_ERROR, L".a.\n"}};
+
     for (const auto &t : string_tests) {
         run_one_string_test(t.argv, t.expected_rc, t.expected_out);
     }
