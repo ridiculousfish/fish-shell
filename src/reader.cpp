@@ -1755,8 +1755,23 @@ static void reader_interactive_init() {
         // Eventually we just give up and assume we're orphaend.
         for (unsigned long loop_count = 0;; loop_count++) {
             pid_t owner = tcgetpgrp(STDIN_FILENO);
-            shell_pgid = getpgrp();
+            // 0 is a valid return code from `tcgetpgrp()` under at least FreeBSD and testing
+            // indicates that a subsequent call to `tcsetpgrp()` will succeed. 0 is the
+            // pid of the top-level kernel process, so I'm not sure if this means ownership
+            // of the terminal has gone back to the kernel (i.e. it's not owned) or if it is
+            // just an "invalid" pid for all intents and purposes.
+            if (owner == 0) {
+                tcsetpgrp(STDIN_FILENO, shell_pgid);
+                // Since we expect the above to work, call `tcgetpgrp()` immediately to
+                // avoid a second pass through this loop.
+                owner = tcgetpgrp(STDIN_FILENO);
+            }
             if (owner == -1 && errno == ENOTTY) {
+                if (!is_interactive_session) {
+                    // It's OK if we're not able to take control of the terminal. We handle
+                    // the fallout from this in a few other places.
+                    break;
+                }
                 // No TTY, cannot be interactive?
                 redirect_tty_output();
                 debug(1, _(L"No TTY for interactive shell (tcgetpgrp failed)"));
@@ -1778,7 +1793,7 @@ static void reader_interactive_init() {
                 // Try stopping us.
                 int ret = killpg(shell_pgid, SIGTTIN);
                 if (ret < 0) {
-                    wperror(L"killpg");
+                    wperror(L"killpg(shell_pgid, SIGTTIN)");
                     exit_without_destructors(1);
                 }
             }
@@ -2242,23 +2257,13 @@ void reader_bg_job_warning() {
 
     job_iterator_t jobs;
     while (job_t *j = jobs.next()) {
-        if (!job_is_completed(j)) {
+        if (!j->is_completed()) {
             fwprintf(stdout, L"%6d  %ls\n", j->processes[0]->pid, j->command_wcstr());
         }
     }
     fputws(L"\n", stdout);
     fputws(_(L"A second attempt to exit will terminate them.\n"), stdout);
     fputws(_(L"Use 'disown PID' to remove jobs from the list without terminating them.\n"), stdout);
-}
-
-void kill_background_jobs() {
-    job_iterator_t jobs;
-    while (job_t *j = jobs.next()) {
-        if (!job_is_completed(j)) {
-            if (job_is_stopped(j)) job_signal(j, SIGCONT);
-            job_signal(j, SIGHUP);
-        }
-    }
 }
 
 /// This function is called when the main loop notices that end_loop has been set while in
@@ -2277,7 +2282,7 @@ static void handle_end_loop() {
         bool bg_jobs = false;
         job_iterator_t jobs;
         while (const job_t *j = jobs.next()) {
-            if (!job_is_completed(j)) {
+            if (!j->is_completed()) {
                 bg_jobs = true;
                 break;
             }
@@ -2293,7 +2298,7 @@ static void handle_end_loop() {
     }
 
     // Kill remaining jobs before exiting.
-    kill_background_jobs();
+    hup_background_jobs();
 }
 
 static bool selection_is_at_top() {
@@ -2454,9 +2459,11 @@ const wchar_t *reader_readline(int nchars) {
     // Get the current terminal modes. These will be restored when the function returns.
     if (tcgetattr(STDIN_FILENO, &old_modes) == -1 && errno == EIO) redirect_tty_output();
     // Set the new modes.
-    if (tcsetattr(0, TCSANOW, &shell_modes) == -1) {
-        if (errno == EIO) redirect_tty_output();
-        wperror(L"tcsetattr");
+    if (is_interactive_session) {
+        if (tcsetattr(0, TCSANOW, &shell_modes) == -1) {
+            if (errno == EIO) redirect_tty_output();
+            wperror(L"tcsetattr");
+        }
     }
 
     while (!finished && !data->end_loop) {
@@ -3335,7 +3342,9 @@ const wchar_t *reader_readline(int nchars) {
     }
 
     if (!reader_exit_forced()) {
-        if (tcsetattr(0, TCSANOW, &old_modes) == -1) {
+        // The order of the two conditions below is important. Try to restore the mode
+        // in all cases, but only complain if interactive.
+        if (tcsetattr(0, TCSANOW, &old_modes) == -1 && is_interactive_session) {
             if (errno == EIO) redirect_tty_output();
             wperror(L"tcsetattr");  // return to previous mode
         }
