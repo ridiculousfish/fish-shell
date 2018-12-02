@@ -1761,6 +1761,15 @@ static void test_ifind() {
     do_test(ifind(std::string{"balpha"}, std::string{"Plh"}) == std::string::npos);
 }
 
+static void test_ifind_fuzzy() {
+    say(L"Testing ifind with fuzzy logic");
+    do_test(ifind(std::string{"alpha"}, std::string{"alpha"}, true) == 0);
+    do_test(ifind(wcstring{L"alphab"}, wcstring{L"alpha"}, true) == 0);
+    do_test(ifind(std::string{"alpha-b"}, std::string{"alpha_b"}, true) == 0);
+    do_test(ifind(std::string{"alpha-_"}, std::string{"alpha_-"}, true) == 0);
+    do_test(ifind(std::string{"alpha-b"}, std::string{"alpha b"}, true) == std::string::npos);
+}
+
 static void test_abbreviations() {
     say(L"Testing abbreviations");
     auto &vars = parser_t::principal_parser().vars();
@@ -4989,6 +4998,7 @@ int main(int argc, char **argv) {
     if (should_test_function("expand")) test_expand();
     if (should_test_function("fuzzy_match")) test_fuzzy_match();
     if (should_test_function("ifind")) test_ifind();
+    if (should_test_function("ifind_fuzzy")) test_ifind_fuzzy();
     if (should_test_function("abbreviations")) test_abbreviations();
     if (should_test_function("test")) test_test();
     if (should_test_function("path")) test_path();
