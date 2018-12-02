@@ -2494,6 +2494,21 @@ static void test_complete() {
     popd();
     completions.clear();
 
+    // Test abbreviations.
+    auto &pvars = parser_t::principal_parser().vars();
+    function_data_t fd;
+    fd.name = L"testabbrsonetwothreefour";
+    function_add(fd, parser_t::principal_parser());
+    int ret = pvars.set_one(L"_fish_abbr_testabbrsonetwothreezero", ENV_GLOBAL, L"expansion");
+    do_test(ret == 0);
+    complete(L"testabbrsonetwothree", &completions, COMPLETION_REQUEST_DEFAULT, pvars);
+    do_test(completions.size() == 2);
+    do_test(completions.at(0).completion == L"four");
+    do_test((completions.at(0).flags & COMPLETE_NO_SPACE) == 0);
+    // Abbreviations should not have a space after them.
+    do_test(completions.at(1).completion == L"zero");
+    do_test((completions.at(1).flags & COMPLETE_NO_SPACE) != 0);
+
     // Test wraps.
     do_test(comma_join(complete_get_wrap_targets(L"wrapper1")) == L"");
     complete_add_wrapper(L"wrapper1", L"wrapper2");

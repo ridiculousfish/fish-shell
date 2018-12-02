@@ -59,6 +59,9 @@
 /// Description for short variables. The value is concatenated to this description.
 #define COMPLETE_VAR_DESC_VAL _(L"Variable: %ls")
 
+/// Description for abbreviations.
+#define ABBR_DESC _(L"Abbreviation: %ls")
+
 /// The special cased translation macro for completions. The empty string needs to be special cased,
 /// since it can occur, and should not be translated. (Gettext returns the version information as
 /// the response).
@@ -181,6 +184,10 @@ void completion_entry_t::add_option(const complete_entry_opt_t &opt) {
 
 const option_list_t &completion_entry_t::get_options() const {
     return options;
+}
+
+description_func_t const_desc(const wcstring &s) {
+    return [=](const wcstring &ignored) { return s; };
 }
 
 /// Clear the COMPLETE_AUTO_SPACE flag, and set COMPLETE_NO_SPACE appropriately depending on the
@@ -328,6 +335,9 @@ class completer_t {
     void complete_cmd(const wcstring &str, bool use_function, bool use_builtin, bool use_command,
                       bool use_implicit_cd);
 
+    /// Attempt to complete an abbreviation for the given string.
+    void complete_abbr(const wcstring &str);
+
     void complete_from_args(const wcstring &str, const wcstring &args, const wcstring &desc,
                             complete_flags_t flags);
 
@@ -337,9 +347,8 @@ class completer_t {
 
     bool condition_test(const wcstring &condition);
 
-    void complete_strings(const wcstring &wc_escaped, const wchar_t *desc,
-                          wcstring (*desc_func)(const wcstring &),
-                          std::vector<completion_t> &possible_comp, complete_flags_t flags);
+    void complete_strings(const wcstring &wc_escaped, const description_func_t &desc_func,
+                          const std::vector<completion_t> &possible_comp, complete_flags_t flags);
 
     expand_flags_t expand_flags() const {
         // Never do command substitution in autosuggestions. Sadly, we also can't yet do job
@@ -519,20 +528,15 @@ static void parse_cmd_string(const wcstring &str, wcstring *path, wcstring *cmd,
 ///    the prefix, possibly containing wildcards. The wildcard should not have
 ///    been unescaped, i.e. '*' should be used for any string, not the
 ///    ANY_STRING character.
-/// @param  desc
-///    the default description, used for completions with no embedded
-///    description. The description _may_ contain a COMPLETE_SEP character, if
-///    not, one will be prefixed to it
 /// @param  desc_func
-///    the function that generates a description for those completions witout an
+///    the function that generates a description for those completions without an
 ///    embedded description
 /// @param  possible_comp
 ///    the list of possible completions to iterate over
 /// @param  flags
 ///    The flags
-void completer_t::complete_strings(const wcstring &wc_escaped, const wchar_t *desc,
-                                   wcstring (*desc_func)(const wcstring &),
-                                   std::vector<completion_t> &possible_comp,
+void completer_t::complete_strings(const wcstring &wc_escaped, const description_func_t &desc_func,
+                                   const std::vector<completion_t> &possible_comp,
                                    complete_flags_t flags) {
     wcstring tmp = wc_escaped;
     if (!expand_one(tmp, EXPAND_SKIP_CMDSUBST | EXPAND_SKIP_WILDCARDS | this->expand_flags(), vars))
@@ -540,12 +544,10 @@ void completer_t::complete_strings(const wcstring &wc_escaped, const wchar_t *de
 
     const wcstring wc = parse_util_unescape_wildcards(tmp);
 
-    for (size_t i = 0; i < possible_comp.size(); i++) {
-        wcstring temp = possible_comp.at(i).completion;
-        const wchar_t *next_str = temp.empty() ? NULL : temp.c_str();
-
-        if (next_str) {
-            wildcard_complete(next_str, wc.c_str(), desc, desc_func, &this->completions,
+    for (const auto &comp : possible_comp) {
+        const wcstring &comp_str = comp.completion;
+        if (!comp_str.empty()) {
+            wildcard_complete(comp_str, wc.c_str(), desc_func, &this->completions,
                               this->expand_flags(), flags);
         }
     }
@@ -685,7 +687,7 @@ void completer_t::complete_cmd(const wcstring &str_cmd, bool use_function, bool 
                 append_completion(&possible_comp, std::move(name));
             }
 
-            this->complete_strings(str_cmd, 0, &complete_function_desc, possible_comp, 0);
+            this->complete_strings(str_cmd, complete_function_desc, possible_comp, 0);
         }
 
         possible_comp.clear();
@@ -693,9 +695,25 @@ void completer_t::complete_cmd(const wcstring &str_cmd, bool use_function, bool 
         if (use_builtin) {
             // Append all matching builtins
             builtin_get_names(&possible_comp);
-            this->complete_strings(str_cmd, 0, &builtin_get_desc, possible_comp, 0);
+            this->complete_strings(str_cmd, builtin_get_desc, possible_comp, 0);
         }
     }
+}
+
+void completer_t::complete_abbr(const wcstring &cmd) {
+    std::map<wcstring, wcstring> abbrs = get_abbreviations(vars);
+    std::vector<completion_t> possible_comp;
+    possible_comp.reserve(abbrs.size());
+    for (const auto &kv : abbrs) {
+        possible_comp.emplace_back(kv.first);
+    }
+
+    auto desc_func = [&](const wcstring &key) {
+        auto iter = abbrs.find(key);
+        assert(iter != abbrs.end() && "Abbreviation not found");
+        return format_string(ABBR_DESC, iter->second.c_str());
+    };
+    this->complete_strings(cmd, desc_func, possible_comp, COMPLETE_NO_SPACE);
 }
 
 /// Evaluate the argument list (as supplied by complete -a) and insert any
@@ -735,7 +753,7 @@ void completer_t::complete_from_args(const wcstring &str, const wcstring &args,
         proc_pop_interactive();
     }
 
-    this->complete_strings(escape_string(str, ESCAPE_ALL), desc.c_str(), 0, possible_comp, flags);
+    this->complete_strings(escape_string(str, ESCAPE_ALL), const_desc(desc), possible_comp, flags);
 }
 
 static size_t leading_dash_count(const wchar_t *str) {
@@ -1345,11 +1363,6 @@ static maybe_t<size_t> find_argument_containing_position(const arg_list_t &args,
 void completer_t::perform() {
     wcstring current_command;
     const size_t pos = cmd.size();
-    bool use_command = 1;
-    bool use_function = 1;
-    bool use_builtin = 1;
-    bool use_implicit_cd = 1;
-
     // debug( 1, L"Complete '%ls'", cmd.c_str() );
 
     const wchar_t *tok_begin = nullptr;
@@ -1413,6 +1426,12 @@ void completer_t::perform() {
     } else {
         assert(plain_statement && plain_statement.has_source());
 
+        bool use_command = true;
+        bool use_function = true;
+        bool use_builtin = true;
+        bool use_implicit_cd = true;
+        bool use_abbr = true;
+
         // Get the command node.
         tnode_t<grammar::tok_string> cmd_node = plain_statement.child<0>();
         assert(cmd_node && cmd_node.has_source() && "Expected command node to be valid");
@@ -1427,6 +1446,7 @@ void completer_t::perform() {
                 use_function = true;
                 use_builtin = true;
                 use_implicit_cd = true;
+                use_abbr = true;
                 break;
             }
             case parse_statement_decoration_command:
@@ -1435,6 +1455,7 @@ void completer_t::perform() {
                 use_function = false;
                 use_builtin = false;
                 use_implicit_cd = false;
+                use_abbr = false;
                 break;
             }
             case parse_statement_decoration_builtin: {
@@ -1442,6 +1463,7 @@ void completer_t::perform() {
                 use_function = false;
                 use_builtin = true;
                 use_implicit_cd = false;
+                use_abbr = false;
                 break;
             }
         }
@@ -1449,6 +1471,7 @@ void completer_t::perform() {
         if (cmd_node.location_in_or_at_end_of_source_range(pos)) {
             // Complete command filename.
             complete_cmd(current_token, use_function, use_builtin, use_command, use_implicit_cd);
+            if (use_abbr) complete_abbr(current_token);
         } else {
             // Get all the arguments.
             arg_list_t all_arguments = plain_statement.descendants<grammar::argument>();
