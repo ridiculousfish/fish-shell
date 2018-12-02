@@ -214,7 +214,12 @@ class job_t {
     /// untruncated job string when we don't care what the job is, only which of the currently
     /// running jobs it is.
     wcstring preview() const {
-        return processes.empty() ? L"" : processes[0]->argv0() + wcstring(L" ...");
+        if (processes.empty())
+            return L"";
+        // Note argv0 may be empty in e.g. a block process.
+        const wchar_t *argv0 = processes.front()->argv0();
+        wcstring result = argv0 ? argv0 : L"null";
+        return result + L" ...";
     }
 
     /// All the processes in this job.
@@ -400,6 +405,9 @@ bool terminal_give_to_job(const job_t *j, bool restore_attrs);
 /// Returns the pid to restore after running the builtin, or -1 if there is no pid to restore.
 pid_t terminal_acquire_before_builtin(int job_pgid);
 
+/// Add a pid to the list of pids we wait on even though they are not associated with any jobs.
+/// Used to avoid zombie processes after disown.
+void add_disowned_pgid(pid_t pgid);
 
 /// 0 should not be used; although it is not a valid PGID in userspace,
 ///   the Linux kernel will use it for kernel processes.

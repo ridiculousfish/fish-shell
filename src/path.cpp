@@ -158,7 +158,8 @@ maybe_t<wcstring> path_get_cdpath(const wcstring &dir, const wcstring &wd,
     int err = ENOENT;
     if (dir.empty()) return none();
 
-    assert(wd.empty() || wd.back() == L'/');
+    assert(!wd.empty() && wd.back() == L'/');
+
     wcstring_list_t paths;
     if (dir.at(0) == L'/') {
         // Absolute path.
@@ -166,10 +167,7 @@ maybe_t<wcstring> path_get_cdpath(const wcstring &dir, const wcstring &wd,
     } else if (string_prefixes_string(L"./", dir) || string_prefixes_string(L"../", dir) ||
                dir == L"." || dir == L"..") {
         // Path is relative to the working directory.
-        wcstring path;
-        if (!wd.empty()) path.append(wd);
-        path.append(dir);
-        paths.push_back(path);
+        paths.push_back(path_normalize_for_cd(wd, dir));
     } else {
         // Respect CDPATH.
         wcstring_list_t cdpathsv;

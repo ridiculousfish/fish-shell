@@ -332,6 +332,14 @@ io_chain_t job_t::all_io_redirections() const {
 
 typedef unsigned int process_generation_count_t;
 
+/// A list of pids/pgids that have been disowned. They are kept around until either they exit or
+/// we exit. Poll these from time-to-time to prevent zombie processes from happening (#5342).
+static std::vector<pid_t> s_disowned_pids;
+
+void add_disowned_pgid(pid_t pgid) {
+    s_disowned_pids.push_back(pgid * -1);
+}
+
 /// A static value tracking how many SIGCHLDs we have seen, which is used in a heurstic to
 /// determine if we should call waitpid() at all in `process_mark_finished_children`.
 static volatile process_generation_count_t s_sigchld_generation_cnt = 0;
@@ -478,6 +486,13 @@ static bool process_mark_finished_children(const parser_t &parser, bool block_on
         }
     }
 
+    // Poll disowned processes/process groups, but do nothing with the result. Only used to avoid
+    // zombie processes. Entries have already be converted to negative for process groups.
+    int status;
+    s_disowned_pids.erase(std::remove_if(s_disowned_pids.begin(), s_disowned_pids.end(),
+                [&status](pid_t pid) { return waitpid(pid, &status, WNOHANG) > 0; }),
+            s_disowned_pids.end());
+
     // Yes, the below can be collapsed to a single line, but it's worth being explicit about it with
     // the comments. Fret not, the compiler will optimize it. (It better!)
     if (jobs_skipped) {
@@ -530,11 +545,7 @@ static void format_job_info(const job_t *j, job_status_t status) {
     outputter_t outp;
     outp.writestr("\r");
     outp.writestr(format_string(_(msg), j->job_id, truncate_command(j->command()).c_str()));
-    if (cur_term) {
-        outp.term_puts(clr_eol, 1);
-    } else {
-        outp.writestr(L"\x1B[K");
-    }
+    if (clr_eol) outp.term_puts(clr_eol, 1);
     outp.writestr(L"\n");
     fflush(stdout);
     outp.flush_to(STDOUT_FILENO);
@@ -636,11 +647,7 @@ static int process_clean_after_marking(parser_t &parser, bool allow_interactive)
                              signal_get_desc(WTERMSIG(p->status)));
                 }
 
-                if (cur_term != NULL) {
-                    outputter_t::stdoutput().term_puts(clr_eol, 1);
-                } else {
-                    fwprintf(stdout, L"\x1B[K");  // no term set up - do clr_eol manually
-                }
+		if (clr_eol) outputter_t::stdoutput().term_puts(clr_eol, 1);
                 fwprintf(stdout, L"\n");
             }
             found = 1;

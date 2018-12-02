@@ -78,7 +78,7 @@
 
 // Name of the variable that tells how long it took, in milliseconds, for the previous
 // interactive command to complete.
-#define ENV_cmd_duration L"cmd_duration"
+#define ENV_CMD_DURATION L"CMD_DURATION"
 
 /// Maximum length of prefix string when printing completion list. Longer prefixes will be
 /// ellipsized.
@@ -918,7 +918,7 @@ void reader_init() {
     // Ensure this var is present even before an interactive command is run so that if it is used
     // in a function like `fish_prompt` or `fish_right_prompt` it is defined at the time the first
     // prompt is written.
-    vars.set_one(ENV_cmd_duration, ENV_UNEXPORT, L"0");
+    vars.set_one(ENV_CMD_DURATION, ENV_UNEXPORT, L"0");
 
     // Save the initial terminal mode.
     tcgetattr(STDIN_FILENO, &terminal_mode_on_startup);
@@ -1802,6 +1802,38 @@ static void reader_interactive_init() {
         signal_set_handlers();
     }
 
+
+    // It shouldn't be necessary to place fish in its own process group and force control
+    // of the terminal, but that works around fish being started with an invalid pgroup,
+    // such as when launched via firejail (#5295)
+    if (shell_pgid == 0) {
+        shell_pgid = getpid();
+        if (setpgid(shell_pgid, shell_pgid) < 0) {
+            debug(0, _(L"Failed to assign shell to its own process group"));
+            wperror(L"setpgid");
+            exit_without_destructors(1);
+        }
+
+        // Take control of the terminal
+        if (tcsetpgrp(STDIN_FILENO, shell_pgid) == -1) {
+            if (errno == ENOTTY) {
+                redirect_tty_output();
+            }
+            debug(0, _(L"Failed to take control of the terminal"));
+            wperror(L"tcsetpgrp");
+            exit_without_destructors(1);
+        }
+
+        // Configure terminal attributes
+        if (tcsetattr(0, TCSANOW, &shell_modes) == -1) {
+            if (errno == EIO) {
+                redirect_tty_output();
+            }
+            debug(1, _(L"Failed to set startup terminal mode!"));
+            wperror(L"tcsetattr");
+        }
+    }
+
     invalidate_termsize();
 
     // For compatibility with fish 2.0's $_, now replaced with `status current-command`
@@ -1989,7 +2021,7 @@ void set_env_cmd_duration(struct timeval *after, struct timeval *before, env_sta
     }
 
     swprintf(buf, 16, L"%d", (secs * 1000) + (usecs / 1000));
-    vars.set_one(ENV_cmd_duration, ENV_UNEXPORT, buf);
+    vars.set_one(ENV_CMD_DURATION, ENV_UNEXPORT, buf);
 }
 
 void reader_run_command(parser_t &parser, const wcstring &cmd) {
@@ -2007,7 +2039,7 @@ void reader_run_command(parser_t &parser, const wcstring &cmd) {
     gettimeofday(&time_before, NULL);
 
     parser.eval(cmd, io_chain_t(), TOP);
-    job_reap(parser, 1);
+    job_reap(parser, true);
 
     gettimeofday(&time_after, NULL);
 
@@ -2965,47 +2997,35 @@ const wchar_t *reader_readline(int nchars) {
                          ? move_word_style_whitespace
                          : c == R_BACKWARD_KILL_PATH_COMPONENT ? move_word_style_path_components
                                                                : move_word_style_punctuation);
+                // Is this the same killring item as the last kill?
                 bool newv = (last_char != R_BACKWARD_KILL_WORD &&
                              last_char != R_BACKWARD_KILL_PATH_COMPONENT &&
                              last_char != R_BACKWARD_KILL_BIGWORD);
                 move_word(data->active_edit_line(), MOVE_DIR_LEFT, true /* erase */, style, newv);
                 break;
             }
-            case R_KILL_WORD: {
-                move_word(data->active_edit_line(), MOVE_DIR_RIGHT, true /* erase */,
-                          move_word_style_punctuation, last_char != R_KILL_WORD);
-                break;
-            }
+            case R_KILL_WORD:
             case R_KILL_BIGWORD: {
+                // The "bigword" functions differ only in that they move to the next whitespace, not punctuation.
+                auto move_style = (c == R_KILL_WORD) ? move_word_style_punctuation : move_word_style_whitespace;
                 move_word(data->active_edit_line(), MOVE_DIR_RIGHT, true /* erase */,
-                          move_word_style_whitespace, last_char != R_KILL_BIGWORD);
+                          move_style, last_char != c /* same kill item if same movement */);
                 break;
             }
-            case R_BACKWARD_WORD: {
-                move_word(data->active_edit_line(), MOVE_DIR_LEFT, false /* do not erase */,
-                          move_word_style_punctuation, false);
-                break;
-            }
+            case R_BACKWARD_WORD:
             case R_BACKWARD_BIGWORD: {
+                auto move_style = (c == R_BACKWARD_WORD) ? move_word_style_punctuation : move_word_style_whitespace;
                 move_word(data->active_edit_line(), MOVE_DIR_LEFT, false /* do not erase */,
-                          move_word_style_whitespace, false);
+                          move_style, false);
                 break;
             }
-            case R_FORWARD_WORD: {
-                editable_line_t *el = data->active_edit_line();
-                if (el->position < el->size()) {
-                    move_word(el, MOVE_DIR_RIGHT, false /* do not erase */,
-                              move_word_style_punctuation, false);
-                } else {
-                    accept_autosuggestion(false /* accept only one word */);
-                }
-                break;
-            }
+            case R_FORWARD_WORD:
             case R_FORWARD_BIGWORD: {
+                auto move_style = (c == R_FORWARD_WORD) ? move_word_style_punctuation : move_word_style_whitespace;
                 editable_line_t *el = data->active_edit_line();
                 if (el->position < el->size()) {
                     move_word(el, MOVE_DIR_RIGHT, false /* do not erase */,
-                              move_word_style_whitespace, false);
+                              move_style, false);
                 } else {
                     accept_autosuggestion(false /* accept only one word */);
                 }
@@ -3195,11 +3215,17 @@ const wchar_t *reader_readline(int nchars) {
                 reader_repaint_needed();
                 break;
             }
-            case R_BEGIN_SELECTION: {
-                data->sel_active = true;
-                data->sel_begin_pos = data->command_line.position;
+            case R_BEGIN_SELECTION:
+            case R_END_SELECTION: {
                 data->sel_start_pos = data->command_line.position;
                 data->sel_stop_pos = data->command_line.position;
+                if (c == R_BEGIN_SELECTION) {
+                    data->sel_active = true;
+                    data->sel_begin_pos = data->command_line.position;
+                } else {
+                    data->sel_active = false;
+                }
+
                 break;
             }
             case R_SWAP_SELECTION_START_STOP: {
@@ -3211,12 +3237,6 @@ const wchar_t *reader_readline(int nchars) {
                 update_buff_pos(el, tmp);
                 break;
             }
-            case R_END_SELECTION: {
-                data->sel_active = false;
-                data->sel_start_pos = data->command_line.position;
-                data->sel_stop_pos = data->command_line.position;
-                break;
-            }
             case R_KILL_SELECTION: {
                 bool newv = (last_char != R_KILL_SELECTION);
                 size_t start, len;
@@ -3225,37 +3245,17 @@ const wchar_t *reader_readline(int nchars) {
                 }
                 break;
             }
-            case R_FORWARD_JUMP: {
-                editable_line_t *el = data->active_edit_line();
-                wchar_t target = input_function_pop_arg();
-                bool success = jump(jump_direction_t::forward, jump_precision_t::to, el, target);
-
-                input_function_set_status(success);
-                reader_repaint_needed();
-                break;
-            }
-            case R_BACKWARD_JUMP: {
-                editable_line_t *el = data->active_edit_line();
-                wchar_t target = input_function_pop_arg();
-                bool success = jump(jump_direction_t::backward, jump_precision_t::to, el, target);
-
-                input_function_set_status(success);
-                reader_repaint_needed();
-                break;
-            }
-            case R_FORWARD_JUMP_TILL: {
-                editable_line_t *el = data->active_edit_line();
-                wchar_t target = input_function_pop_arg();
-                bool success = jump(jump_direction_t::forward, jump_precision_t::till, el, target);
-
-                input_function_set_status(success);
-                reader_repaint_needed();
-                break;
-            }
+            case R_FORWARD_JUMP:
+            case R_BACKWARD_JUMP:
+            case R_FORWARD_JUMP_TILL:
             case R_BACKWARD_JUMP_TILL: {
+                auto direction = (c == R_FORWARD_JUMP || c == R_FORWARD_JUMP_TILL) ?
+                    jump_direction_t::forward : jump_direction_t::backward;
+                auto precision = (c == R_FORWARD_JUMP || c == R_BACKWARD_JUMP) ?
+                    jump_precision_t::to : jump_precision_t::till;
                 editable_line_t *el = data->active_edit_line();
                 wchar_t target = input_function_pop_arg();
-                bool success = jump(jump_direction_t::backward, jump_precision_t::till, el, target);
+                bool success = jump(direction, precision, el, target);
 
                 input_function_set_status(success);
                 reader_repaint_needed();

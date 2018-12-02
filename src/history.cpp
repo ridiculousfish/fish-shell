@@ -36,6 +36,7 @@
 #include "io.h"
 #include "iothread.h"
 #include "lru.h"
+#include "parser.h"
 #include "parse_constants.h"
 #include "parse_util.h"
 #include "path.h"
@@ -131,7 +132,7 @@ class time_profiler_t {
 
     ~time_profiler_t() {
         double end = timef();
-        debug(2, "%s: %.0f ms", what, (end - start) * 1000);
+        debug(5, "%s: %.0f ms", what, (end - start) * 1000);
     }
 };
 
@@ -1994,8 +1995,9 @@ void history_t::resolve_pending() {
 static bool private_mode = false;
 void start_private_mode() {
     private_mode = true;
-    env_set_one(L"fish_history", ENV_GLOBAL, L"");
-    env_set_one(L"fish_private_mode", ENV_GLOBAL, L"1");
+    auto &vars = parser_t::principal_parser().vars();
+    vars.set_one(L"fish_history", ENV_GLOBAL, L"");
+    vars.set_one(L"fish_private_mode", ENV_GLOBAL, L"1");
 }
 
 bool in_private_mode() {

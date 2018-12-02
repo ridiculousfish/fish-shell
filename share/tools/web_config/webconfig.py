@@ -4,6 +4,10 @@ from __future__ import unicode_literals
 from __future__ import print_function
 import binascii
 import cgi
+try:
+    from html import escape as escape_html
+except ImportError:
+    from cgi import escape as escape_html
 from distutils.version import LooseVersion
 import glob
 import multiprocessing.pool
@@ -304,8 +308,9 @@ def ansi_to_html(val):
     reg = re.compile("""
         (                        # Capture
          \x1b                    # Escape
-         [^m]+                   # One or more non-'m's
+         [^m]*                   # Zero or more non-'m's
          m                       # Literal m terminates the sequence
+         \x0f?                   # HACK: A ctrl-o - this is how tmux' sgr0 ends
         )                        # End capture
         """, re.VERBOSE)
     separated = reg.split(val)
@@ -322,7 +327,7 @@ def ansi_to_html(val):
         if i % 2 == 0:
             # It's text, possibly empty
             # Clean up other ANSI junk
-            result.append(cgi.escape(strip_ansi(component)))
+            result.append(escape_html(strip_ansi(component)))
         else:
             # It's an escape sequence. Close the previous escape.
             span_open = append_html_for_ansi_escape(component, result,
@@ -573,6 +578,7 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
                          'param',
                          'comment',
                          'match',
+                         'selection',
                          'search_match',
                          'operator',
                          'escape',
@@ -580,6 +586,9 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
                          'redirection',
                          'valid_path',
                          'autosuggestion'
+                         'user',
+                         'host',
+                         'cancel'
                          ])
 
         # Here are our color descriptions
@@ -593,6 +602,7 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
             'param': 'Command parameters',
             'comment': 'Comments start with #',
             'match': 'Matching parenthesis',
+            'selection': 'Selected text',
             'search_match': 'History searching',
             'history_current': 'Directory history',
             'operator': 'Like * and ~',
@@ -600,7 +610,10 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
             'cwd': 'Current directory',
             'cwd_root': 'cwd for root user',
             'valid_path': 'Valid paths',
-            'autosuggestion': 'Suggested completion'
+            'autosuggestion': 'Suggested completion',
+            'user': 'Username in the prompt',
+            'host': 'Hostname in the prompt',
+            'cancel': 'The ^C cancel indicator'
         }
 
         out, err = run_fish_cmd('set -L')
@@ -727,10 +740,16 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
     def do_set_color_for_variable(self, name, color, background_color, bold,
                                   underline):
+        "Sets a color for a fish color name, like 'autosuggestion'"
         if not color:
             color = 'normal'
-        "Sets a color for a fish color name, like 'autosuggestion'"
-        command = 'set -U fish_color_' + name
+        varname = 'fish_color_' + name
+        # If the name already starts with "fish_", use it as the varname
+        # This is needed for 'fish_pager_color' vars.
+        if name.startswith('fish_'):
+            varname = name
+        # TODO: Check if the varname is allowable.
+        command = 'set -U ' + varname
         if color:
             command += ' ' + color
         if background_color:

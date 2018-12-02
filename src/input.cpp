@@ -210,7 +210,7 @@ static bool specification_order_is_less_than(const input_mapping_t &m1, const in
 /// that we test longer sequences first.
 static void input_mapping_insert_sorted(const input_mapping_t &new_mapping, bool user = true) {
     auto& ml = user ? mapping_list : preset_mapping_list;
-    
+
     std::vector<input_mapping_t>::iterator loc = std::lower_bound(
         ml.begin(), ml.end(), new_mapping, length_is_greater_than);
     ml.insert(loc, new_mapping);
@@ -232,7 +232,7 @@ void input_mapping_add(const wchar_t *sequence, const wchar_t *const *commands, 
     const wcstring_list_t commands_vector(commands, commands + commands_len);
 
     auto& ml = user ? mapping_list : preset_mapping_list;
-    
+
     for (size_t i = 0; i < ml.size(); i++) {
         input_mapping_t &m = ml.at(i);
         if (m.seq == sequence && m.mode == mode) {

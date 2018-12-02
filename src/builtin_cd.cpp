@@ -66,18 +66,17 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     }
     const wcstring &dir = *mdir;
 
-    // Prepend the PWD if we don't start with a slash, and then normalize the directory.
-    wcstring norm_dir = normalize_path(string_prefixes_string(L"/", dir) ? dir : pwd + dir);
+    wcstring norm_dir = normalize_path(dir);
     if (wchdir(norm_dir) != 0) {
         struct stat buffer;
         int status;
 
         status = wstat(dir, &buffer);
         if (!status && S_ISDIR(buffer.st_mode)) {
-            streams.err.append_format(_(L"%ls: Permission denied: '%ls'\n"), cmd, dir.c_str());
+            streams.err.append_format(_(L"%ls: Permission denied: '%ls'\n"), cmd, dir_in.c_str());
 
         } else {
-            streams.err.append_format(_(L"%ls: '%ls' is not a directory\n"), cmd, dir.c_str());
+            streams.err.append_format(_(L"%ls: '%ls' is not a directory\n"), cmd, dir_in.c_str());
         }
 
         if (!shell_is_interactive()) {

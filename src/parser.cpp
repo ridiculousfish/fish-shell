@@ -113,6 +113,10 @@ parser_t &parser_t::principal_parser() {
     return *principal;
 }
 
+void parser_t::set_is_within_fish_initialization(bool flag) {
+	    is_within_fish_initialization = flag;
+}
+
 void parser_t::skip_all_blocks() {
     // Tell all blocks to skip.
     // This may be called from a signal handler!
@@ -398,7 +402,7 @@ void parser_t::stack_trace_internal(size_t block_idx, wcstring *buff) const {
         if (file) {
             append_format(*buff, _(L"\tcalled on line %d of file %ls\n"), b->src_lineno,
                           user_presentable_path(file).c_str());
-        } else if (is_within_fish_initialization()) {
+        } else if (is_within_fish_initialization) {
             append_format(*buff, _(L"\tcalled during startup\n"));
         } else {
             append_format(*buff, _(L"\tcalled on standard input\n"));
@@ -535,7 +539,7 @@ wcstring parser_t::current_line() {
         if (file) {
             append_format(prefix, _(L"%ls (line %d): "), user_presentable_path(file).c_str(),
                           lineno);
-        } else if (is_within_fish_initialization()) {
+        } else if (is_within_fish_initialization) {
             append_format(prefix, L"%ls (line %d): ", _(L"Startup"), lineno);
         } else {
             append_format(prefix, L"%ls (line %d): ", _(L"Standard input"), lineno);
@@ -679,7 +683,7 @@ int parser_t::eval_node(parsed_source_ref_t ps, tnode_t<T> node, const io_chain_
         return 1;
     }
 
-    job_reap(*this, 0);  // not sure why we reap jobs here
+    job_reap(*this, false);  // not sure why we reap jobs here
 
     // Start it up
     scope_block_t *scope_block = this->push_block<scope_block_t>(block_type);
@@ -692,7 +696,7 @@ int parser_t::eval_node(parsed_source_ref_t ps, tnode_t<T> node, const io_chain_
     exc.restore();
     this->pop_block(scope_block);
 
-    job_reap(*this, 0);  // reap again
+    job_reap(*this, false);  // reap again
     return result;
 }
 

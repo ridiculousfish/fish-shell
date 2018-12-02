@@ -164,6 +164,8 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
    private:
     /// Indication that we should skip all blocks.
     volatile sig_atomic_t cancellation_requested = false;
+    /// Indicates that we are within the process of initializing fish.
+    bool is_within_fish_initialization = false;
     /// The current execution context.
     std::unique_ptr<parse_execution_context_t> execution_context;
     /// List of called functions, used to help prevent infinite recursion.
@@ -276,6 +278,10 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Get the list of jobs.
     job_list_t &job_list() { return my_job_list; }
     const job_list_t &job_list() const { return my_job_list; }
+
+    // Hackish. In order to correctly report the origin of code with no associated file, we need to
+    // know whether it's run during initialization or not.
+    void set_is_within_fish_initialization(bool flag);
 
     /// Get the variables.
     env_stack_t &vars() { return *variables; }

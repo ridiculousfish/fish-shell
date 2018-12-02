@@ -1236,7 +1236,9 @@ parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> jo
         }
 
         // Actually execute the job.
-        exec_job(*this->parser, job);
+        if (!exec_job(*this->parser, job)) {
+            parser->job_remove(job.get());
+        }
 
         // Only external commands require a new fishd barrier.
         if (job_contained_external_command) {
@@ -1253,7 +1255,7 @@ parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> jo
         profile_item->skipped = !populated_job;
     }
 
-    job_reap(*parser, 0);  // clean up jobs
+    job_reap(*parser, false);  // clean up jobs
     return parse_execution_success;
 }
 
@@ -1392,7 +1394,7 @@ int parse_execution_context_t::line_offset_of_character_at_offset(size_t offset)
     const wchar_t *str = pstree->src.c_str();
     if (offset > cached_lineno_offset) {
         size_t i;
-        for (i = cached_lineno_offset; str[i] != L'\0' && i < offset; i++) {
+        for (i = cached_lineno_offset; i < offset && str[i] != L'\0'; i++) {
             // Add one for every newline we find in the range [cached_lineno_offset, offset).
             if (str[i] == L'\n') {
                 cached_lineno_count++;

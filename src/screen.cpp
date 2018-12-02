@@ -722,7 +722,7 @@ static void s_update(screen_t *scr, const environment_t &vars, const wcstring &l
                 s_line.text.empty() ? 0 : fish_wcswidth(&s_line.text.at(0), s_line.text.size());
             clear_remainder = prev_width > current_width;
         }
-        if (clear_remainder) {
+        if (clear_remainder && clr_eol) {
             s_set_color(scr, vars, 0xffffffff);
             s_move(scr, current_width, (int)i);
             s_write_mbs(scr, clr_eol);
@@ -750,7 +750,7 @@ static void s_update(screen_t *scr, const environment_t &vars, const wcstring &l
     }
 
     // Clear remaining lines (if any) if we haven't cleared the screen.
-    if (!has_cleared_screen && scr->desired.line_count() < lines_with_stuff) {
+    if (!has_cleared_screen && scr->desired.line_count() < lines_with_stuff && clr_eol) {
         s_set_color(scr, vars, 0xffffffff);
         for (size_t i = scr->desired.line_count(); i < lines_with_stuff; i++) {
             s_move(scr, 0, (int)i);
@@ -1154,7 +1154,7 @@ void s_reset(screen_t *s, screen_reset_mode_t mode) {
         // line above your prompt. This doesn't make a difference in normal usage, but copying and
         // pasting your terminal log becomes a pain. This commit clears that line, making it an
         // actual empty line.
-        if (!is_dumb()) {
+        if (!is_dumb() && clr_eol) {
             abandon_line_string.append(str2wcstring(clr_eol));
         }
 
