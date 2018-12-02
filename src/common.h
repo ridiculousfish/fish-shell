@@ -207,9 +207,8 @@ extern bool g_profiling_active;
 /// Name of the current program. Should be set at startup. Used by the debug function.
 extern const wchar_t *program_name;
 
-/// Set to false at run-time if it's been determined we can't trust the last modified timestamp on
-/// the tty.
-extern bool has_working_tty_timestamps;
+/// Set to false if it's been determined we can't trust the last modified timestamp on the tty.
+extern const bool has_working_tty_timestamps;
 
 /// A list of all whitespace characters
 extern const wcstring whitespace;
@@ -287,10 +286,10 @@ inline bool is_whitespace(const wchar_t *input) { return is_whitespace(wcstring(
 /// See https://developer.gnome.org/glib/stable/glib-I18N.html#N-:CAPS
 #define N_(wstr) wstr
 
-/// Test if a vector contains a value.
-template <typename T1, typename T2>
-bool contains(const std::vector<T1> &vec, const T2 &val) {
-    return std::find(vec.begin(), vec.end(), val) != vec.end();
+/// Test if a collection contains a value.
+template <typename Col, typename T2>
+bool contains(const Col &col, const T2 &val) {
+    return std::find(std::begin(col), std::end(col), val) != std::end(col);
 }
 
 /// Print a stack trace to stderr.

@@ -294,12 +294,6 @@ static env_universal_t *s_universal_variables = NULL;
 /// Getter for universal variables.
 static env_universal_t *uvars() { return s_universal_variables; }
 
-// Helper class for storing constant strings, without needing to wrap them in a wcstring.
-
-// Comparer for const string set.
-// Note our sets are small so we don't bother to sort them.
-typedef std::unordered_set<wcstring> const_string_set_t;
-
 // A typedef for a set of constant strings. Note our sets are typically on the order of 6 elements,
 // so we don't bother to sort them.
 using string_set_t = const wchar_t *const[];
@@ -337,11 +331,9 @@ static bool variable_is_colon_delimited_var(const wcstring &str) {
 }
 
 /// Table of variables whose value is dynamically calculated, such as umask, status, etc.
-static const_string_set_t env_electric;
+static const string_set_t env_electric = {L"history", L"status", L"umask"};
 
-static bool is_electric(const wcstring &key) {
-    return env_electric.find(key) != env_electric.end();
-}
+static bool is_electric(const wcstring &key) { return contains(env_electric, key); }
 
 maybe_t<env_var_t> env_node_t::find_entry(const wcstring &key) {
     var_table_t::const_iterator entry = env.find(key);
@@ -447,8 +439,7 @@ bool term_supports_setting_title() { return can_set_term_title; }
 /// One situation in which this breaks down is with screen, since screen supports setting the
 /// terminal title if the underlying terminal does so, but will print garbage on terminals that
 /// don't. Since we can't see the underlying terminal below screen there is no way to fix this.
-static const wcstring_list_t title_terms({L"xterm", L"screen", L"tmux", L"nxterm", L"rxvt"});
-
+static const wchar_t *const title_terms[] = {L"xterm", L"screen", L"tmux", L"nxterm", L"rxvt"};
 static bool does_term_support_setting_title(const environment_t &vars) {
     const auto term_var = vars.get(L"TERM");
     if (term_var.missing_or_empty()) return false;
@@ -756,15 +747,6 @@ void misc_init() {
         fflush(stdout);
         setvbuf(stdout, NULL, _IONBF, 0);
     }
-
-#if defined(OS_IS_CYGWIN) || defined(WSL)
-    // MS Windows tty devices do not currently have either a read or write timestamp. Those
-    // respective fields of `struct stat` are always the current time. Which means we can't
-    // use them. So we assume no external program has written to the terminal behind our
-    // back. This makes multiline promptusable. See issue #2859 and
-    // https://github.com/Microsoft/BashOnWindows/issues/545
-    has_working_tty_timestamps = false;
-#endif
 }
 
 static void env_universal_callbacks(env_stack_t *stack, const callback_data_list_t &callbacks) {
@@ -914,14 +896,7 @@ static void setup_var_dispatch_table() {
 
 void env_init(const struct config_paths_t *paths /* or NULL */) {
     setup_var_dispatch_table();
-
     env_stack_t &vars = env_stack_t::globals();
-
-    // Names of all dynamically calculated variables.
-    env_electric.insert({L"history", L"status", L"umask"});
-
-    // Now the environment variable handling is set up, the next step is to insert valid data.
-
     // Import environment variables. Walk backwards so that the first one out of any duplicates wins
     // (See issue #2784).
     wcstring key, val;
@@ -1490,7 +1465,7 @@ wcstring_list_t env_stack_t::get_names(int flags) const {
     if (show_global) {
         add_key_to_string_set(vars_stack().global_env->env, &names, show_exported, show_unexported);
         if (show_unexported) {
-            result.insert(result.end(), env_electric.begin(), env_electric.end());
+            result.insert(result.end(), std::begin(env_electric), std::end(env_electric));
         }
     }
 

@@ -171,10 +171,14 @@ maybe_t<wcstring> path_get_cdpath(const wcstring &dir, const wcstring &wd,
         paths.push_back(path);
     } else {
         // Respect CDPATH.
-        auto cdpaths = env_vars.get(L"CDPATH");
-        if (cdpaths.missing_or_empty()) cdpaths = env_var_t(L"CDPATH", L".");
-
-        for (auto next_path : cdpaths->as_list()) {
+        wcstring_list_t cdpathsv;
+        if (auto cdpaths = env_vars.get(L"CDPATH")) {
+            cdpathsv = cdpaths->as_list();
+        }
+        if (cdpathsv.empty()) {
+            cdpathsv.push_back(L".");
+        }
+        for (wcstring next_path : cdpathsv) {
             if (next_path.empty()) next_path = L".";
             if (next_path == L".") {
                 // next_path is just '.', so use the wd instead.

@@ -34,7 +34,6 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     }
 
     wcstring dir_in;
-
     if (argv[optind]) {
         dir_in = argv[optind];
     } else {

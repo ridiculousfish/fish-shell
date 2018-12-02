@@ -731,30 +731,29 @@ static void expand_home_directory(wcstring &input, const environment_t &vars) {
         size_t tail_idx;
         wcstring username = get_home_directory_name(input, &tail_idx);
 
-        maybe_t<env_var_t> home;
+        maybe_t<wcstring> home;
         if (username.empty()) {
             // Current users home directory.
-            home = vars.get(L"HOME");
-            if (home.missing_or_empty()) {
+            auto home_var = vars.get(L"HOME");
+            if (home_var.missing_or_empty()) {
                 input.clear();
                 return;
             }
+            home = home_var->as_string();
             tail_idx = 1;
         } else {
-            // Some other users home directory.
+            // Some other user's home directory.
             std::string name_cstr = wcs2string(username);
             struct passwd userinfo;
             struct passwd *result;
             char buf[8192];
             int retval = getpwnam_r(name_cstr.c_str(), &userinfo, buf, sizeof(buf), &result);
             if (!retval && result) {
-                home = env_var_t(L"HOME", str2wcstring(userinfo.pw_dir));
+                home = str2wcstring(userinfo.pw_dir);
             }
         }
 
-        maybe_t<wcstring> realhome;
-        if (home) realhome = wrealpath(home->as_string());
-
+        maybe_t<wcstring> realhome = (home ? wrealpath(*home) : none());
         if (realhome) {
             input.replace(input.begin(), input.begin() + tail_idx, *realhome);
         } else {
@@ -982,13 +981,14 @@ static expand_error_t expand_stage_wildcards(const wcstring &input, std::vector<
             } else {
                 // Get the PATH/CDPATH and CWD. Perhaps these should be passed in. An empty CDPATH
                 // implies just the current directory, while an empty PATH is left empty.
-                const wchar_t *name = for_cd ? L"CDPATH" : L"PATH";
-                auto paths = vars.get(name);
-                if (paths.missing_or_empty()) {
-                    paths = env_var_t(name, for_cd ? L"." : L"");
+                wcstring_list_t paths;
+                if (auto paths_var = vars.get(for_cd ? L"CDPATH" : L"PATH")) {
+                    paths = paths_var->as_list();
                 }
-
-                for (const wcstring &next_path : paths->as_list()) {
+                if (paths.empty()) {
+                    paths.emplace_back(for_cd ? L"." : L"");
+                }
+                for (const wcstring &next_path : paths) {
                     effective_working_dirs.push_back(
                         path_apply_working_directory(next_path, working_dir));
                 }
