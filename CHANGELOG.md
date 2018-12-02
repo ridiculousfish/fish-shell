@@ -23,11 +23,13 @@ fish 3.0 is a major release which brings with it both improvements in functional
 - Background jobs not first `disown`'d will be reaped upon `exec`, bringing the behavior in line with that of `exit`.
 - `read` now uses `-s` as short for `--silent` (à la `bash`); `--shell`'s abbreviation (formerly `-s`) is now `-S` instead (#4490).
 - `cd` no longer resolves symlinks. fish now maintains a virtual path, matching other shells. (#3350).
+- `source` now requires an explicit `-` as the filename to read from the terminal (#2633).
 
 ## Notable fixes and improvements
 ### Syntax/semantic changes and new builtins
 - fish now supports `&&`, `||`, and `!` (#4620).
 - Variables may be used as commands (#154).
+- fish may be started in private mode via `fish --private` or `fish -P`. Private mode fish sessions do not have access to the history file and any commands evaluated in private mode are not persisted for future sessions. A session variable `$fish_private_mode` can be queried to detect private mode and adjust the behavior of scripts accordingly to respect the user's wish for privacy.
 - A new feature flags mechanism is added for staging deprecations and breaking changes. Feature flags may be specified at launch with `fish --features ...` or by setting the universal `fish_features` variable. (#4940)
 - `wait` builtin is added for waiting on processes (#4498).
 - `math` is now a builtin rather than a wrapper around `bc` (#3157). The default scale is now 6, so that floating point computations produce decimals (#4478).
@@ -39,7 +41,7 @@ fish 3.0 is a major release which brings with it both improvements in functional
 - `while` sets `$status` to a more useful value (#4982)
 - Command substitution output is now limited to 10 MB by default (#3822).
 - The machine hostname, where available, is now exposed as `$hostname` which is now a reserved variable. This drops the dependency on the `hostname` executable (#4422).
-- The universal variables file no longer contains the MAC address. It is now at the fixed location `.config/fish/fish_universal_variables` (#1912).
+- The universal variables file no longer contains the MAC address. It is now at the fixed location `.config/fish/fish_variables` (#1912).
 - Bare `bind` invocations in config.fish now work. The `fish_user_key_bindings` function is no longer necessary, but will still be executed if it exists (#5191).
 - `$fish_pid` and `$last_pid` are available as an alternatives to `%self` and `%last`.
 
@@ -96,6 +98,7 @@ fish 3.0 is a major release which brings with it both improvements in functional
 - Added completions for
   - `bd` (#4472)
   - `bower`
+  - `clang` and `clang++` (#4174)
   - `configure` (autoconf only)
   - `doas` (#5196)
   - `hjson`

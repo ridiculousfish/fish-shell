@@ -866,12 +866,8 @@ static void complete_load(const wcstring &name, bool reload) {
 ///   echo hello world<tab> -> ("echo", "hello", "world")
 ///
 /// Insert results into comp_out. Return true to perform file completion, false to disable it.
-bool completer_t::complete_param(const wcstring &scmd_orig, const wcstring &spopt,
-                                 const wcstring &sstr, bool use_switches) {
-    const wchar_t *const cmd_orig = scmd_orig.c_str();
-    const wchar_t *const popt = spopt.c_str();
-    const wchar_t *const str = sstr.c_str();
-
+bool completer_t::complete_param(const wcstring &cmd_orig, const wcstring &popt,
+                                 const wcstring &str, bool use_switches) {
     bool use_common = 1, use_files = 1;
 
     wcstring cmd, path;
@@ -897,7 +893,6 @@ bool completer_t::complete_param(const wcstring &scmd_orig, const wcstring &spop
     // Only reload environment variables if builtin_exists returned false, as an optimization
     if (head_exists == false) {
         head_exists = function_exists_no_autoload(cmd.c_str(), vars);
-
         // While it may seem like first testing `path_get_path` before resorting to an env lookup
         // may be faster, path_get_path can potentially do a lot of FS/IO access, so env.get() +
         // function_exists() should still be faster.
@@ -938,7 +933,7 @@ bool completer_t::complete_param(const wcstring &scmd_orig, const wcstring &spop
                 // Check if we are entering a combined option and argument (like --color=auto or
                 // -I/usr/include).
                 for (const complete_entry_opt_t &o : options) {
-                    const wchar_t *arg = param_match2(&o, str);
+                    const wchar_t *arg = param_match2(&o, str.c_str());
                     if (arg != NULL && this->condition_test(o.condition)) {
                         if (o.result_mode & NO_COMMON) use_common = false;
                         if (o.result_mode & NO_FILES) use_files = false;
@@ -953,7 +948,7 @@ bool completer_t::complete_param(const wcstring &scmd_orig, const wcstring &spop
 
                 // If we are using old style long options, check for them first.
                 for (const complete_entry_opt_t &o : options) {
-                    if (o.type == option_type_single_long && param_match(&o, popt) &&
+                    if (o.type == option_type_single_long && param_match(&o, popt.c_str()) &&
                         this->condition_test(o.condition)) {
                         old_style_match = true;
                         if (o.result_mode & NO_COMMON) use_common = false;
@@ -973,7 +968,7 @@ bool completer_t::complete_param(const wcstring &scmd_orig, const wcstring &spop
                         if (o.type == option_type_double_long && !(o.result_mode & NO_COMMON))
                             continue;
 
-                        if (param_match(&o, popt) && this->condition_test(o.condition)) {
+                        if (param_match(&o, popt.c_str()) && this->condition_test(o.condition)) {
                             if (o.result_mode & NO_COMMON) use_common = false;
                             if (o.result_mode & NO_FILES) use_files = false;
                             complete_from_args(str, o.comp, o.localized_desc(), o.flags);
@@ -996,7 +991,7 @@ bool completer_t::complete_param(const wcstring &scmd_orig, const wcstring &spop
                 complete_from_args(str, o.comp, o.localized_desc(), o.flags);
             }
 
-            if (!use_switches || wcslen(str) == 0) {
+            if (!use_switches || str.empty()) {
                 continue;
             }
 
@@ -1018,7 +1013,7 @@ bool completer_t::complete_param(const wcstring &scmd_orig, const wcstring &spop
 
             int match = string_prefixes_string(str, whole_opt);
             if (!match) {
-                bool match_no_case = wcsncasecmp(str, whole_opt.c_str(), wcslen(str)) == 0;
+                bool match_no_case = wcsncasecmp(str.c_str(), whole_opt.c_str(), str.length()) == 0;
 
                 if (!match_no_case) {
                     continue;
@@ -1031,7 +1026,7 @@ bool completer_t::complete_param(const wcstring &scmd_orig, const wcstring &spop
             complete_flags_t flags = 0;
 
             if (match) {
-                offset = wcslen(str);
+                offset = str.length();
             } else {
                 flags = COMPLETE_REPLACES_TOKEN;
             }
@@ -1120,7 +1115,7 @@ void completer_t::complete_param_expand(const wcstring &str, bool do_file,
 bool completer_t::complete_variable(const wcstring &str, size_t start_offset) {
     const wchar_t *const whole_var = str.c_str();
     const wchar_t *var = &whole_var[start_offset];
-    size_t varlen = wcslen(var);
+    size_t varlen = str.length() - start_offset;
     bool res = false;
 
     const wcstring_list_t names = vars.get_names(0);
@@ -1245,7 +1240,7 @@ bool completer_t::try_complete_user(const wcstring &str) {
 
     double start_time = timef();
     bool result = false;
-    size_t name_len = wcslen(user_name);
+    size_t name_len = str.length() - 1;
 
     // We don't bother with the thread-safe `getpwent_r()` variant because this is the sole place
     // where we call getpwent().

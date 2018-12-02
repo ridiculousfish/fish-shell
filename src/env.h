@@ -127,8 +127,8 @@ class env_var_t {
     env_var_t &operator=(const env_var_t &var) = default;
     env_var_t &operator=(env_var_t &&) = default;
 
-    bool operator==(const env_var_t &var) const { return vals == var.vals; }
-    bool operator!=(const env_var_t &var) const { return vals != var.vals; }
+    bool operator==(const env_var_t &rhs) const { return vals == rhs.vals && flags == rhs.flags; }
+    bool operator!=(const env_var_t &rhs) const { return ! (*this == rhs); }
 };
 
 /// An environment is read-only access to variable values.

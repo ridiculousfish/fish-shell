@@ -167,6 +167,7 @@ maybe_t<wcstring> path_get_cdpath(const wcstring &dir, const wcstring &wd,
                dir == L"." || dir == L"..") {
         // Path is relative to the working directory.
         wcstring path;
+        if (!wd.empty()) path.append(wd);
         path.append(dir);
         paths.push_back(path);
     } else {
@@ -180,8 +181,9 @@ maybe_t<wcstring> path_get_cdpath(const wcstring &dir, const wcstring &wd,
         }
         for (wcstring next_path : cdpathsv) {
             if (next_path.empty()) next_path = L".";
-            if (next_path == L".") {
-                // next_path is just '.', so use the wd instead.
+            if (next_path == L"." && !wd.empty()) {
+                // next_path is just '.', and we have a working directory, so use the wd instead.
+                // TODO: if next_path starts with ./ we need to replace the . with the wd.
                 next_path = wd;
             }
             expand_tilde(next_path, env_vars);

@@ -21,11 +21,6 @@ function __fish_config_interactive -d "Initializations that should be performed 
     set -g __fish_config_interactive_done
     set -g __fish_active_key_bindings
 
-    # Set the correct configuration directory
-    set -l configdir ~/.config
-    if set -q XDG_CONFIG_HOME
-        set configdir $XDG_CONFIG_HOME
-    end
     # Set the correct user data directory
     set -l userdatadir ~/.local/share
     if set -q XDG_DATA_HOME
@@ -39,6 +34,11 @@ function __fish_config_interactive -d "Initializations that should be performed 
             set line2 \n(_ 'Type `help` for instructions on how to use fish')
         end
         set -U fish_greeting "$line1$line2"
+    end
+
+    if set -q fish_private_mode
+        set -l line (_ "fish is running in private mode, history will not be persisted.")
+        set -g fish_greeting $fish_greeting.\n$line
     end
 
     #
@@ -131,12 +131,11 @@ function __fish_config_interactive -d "Initializations that should be performed 
             # Hence we'll call python directly.
             # c_m_p.py should work with any python version.
             set -l update_args -B $__fish_data_dir/tools/create_manpage_completions.py --manpath --cleanup-in '~/.config/fish/completions' --cleanup-in '~/.config/fish/generated_completions'
-            if command -qs python3
-                python3 $update_args >/dev/null 2>/dev/null &
-            else if command -qs python2
-                python2 $update_args >/dev/null 2>/dev/null &
-            else if command -qs python
-                python $update_args >/dev/null 2>/dev/null &
+            for py in python{3,2,}
+                if command -sq $py
+                    $py $update_args >/dev/null 2>&1 &
+                    break
+                end
             end
         end
     end
@@ -233,7 +232,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
             # Redirect stderr per #1155
             fish_default_key_bindings 2>/dev/null
         else
-            eval $fish_key_bindings 2>/dev/null
+            $fish_key_bindings 2>/dev/null
         end
         # Load user key bindings if they are defined
         if functions --query fish_user_key_bindings >/dev/null

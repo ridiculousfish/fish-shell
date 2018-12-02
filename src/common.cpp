@@ -1745,8 +1745,7 @@ int common_get_width() { return get_current_winsize().ws_col; }
 int common_get_height() { return get_current_winsize().ws_row; }
 
 bool string_prefixes_string(const wchar_t *proposed_prefix, const wcstring &value) {
-    size_t prefix_size = wcslen(proposed_prefix);
-    return prefix_size <= value.size() && value.compare(0, prefix_size, proposed_prefix) == 0;
+    return string_prefixes_string(proposed_prefix, value.c_str());
 }
 
 bool string_prefixes_string(const wcstring &proposed_prefix, const wcstring &value) {
@@ -1761,6 +1760,17 @@ bool string_prefixes_string(const wchar_t *proposed_prefix, const wchar_t *value
         if (proposed_prefix[idx] != value[idx]) return false;
     }
     // We must have that proposed_prefix[idx] == L'\0', so we have a prefix match.
+    return true;
+}
+
+bool string_prefixes_string(const char *proposed_prefix, const std::string &value) {
+    return string_prefixes_string(proposed_prefix, value.c_str());
+}
+
+bool string_prefixes_string(const char *proposed_prefix, const char *value) {
+    for (size_t idx = 0; proposed_prefix[idx] != L'\0'; idx++) {
+        if (proposed_prefix[idx] != value[idx]) return false;
+    }
     return true;
 }
 
@@ -1849,7 +1859,7 @@ string_fuzzy_match_t string_fuzzy_match_string(const wcstring &string,
         assert(match_against.size() >= string.size());
         result.match_distance_first = match_against.size() - string.size();
         result.match_distance_second = location;  // prefer earlier matches
-    } else if (limit_type >= fuzzy_match_substring &&
+    } else if (limit_type >= fuzzy_match_substring_case_insensitive &&
                (location = ifind(match_against, string)) != wcstring::npos) {
         // A case-insensitive version of the string is in the match against.
         result.type = fuzzy_match_substring_case_insensitive;

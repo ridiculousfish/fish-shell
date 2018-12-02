@@ -1985,3 +1985,15 @@ void history_t::resolve_pending() {
     scoped_lock locker(lock);
     this->has_pending_item = false;
 }
+
+
+static bool private_mode = false;
+void start_private_mode() {
+    private_mode = true;
+    env_set_one(L"fish_history", ENV_GLOBAL, L"");
+    env_set_one(L"fish_private_mode", ENV_GLOBAL, L"1");
+}
+
+bool in_private_mode() {
+    return private_mode;
+}
