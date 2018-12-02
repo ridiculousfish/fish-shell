@@ -291,14 +291,14 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
 /// Note: last_idx is considered to be where it previously finished procesisng. This means it
 /// actually starts operating on last_idx-1. As such, to process a string fully, pass string.size()
 /// as last_idx instead of string.size()-1.
-static bool expand_variables(const wcstring &instr, std::vector<completion_t> *out, size_t last_idx,
+static bool expand_variables(wcstring instr, std::vector<completion_t> *out, size_t last_idx,
                              const environment_t &vars, parse_error_list_t *errors) {
     const size_t insize = instr.size();
 
     // last_idx may be 1 past the end of the string, but no further.
     assert(last_idx <= insize && "Invalid last_idx");
     if (last_idx == 0) {
-        append_completion(out, instr);
+        append_completion(out, std::move(instr));
         return true;
     }
 
@@ -314,7 +314,7 @@ static bool expand_variables(const wcstring &instr, std::vector<completion_t> *o
     }
     if (varexp_char_idx >= instr.size()) {
         // No variable expand char, we're done.
-        append_completion(out, instr);
+        append_completion(out, std::move(instr));
         return true;
     }
 
@@ -406,7 +406,7 @@ static bool expand_variables(const wcstring &instr, std::vector<completion_t> *o
                 res.push_back(VARIABLE_EXPAND_EMPTY);
             }
             res.append(instr, var_name_and_slice_stop, wcstring::npos);
-            return expand_variables(res, out, varexp_char_idx, vars, errors);
+            return expand_variables(std::move(res), out, varexp_char_idx, vars, errors);
         }
     }
 
@@ -467,7 +467,7 @@ static bool expand_variables(const wcstring &instr, std::vector<completion_t> *o
             res.pop_back();
         }
         res.append(instr, var_name_and_slice_stop, wcstring::npos);
-        return expand_variables(res, out, varexp_char_idx, vars, errors);
+        return expand_variables(std::move(res), out, varexp_char_idx, vars, errors);
     } else {
         // Normal cartesian-product expansion.
         for (const wcstring &item : var_item_list) {
@@ -484,7 +484,7 @@ static bool expand_variables(const wcstring &instr, std::vector<completion_t> *o
                 }
                 new_in.append(item);
                 new_in.append(instr, var_name_and_slice_stop, wcstring::npos);
-                if (!expand_variables(new_in, out, varexp_char_idx, vars, errors)) {
+                if (!expand_variables(std::move(new_in), out, varexp_char_idx, vars, errors)) {
                     return false;
                 }
             }
@@ -886,33 +886,33 @@ static void remove_internal_separator(wcstring *str, bool conv) {
 /// A stage in string expansion is represented as a function that takes an input and returns a list
 /// of output (by reference). We get flags, vars and errors. It may return an error; if so expansion
 /// halts.
-typedef expand_error_t (*expand_stage_t)(const wcstring &input,           //!OCLINT(unused param)
+typedef expand_error_t (*expand_stage_t)(wcstring input,                  //!OCLINT(unused param)
                                          std::vector<completion_t> *out,  //!OCLINT(unused param)
                                          expand_flags_t flags,            //!OCLINT(unused param)
                                          const environment_t &vars,       //!OCLINT(unused param)
                                          parse_error_list_t *errors);     //!OCLINT(unused param)
 
-static expand_error_t expand_stage_cmdsubst(const wcstring &input, std::vector<completion_t> *out,
+static expand_error_t expand_stage_cmdsubst(wcstring input, std::vector<completion_t> *out,
                                             expand_flags_t flags, const environment_t &vars,
                                             parse_error_list_t *errors) {
     if (EXPAND_SKIP_CMDSUBST & flags) {
         wchar_t *begin, *end;
         if (parse_util_locate_cmdsubst(input.c_str(), &begin, &end, true) == 0) {
-            append_completion(out, input);
+            append_completion(out, std::move(input));
         } else {
             append_cmdsub_error(errors, SOURCE_LOCATION_UNKNOWN,
                                 L"Command substitutions not allowed");
             return EXPAND_ERROR;
         }
     } else {
-        bool cmdsubst_ok = expand_cmdsubst(input, out, errors);
+        bool cmdsubst_ok = expand_cmdsubst(std::move(input), out, errors);
         if (!cmdsubst_ok) return EXPAND_ERROR;
     }
 
     return EXPAND_OK;
 }
 
-static expand_error_t expand_stage_variables(const wcstring &input, std::vector<completion_t> *out,
+static expand_error_t expand_stage_variables(wcstring input, std::vector<completion_t> *out,
                                              expand_flags_t flags, const environment_t &vars,
                                              parse_error_list_t *errors) {
     // We accept incomplete strings here, since complete uses expand_string to expand incomplete
@@ -926,40 +926,38 @@ static expand_error_t expand_stage_variables(const wcstring &input, std::vector<
                 next[i] = L'$';
             }
         }
-        append_completion(out, next);
+        append_completion(out, std::move(next));
     } else {
-        if (!expand_variables(next, out, next.size(), vars, errors)) {
+        size_t size = next.size();
+        if (!expand_variables(std::move(next), out, size, vars, errors)) {
             return EXPAND_ERROR;
         }
     }
     return EXPAND_OK;
 }
 
-static expand_error_t expand_stage_braces(const wcstring &input, std::vector<completion_t> *out,
+static expand_error_t expand_stage_braces(wcstring input, std::vector<completion_t> *out,
                                           expand_flags_t flags, const environment_t &vars,
                                           parse_error_list_t *errors) {
     return expand_braces(input, flags, out, errors);
 }
 
-static expand_error_t expand_stage_home(const wcstring &input, std::vector<completion_t> *out,
+static expand_error_t expand_stage_home(wcstring input, std::vector<completion_t> *out,
                                         expand_flags_t flags, const environment_t &vars,
                                         parse_error_list_t *errors) {
     (void)errors;
-    wcstring next = input;
-
     if (!(EXPAND_SKIP_HOME_DIRECTORIES & flags)) {
-        expand_home_directory(next, vars);
+        expand_home_directory(input, vars);
     }
-    append_completion(out, next);
+    append_completion(out, std::move(input));
     return EXPAND_OK;
 }
 
-static expand_error_t expand_stage_wildcards(const wcstring &input, std::vector<completion_t> *out,
+static expand_error_t expand_stage_wildcards(wcstring path_to_expand, std::vector<completion_t> *out,
                                              expand_flags_t flags, const environment_t &vars,
                                              parse_error_list_t *errors) {
     UNUSED(errors);
     expand_error_t result = EXPAND_OK;
-    wcstring path_to_expand = input;
 
     remove_internal_separator(&path_to_expand, flags & EXPAND_SKIP_WILDCARDS);
     const bool has_wildcard = wildcard_has(path_to_expand, true /* internal, i.e. ANY_STRING */);
@@ -1042,18 +1040,18 @@ static expand_error_t expand_stage_wildcards(const wcstring &input, std::vector<
         // to mean don't do file expansions, so if we're not doing file expansions, just drop this
         // completion on the floor.
         if (!(flags & EXPAND_FOR_COMPLETIONS)) {
-            append_completion(out, path_to_expand);
+            append_completion(out, std::move(path_to_expand));
         }
     }
     return result;
 }
 
-expand_error_t expand_string(const wcstring &input, std::vector<completion_t> *out_completions,
+expand_error_t expand_string(wcstring input, std::vector<completion_t> *out_completions,
                              expand_flags_t flags, const environment_t &vars,
                              parse_error_list_t *errors) {
     // Early out. If we're not completing, and there's no magic in the input, we're done.
     if (!(flags & EXPAND_FOR_COMPLETIONS) && expand_is_clean(input)) {
-        append_completion(out_completions, input);
+        append_completion(out_completions, std::move(input));
         return EXPAND_OK;
     }
 
@@ -1070,9 +1068,9 @@ expand_error_t expand_string(const wcstring &input, std::vector<completion_t> *o
     for (size_t stage_idx = 0;
          total_result != EXPAND_ERROR && stage_idx < sizeof stages / sizeof *stages; stage_idx++) {
         for (size_t i = 0; total_result != EXPAND_ERROR && i < completions.size(); i++) {
-            const wcstring &next = completions.at(i).completion;
+            wcstring &next = completions.at(i).completion;
             expand_error_t this_result =
-                stages[stage_idx](next, &output_storage, flags, vars, errors);
+                stages[stage_idx](std::move(next), &output_storage, flags, vars, errors);
             // If this_result was no match, but total_result is that we have a match, then don't
             // change it.
             if (!(this_result == EXPAND_WILDCARD_NO_MATCH &&
@@ -1091,7 +1089,9 @@ expand_error_t expand_string(const wcstring &input, std::vector<completion_t> *o
         if (!(flags & EXPAND_SKIP_HOME_DIRECTORIES)) {
             unexpand_tildes(input, vars, &completions);
         }
-        out_completions->insert(out_completions->end(), completions.begin(), completions.end());
+        out_completions->insert(out_completions->end(),
+                                std::make_move_iterator(completions.begin()),
+                                std::make_move_iterator(completions.end()));
     }
     return total_result;
 }

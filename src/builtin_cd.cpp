@@ -68,7 +68,6 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
     // Prepend the PWD if we don't start with a slash, and then normalize the directory.
     wcstring norm_dir = normalize_path(string_prefixes_string(L"/", dir) ? dir : pwd + dir);
-
     if (wchdir(norm_dir) != 0) {
         struct stat buffer;
         int status;
