@@ -1,6 +1,27 @@
 .. highlight:: fish-docs-samples
 .. _intro:
 
+
+::
+
+    > /bright/vixens jump | dozy "fowl" > quack &
+    Blah blah blah
+    > # This is a comment
+    Blah blah blah
+    > begin ; more --stuff ; end
+    Blah blah blah
+    > echo 'Errors are the portal to discovery
+    Blah blah blah
+
+Also::
+
+    /bright/vixens jump | dozy "fowl" > quack &
+    # This is a comment
+    begin ; more --stuff ; end
+    echo 'Errors are the portal to discovery
+
+
+
 Introduction
 ============
 
