@@ -34,7 +34,246 @@
 #endif
 
 // Common string type.
-typedef std::wstring wcstring;
+class wcstring {
+    using contents_t = std::wstring;
+    using CharT = contents_t::value_type;
+
+    contents_t s_;
+    std::wstring &s() { return s_; }
+    const std::wstring &s() const { return s_; }
+
+   public:
+    using size_type = contents_t::size_type;
+    using value_type = contents_t::value_type;
+    using iterator = contents_t::iterator;
+    using const_iterator = contents_t::const_iterator;
+    using reverse_iterator = contents_t::reverse_iterator;
+    using const_reverse_iterator = contents_t::const_reverse_iterator;
+
+    static size_type constexpr npos = contents_t::npos;
+
+    bool empty() const { return s().empty(); }
+
+    bool operator==(const wcstring &rhs) const { return s() == rhs.s(); }
+    bool operator==(const CharT *rhs) const { return s() == rhs; }
+
+    bool operator!=(const wcstring &rhs) const { return s() == rhs.s(); }
+    bool operator!=(const CharT *rhs) const { return s() != rhs; }
+
+    bool operator<(const wcstring &rhs) const { return s() < rhs.s(); }
+    bool operator<(const CharT *rhs) const { return s() < rhs; }
+
+    bool operator>(const wcstring &rhs) const { return s() < rhs.s(); }
+    bool operator>(const CharT *rhs) const { return s() > rhs; }
+
+    bool operator<=(const wcstring &rhs) const { return s() <= rhs.s(); }
+    bool operator<=(const CharT *rhs) const { return s() <= rhs; }
+
+    bool operator>=(const wcstring &rhs) const { return s() >= rhs.s(); }
+    bool operator>=(const CharT *rhs) const { return s() >= rhs; }
+
+    value_type at(size_type idx) const { return s().at(idx); }
+    value_type &at(size_type idx) { return s().at(idx); }
+    value_type operator[](size_type idx) const { return s()[idx]; }
+    value_type &operator[](size_type idx) { return s()[idx]; }
+
+    size_type hash() const { return std::hash<contents_t>{}(s()); }
+
+    iterator begin() { return s().begin(); }
+    iterator end() { return s().end(); }
+
+    const_iterator begin() const { return s().begin(); }
+    const_iterator end() const { return s().end(); }
+
+    const_iterator cbegin() const { return s().begin(); }
+    const_iterator cend() const { return s().end(); }
+
+    reverse_iterator rbegin() { return s().rbegin(); }
+    reverse_iterator rend() { return s().rend(); }
+
+    const_reverse_iterator rbegin() const { return s().rbegin(); }
+    const_reverse_iterator rend() const { return s().rend(); }
+
+    template <
+        typename... Args,
+        typename std::enable_if<std::is_constructible<contents_t, Args...>::value, int>::type = 0>
+    wcstring(Args &&... args) : s_(std::forward<Args>(args)...) {}
+
+    wcstring(const wcstring &str, size_t pos, size_t count = npos)
+        : wcstring(str.s(), pos, count) {}
+
+    wcstring(wcstring &&) = default;
+    wcstring(const wcstring &) = default;
+    wcstring &operator=(const wcstring &) = default;
+    wcstring &operator=(wcstring &&) = default;
+
+    wcstring &assign(size_type count, value_type c) {
+        s().assign(count, c);
+        return *this;
+    }
+
+    wcstring &assign(const wcstring &str) {
+        s().assign(str.s());
+        return *this;
+    }
+
+    wcstring &assign(const wcstring &str, size_type pos, size_type count) {
+        s().assign(str.s(), pos, count);
+        return *this;
+    }
+
+    wcstring &assign(wcstring &&str) {
+        s().assign(std::move(str.s_));
+        return *this;
+    }
+
+    wcstring &assign(const CharT *str, size_type count) {
+        s().assign(str, count);
+        return *this;
+    }
+
+    wcstring &assign(const CharT *str) {
+        s().assign(str);
+        return *this;
+    }
+
+    template <class InputIt>
+    wcstring &assign(InputIt first, InputIt last) {
+        s().assign(first, last);
+    }
+
+    wcstring &assign(std::initializer_list<CharT> ilist) {
+        s().assign(ilist);
+        return *this;
+    }
+
+    wcstring &append(size_type count, CharT c) {
+        s().append(count, c);
+        return *this;
+    }
+
+    wcstring &append(const wcstring &str) {
+        s().append(str.s());
+        return *this;
+    }
+
+    wcstring &append(const wcstring &str, size_type pos, size_type count) {
+        s().append(str.s(), pos, count);
+        return *this;
+    }
+
+    wcstring &append(const CharT *str, size_type count) {
+        s().append(str, count);
+        return *this;
+    }
+
+    wcstring &append(const CharT *str) {
+        s().append(str);
+        return *this;
+    }
+
+    wcstring &append(std::initializer_list<CharT> ilist) {
+        s().append(ilist);
+        return *this;
+    }
+
+    template <class InputIt>
+    wcstring &append(InputIt first, InputIt last) {
+        s().append(first, last);
+        return *this;
+    }
+
+    wcstring &operator+=(const wcstring &rhs) {
+        s() += rhs.s();
+        return *this;
+    }
+
+    wcstring &operator+=(CharT c) {
+        s() += c;
+        return *this;
+    }
+
+    wcstring &operator+=(const CharT *str) {
+        s() += str;
+        return *this;
+    }
+
+    wcstring &operator+=(std::initializer_list<CharT> ilist) {
+        s() += ilist;
+        return *this;
+    }
+
+    value_type front() const { return s().front(); }
+
+    value_type back() const { return s().back(); }
+
+    void push_back(wchar_t c) { s().push_back(c); }
+
+    void pop_back() { s().pop_back(); }
+
+    size_type size() const { return s().size(); }
+    size_type length() const { return s().length(); }
+
+    void clear() { return s().clear(); }
+
+    const wchar_t *c_str() const { return s().c_str(); }
+
+    void reserve(size_type amt) {
+        s().reserve(amt);
+    }
+
+    void resize(size_type count, CharT ch = CharT()) { s().resize(count, ch); }
+};
+
+wcstring operator+(const wcstring &lhs, const wcstring &rhs) {
+    wcstring ret{lhs};
+    ret.append(rhs);
+    return ret;
+}
+
+wcstring operator+(const wcstring &lhs, const wchar_t *rhs) {
+    wcstring ret{lhs};
+    ret.append(rhs);
+    return ret;
+}
+
+wcstring operator+(const wcstring &lhs, wchar_t rhs) {
+    wcstring ret{lhs};
+    ret.append(1, rhs);
+    return ret;
+}
+
+wcstring operator+(const wchar_t *lhs, const wcstring &rhs) {
+    wcstring ret{lhs};
+    ret.append(rhs);
+    return ret;
+}
+
+wcstring operator+(wchar_t lhs, const wcstring &rhs) {
+    wcstring ret(1, lhs);
+    ret.append(rhs);
+    return ret;
+}
+
+bool operator==(const wchar_t *lhs, const wcstring &rhs) { return rhs == lhs; }
+
+bool operator!=(const wchar_t *lhs, const wcstring &rhs) { return rhs != lhs; }
+
+bool operator<(const wchar_t *lhs, const wcstring &rhs) { return !(rhs >= lhs); }
+
+bool operator>(const wchar_t *lhs, const wcstring &rhs) { return !(rhs <= lhs); }
+
+bool operator<=(const wchar_t *lhs, const wcstring &rhs) { return !(rhs > lhs); }
+
+bool operator>=(const wchar_t *lhs, const wcstring &rhs) { return !(rhs < lhs); }
+
+namespace std {
+template <>
+struct hash<wcstring> {
+    size_t operator()(const wcstring &s) const { return s.hash(); }
+};
+}  // namespace std
+
 typedef std::vector<wcstring> wcstring_list_t;
 
 // Maximum number of bytes used by a single utf-8 character.
@@ -1017,7 +1256,7 @@ template <>
 struct hash<const wcstring> {
     std::size_t operator()(const wcstring &w) const {
         std::hash<wcstring> hasher;
-        return hasher((wcstring)w);
+        return hasher(const_cast<wcstring &>(w));
     }
 };
 }  // namespace std
