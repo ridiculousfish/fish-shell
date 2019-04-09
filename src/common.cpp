@@ -2296,9 +2296,10 @@ void assert_is_locked(void *vmutex, const char *who, const char *caller) {
     }
 }
 
-template <typename CharType_t>
-static CharType_t **make_null_terminated_array_helper(
-    const std::vector<std::basic_string<CharType_t> > &argv) {
+template <typename Container>
+static typename Container::value_type::value_type **make_null_terminated_array_helper(
+    const Container &argv) {
+    using CharType_t = Container::value_type::value_type;
     size_t count = argv.size();
 
     // We allocate everything in one giant block. First compute how much space we need.

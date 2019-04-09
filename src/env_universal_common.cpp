@@ -160,7 +160,7 @@ static wcstring full_escape(const wcstring &in) {
 /// Converts input to UTF-8 and appends it to receiver, using storage as temp storage.
 static bool append_utf8(const wcstring &input, std::string *receiver, std::string *storage) {
     bool result = false;
-    if (wchar_to_utf8_string(input, storage)) {
+    if (wchar_to_utf8_string(input.as_wstring(), storage)) {
         receiver->append(*storage);
         result = true;
     }

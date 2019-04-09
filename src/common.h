@@ -223,6 +223,130 @@ class wcstring {
     }
 
     void resize(size_type count, CharT ch = CharT()) { s().resize(count, ch); }
+
+    wcstring substr(size_type pos, size_type count = npos) const { return s().substr(pos, count); }
+
+    size_type find(const wcstring &str, size_type pos = 0) const { return s().find(str.s(), pos); }
+
+    size_type find(const CharT *str, size_type pos, size_type count) const {
+        return s().find(str, pos, count);
+    }
+
+    size_type find(CharT ch, size_type pos = 0) const { return s().find(ch, pos); }
+
+    size_type rfind(const wcstring &str, size_type pos = npos) const {
+        return s().rfind(str.s(), pos);
+    }
+
+    size_type rfind(const CharT *str, size_type pos, size_type count) const {
+        return s().rfind(str, pos, count);
+    }
+
+    size_type rfind(CharT ch, size_type pos = npos) const { return s().rfind(ch, pos); }
+
+    size_type find_first_of(const wcstring &str, size_type pos = 0) const {
+        return s().find_first_of(str.s(), pos);
+    }
+
+    size_type find_first_of(const CharT *str, size_type pos, size_type count) const {
+        return s().find_first_of(str, pos, count);
+    }
+
+    size_type find_first_of(CharT ch, size_type pos = 0) const {
+        return s().find_first_of(ch, pos);
+    }
+
+    size_type find_first_not_of(const wcstring &str, size_type pos = 0) const {
+        return s().find_first_not_of(str.s(), pos);
+    }
+
+    size_type find_first_not_of(const CharT *str, size_type pos, size_type count) const {
+        return s().find_first_not_of(str, pos, count);
+    }
+
+    size_type find_first_not_of(CharT ch, size_type pos = 0) const {
+        return s().find_first_not_of(ch, pos);
+    }
+
+    size_type find_last_of(const wcstring &str, size_type pos = npos) const {
+        return s().find_last_of(str.s(), pos);
+    }
+
+    size_type find_last_of(const CharT *str, size_type pos, size_type count) const {
+        return s().find_last_of(str, pos, count);
+    }
+
+    size_type find_last_of(CharT ch, size_type pos = npos) const {
+        return s().find_last_of(ch, pos);
+    }
+
+    wcstring &insert(size_type index, size_type count, CharT ch) {
+        s().insert(index, count, ch);
+        return *this;
+    }
+
+    wcstring &insert(size_type index, const CharT *str) {
+        s().insert(index, str);
+        return *this;
+    }
+
+    wcstring &insert(size_type index, const CharT *str, size_type count) {
+        s().insert(index, str, count);
+        return *this;
+    }
+
+    wcstring &insert(size_type index, const wcstring &str) {
+        s().insert(index, str.s());
+        return *this;
+    }
+
+    wcstring &insert(size_type index, const wcstring &str, size_type index_str, size_type count) {
+        s().insert(index, str.s(), index_str, count);
+        return *this;
+    }
+
+    iterator insert(iterator pos, CharT ch) { return s().insert(pos, ch); }
+
+    iterator insert(const_iterator pos, size_type count, CharT ch) {
+        return s().insert(pos, count, ch);
+    }
+
+    template <class InputIt>
+    void insert(const_iterator pos, InputIt first, InputIt last) {
+        s().insert(pos, first, last);
+    }
+
+    iterator insert(const_iterator pos, std::initializer_list<CharT> ilist) {
+        return s().insert(pos, ilist);
+    }
+
+    int compare(const wcstring &str) const { return s().compare(str.s()); }
+
+    int compare(size_type pos1, size_type count1, const wcstring &str) const {
+        return s().compare(pos1, count1, str.s());
+    }
+
+    int compare(size_type pos1, size_type count1, const wcstring &str, size_type pos2,
+                size_type count2 = npos) const {
+        return s().compare(pos1, count1, str.s(), pos2, count2);
+    }
+
+    int compare(const CharT *str) const { return s().compare(str); }
+
+    int compare(size_type pos1, size_type count1, const CharT *str) const {
+        return s().compare(pos1, count1, str);
+    }
+
+    wcstring &erase(size_type index = 0, size_type count = npos) {
+        s().erase(index, count);
+        return *this;
+    }
+
+    iterator erase(const_iterator position) { return s().erase(position); }
+
+    iterator erase(const_iterator first, const_iterator last) { return s().erase(first, last); }
+
+    std::wstring as_wstring() const { return s(); }
 };
 
 wcstring operator+(const wcstring &lhs, const wcstring &rhs) {
