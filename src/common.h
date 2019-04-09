@@ -537,7 +537,9 @@ class null_terminated_array_t {
     void operator=(null_terminated_array_t rhs) = delete;
     null_terminated_array_t(const null_terminated_array_t &) = delete;
 
-    typedef std::vector<std::basic_string<CharType_t>> string_list_t;
+    using string_list_t =
+        typename std::conditional<std::is_same<CharType_t, char>::value, std::vector<std::string>,
+                                  wcstring_list_t>::type;
 
     size_t size() const {
         size_t len = 0;
