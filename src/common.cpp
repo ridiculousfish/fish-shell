@@ -59,6 +59,8 @@
 
 constexpr wint_t NOT_A_WCHAR = static_cast<wint_t>(WEOF);
 
+constexpr wcstring::size_type wcstring::npos;
+
 struct termios shell_modes;
 
 /// This allows us to determine if we're running on the main thread
@@ -2299,7 +2301,7 @@ void assert_is_locked(void *vmutex, const char *who, const char *caller) {
 template <typename Container>
 static typename Container::value_type::value_type **make_null_terminated_array_helper(
     const Container &argv) {
-    using CharType_t = Container::value_type::value_type;
+    using CharType_t = typename Container::value_type::value_type;
     size_t count = argv.size();
 
     // We allocate everything in one giant block. First compute how much space we need.
@@ -2329,7 +2331,7 @@ static typename Container::value_type::value_type **make_null_terminated_array_h
 
     // Start copying.
     for (size_t i = 0; i < count; i++) {
-        const std::basic_string<CharType_t> &str = argv.at(i);
+        const auto &str = argv.at(i);
         *pointers++ = strings;  // store the current string pointer into self
         strings = std::copy(str.begin(), str.end(), strings);  // copy the string into strings
         *strings++ = (CharType_t)(0);  // each string needs a null terminator

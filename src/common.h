@@ -50,7 +50,7 @@ class wcstring {
     using reverse_iterator = contents_t::reverse_iterator;
     using const_reverse_iterator = contents_t::const_reverse_iterator;
 
-    static size_type constexpr npos = contents_t::npos;
+    static constexpr size_type npos = contents_t::npos;
 
     bool empty() const { return s().empty(); }
 
@@ -72,9 +72,9 @@ class wcstring {
     bool operator>=(const wcstring &rhs) const { return s() >= rhs.s(); }
     bool operator>=(const CharT *rhs) const { return s() >= rhs; }
 
-    value_type at(size_type idx) const { return s().at(idx); }
+    const value_type &at(size_type idx) const { return s().at(idx); }
     value_type &at(size_type idx) { return s().at(idx); }
-    value_type operator[](size_type idx) const { return s()[idx]; }
+    const value_type &operator[](size_type idx) const { return s()[idx]; }
     value_type &operator[](size_type idx) { return s()[idx]; }
 
     size_type hash() const { return std::hash<contents_t>{}(s()); }
@@ -101,6 +101,8 @@ class wcstring {
 
     wcstring(const wcstring &str, size_t pos, size_t count = npos)
         : wcstring(str.s(), pos, count) {}
+
+    wcstring(std::initializer_list<CharT> ilist) : s_(ilist) {}
 
     wcstring(wcstring &&) = default;
     wcstring(const wcstring &) = default;
@@ -140,6 +142,7 @@ class wcstring {
     template <class InputIt>
     wcstring &assign(InputIt first, InputIt last) {
         s().assign(first, last);
+        return *this;
     }
 
     wcstring &assign(std::initializer_list<CharT> ilist) {
@@ -183,6 +186,65 @@ class wcstring {
         return *this;
     }
 
+    wcstring &replace(size_type pos, size_type count, const wcstring &str) {
+        s().replace(pos, count, str.s());
+        return *this;
+    }
+
+    wcstring &replace(const_iterator first, const_iterator last, const wcstring &str) {
+        s().replace(first, last, str.s());
+        return *this;
+    }
+
+    wcstring &replace(size_type pos, size_type count, const wcstring &str, size_type pos2,
+                      size_type count2) {
+        s().replace(pos, count, str.s(), pos2, count2);
+        return *this;
+    }
+
+    template <class InputIt>
+    wcstring &replace(const_iterator first, const_iterator last, InputIt first2, InputIt last2) {
+        s().replace(first, last, first2, last2);
+        return *this;
+    }
+
+    wcstring &replace(size_type pos, size_type count, const CharT *cstr, size_type count2) {
+        s().replace(pos, count, cstr, count2);
+        return *this;
+    }
+
+    wcstring &replace(const_iterator first, const_iterator last, const CharT *cstr,
+                      size_type count2) {
+        s().replace(first, last, cstr, count2);
+        return *this;
+    }
+
+    wcstring &replace(size_type pos, size_type count, const CharT *cstr) {
+        s().replace(pos, count, cstr);
+        return *this;
+    }
+
+    wcstring &replace(const_iterator first, const_iterator last, const CharT *cstr) {
+        s().replace(first, last, cstr);
+        return *this;
+    }
+
+    wcstring &replace(size_type pos, size_type count, size_type count2, CharT ch) {
+        s().replace(pos, count, count2, ch);
+        return *this;
+    }
+
+    wcstring &replace(const_iterator first, const_iterator last, size_type count2, CharT ch) {
+        s().replace(first, last, count2, ch);
+        return *this;
+    }
+
+    wcstring &replace(const_iterator first, const_iterator last,
+                      std::initializer_list<CharT> ilist) {
+        s().replace(first, last, ilist);
+        return *this;
+    }
+
     wcstring &operator+=(const wcstring &rhs) {
         s() += rhs.s();
         return *this;
@@ -217,6 +279,8 @@ class wcstring {
     void clear() { return s().clear(); }
 
     const wchar_t *c_str() const { return s().c_str(); }
+
+    const wchar_t *data() const { return s().data(); }
 
     void reserve(size_type amt) {
         s().reserve(amt);
@@ -278,6 +342,18 @@ class wcstring {
 
     size_type find_last_of(CharT ch, size_type pos = npos) const {
         return s().find_last_of(ch, pos);
+    }
+
+    size_type find_last_not_of(const wcstring &str, size_type pos = npos) const {
+        return s().find_last_not_of(str.s(), pos);
+    }
+
+    size_type find_last_not_of(const CharT *str, size_type pos = npos) const {
+        return s().find_last_not_of(str, pos);
+    }
+
+    size_type find_last_not_of(CharT ch, size_type pos = npos) const {
+        return s().find_last_not_of(ch, pos);
     }
 
     wcstring &insert(size_type index, size_type count, CharT ch) {

@@ -86,7 +86,7 @@ wcstring path_normalize_for_cd(const wcstring &wd, const wcstring &path);
 
 /// Wide character version of readdir().
 bool wreaddir(DIR *dir, wcstring &out_name);
-bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, wcstring &out_name,
+bool wreaddir_resolving(DIR *dir, const wcstring &dir_path, wcstring &out_name,
                         bool *out_is_dir);
 
 /// Like wreaddir, but skip items that are known to not be directories. If this requires a stat
