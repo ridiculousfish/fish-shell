@@ -21,6 +21,7 @@
 
 #include "fallback.h"  // IWYU pragma: keep
 #include "maybe.h"
+#include "wcstring.h"
 
 // PATH_MAX may not exist.
 #ifndef PATH_MAX
@@ -33,10 +34,6 @@
     defined(__WIN32__)
 #define OS_IS_CYGWIN
 #endif
-
-// Common string type.
-typedef std::wstring wcstring;
-typedef std::vector<wcstring> wcstring_list_t;
 
 // Maximum number of bytes used by a single utf-8 character.
 #define MAX_UTF8_BYTES 6
@@ -1028,7 +1025,7 @@ template <>
 struct hash<const wcstring> {
     std::size_t operator()(const wcstring &w) const {
         std::hash<wcstring> hasher;
-        return hasher((wcstring)w);
+        return hasher(const_cast<wcstring &>(w));
     }
 };
 }  // namespace std

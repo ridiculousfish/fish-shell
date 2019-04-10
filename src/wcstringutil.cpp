@@ -9,6 +9,8 @@
 
 using size_type = wcstring::size_type;
 
+const size_type wcstring::npos;
+
 wcstring_range wcstring_tok(wcstring &str, const wcstring &needle, wcstring_range last) {
     size_type pos = last.second == wcstring::npos ? wcstring::npos : last.first;
     if (pos != wcstring::npos && last.second != wcstring::npos) pos += last.second;

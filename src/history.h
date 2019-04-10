@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "common.h"
+#include "wcstringutil.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 struct io_streams_t;
@@ -266,7 +267,7 @@ class history_search_t {
                      history_search_flags_t flags = 0)
         : history_(&hist), orig_term_(str), canon_term_(str), search_type_(type), flags_(flags) {
         if (ignores_case()) {
-            std::transform(canon_term_.begin(), canon_term_.end(), canon_term_.begin(), towlower);
+            canon_term_ = wcstolower(std::move(canon_term_));
         }
     }
 

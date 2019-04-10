@@ -4,16 +4,14 @@
 
 #include "config.h"  // IWYU pragma: keep
 
+#include "global_safety.h"
+#include "wcstring.h"
+
 #include <stdio.h>
 
 #include <string>
 #include <type_traits>
 #include <utility>
-
-#include "global_safety.h"
-
-using wcstring = std::wstring;
-using wcstring_list_t = std::vector<wcstring>;
 
 template <typename T>
 class owning_lock;

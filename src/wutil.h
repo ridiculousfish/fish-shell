@@ -91,8 +91,7 @@ wcstring path_normalize_for_cd(const wcstring &wd, const wcstring &path);
 
 /// Wide character version of readdir().
 bool wreaddir(DIR *dir, wcstring &out_name);
-bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, wcstring &out_name,
-                        bool *out_is_dir);
+bool wreaddir_resolving(DIR *dir, const wcstring &dir_path, wcstring &out_name, bool *out_is_dir);
 
 /// Like wreaddir, but skip items that are known to not be directories. If this requires a stat
 /// (i.e. the file is a symlink), then return it. Note that this does not guarantee that everything
@@ -101,10 +100,10 @@ bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, wcstring &out_na
 bool wreaddir_for_dirs(DIR *dir, wcstring *out_name);
 
 /// Wide character version of dirname().
-std::wstring wdirname(const std::wstring &path);
+wcstring wdirname(const wcstring &path);
 
 /// Wide character version of basename().
-std::wstring wbasename(const std::wstring &path);
+wcstring wbasename(const wcstring &path);
 
 /// Wide character wrapper around the gettext function. For historic reasons, unlike the real
 /// gettext function, wgettext takes care of setting the correct domain, etc. using the textdomain

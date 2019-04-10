@@ -162,7 +162,7 @@ static wcstring full_escape(const wcstring &in) {
 /// Converts input to UTF-8 and appends it to receiver, using storage as temp storage.
 static bool append_utf8(const wcstring &input, std::string *receiver, std::string *storage) {
     bool result = false;
-    if (wchar_to_utf8_string(input, storage)) {
+    if (wchar_to_utf8_string(input.as_wstring(), storage)) {
         receiver->append(*storage);
         result = true;
     }
@@ -843,7 +843,7 @@ uvar_format_t env_universal_t::populate_variables(const std::string &s, var_tabl
     const uvar_format_t format = format_for_contents(s);
 
     line_iterator_t<std::string> iter{s};
-    wcstring wide_line;
+    std::wstring wide_line;
     wcstring storage;
     while (iter.next()) {
         const std::string &line = iter.line();
@@ -856,12 +856,14 @@ uvar_format_t env_universal_t::populate_variables(const std::string &s, var_tabl
 
         switch (format) {
             case uvar_format_t::fish_2_x:
-                env_universal_t::parse_message_2x_internal(wide_line, out_vars, &storage);
+                env_universal_t::parse_message_2x_internal(wcstring(std::move(wide_line)), out_vars,
+                                                           &storage);
                 break;
             case uvar_format_t::fish_3_0:
             // For future formats, just try with the most recent one.
             case uvar_format_t::future:
-                env_universal_t::parse_message_30_internal(wide_line, out_vars, &storage);
+                env_universal_t::parse_message_30_internal(wcstring{std::move(wide_line)}, out_vars,
+                                                           &storage);
                 break;
         }
     }
