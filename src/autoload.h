@@ -44,8 +44,9 @@ struct autoload_function_t {
 class environment_t;
 
 /// Class representing a path from which we can autoload and the autoloaded contents.
-class autoload_t : public lru_cache_t<autoload_t, autoload_function_t> {
+class autoload_t : private lru_cache_t<autoload_t, autoload_function_t> {
    private:
+    friend lru_cache_t<autoload_t, autoload_function_t>;
     /// Lock for thread safety.
     std::mutex lock;
     /// The environment variable name.
