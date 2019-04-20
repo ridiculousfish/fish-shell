@@ -122,9 +122,9 @@ autoload_function_t *autoload_t::get_autoloaded_function_with_creation(const wcs
     autoload_function_t *func = this->get(cmd);
     if (!func) {
         if (allow_eviction) {
-            this->insert(cmd, autoload_function_t(false));
+            this->insert(cmd, autoload_function_t{});
         } else {
-            this->insert_no_eviction(cmd, autoload_function_t(false));
+            this->insert_no_eviction(cmd, autoload_function_t{});
         }
         func = this->get(cmd);
         assert(func);
@@ -234,9 +234,9 @@ bool autoload_t::locate_file_and_maybe_load_it(const wcstring &cmd, bool really_
         autoload_function_t *func = this->get(cmd);
         if (!func) {
             if (really_load) {
-                this->insert(cmd, autoload_function_t(true));
+                this->insert(cmd, autoload_function_t::placeholder());
             } else {
-                this->insert_no_eviction(cmd, autoload_function_t(true));
+                this->insert_no_eviction(cmd, autoload_function_t::placeholder());
             }
             func = this->get(cmd);
             assert(func);

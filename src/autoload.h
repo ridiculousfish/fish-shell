@@ -29,16 +29,20 @@ struct file_access_attempt_t {
 file_access_attempt_t access_file(const wcstring &path, int mode);
 
 struct autoload_function_t {
-    explicit autoload_function_t(bool placeholder)
-        : access(), is_loaded(false), is_placeholder(placeholder) {}
-
+    autoload_function_t() = default;
     /// The last access attempt recorded
-    file_access_attempt_t access;
+    file_access_attempt_t access{};
     /// Have we actually loaded this function?
-    bool is_loaded;
+    bool is_loaded{false};
     /// Whether we are a placeholder that stands in for "no such function". If this is true, then
     /// is_loaded must be false.
-    bool is_placeholder;
+    bool is_placeholder{false};
+
+    static autoload_function_t placeholder() {
+        autoload_function_t result;
+        result.is_placeholder = true;
+        return result;
+    }
 };
 
 class environment_t;
