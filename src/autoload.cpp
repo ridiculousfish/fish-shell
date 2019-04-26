@@ -251,3 +251,69 @@ bool autoload_t::locate_file_and_maybe_load_it(const wcstring &cmd, bool really_
 
     return found_file || !script_source.empty();
 }
+
+maybe_t<autoloadable_file_t> autoload_observer_t::locate_file(const wcstring &cmd) const {
+    // Re-use the storage for path.
+    wcstring path;
+    for (const wcstring &dir : dirs()) {
+        // Construct the path as dir/cmd.fish
+        path = dir;
+        path += L"/";
+        path += cmd;
+        path += L".fish";
+
+        file_id_t file_id = file_id_for_path(path);
+        if (file_id != kInvalidFileID) {
+            // Found it.
+            autoloadable_file_t result;
+            result.path = std::move(path);
+            result.file_id = file_id;
+            return result;
+        }
+    }
+    return none();
+}
+
+bool autoload_observer_t::is_fresh(timestamp_t then, timestamp_t now) {
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now - then);
+    return seconds.count() < kAutoloadStalenessInterval;
+}
+
+maybe_t<autoloadable_file_t> autoload_observer_t::check(const wcstring &cmd, bool allow_stale) {
+    const auto now = current_timestamp();
+
+    // Check hits.
+    auto iter = known_files_.find(cmd);
+    if (iter != known_files_.end()) {
+        if (allow_stale || is_fresh(iter->second.last_checked, now)) {
+            // Re-use this cached hit.
+            return iter->second.file;
+        }
+        // The file is stale, remove it.
+        known_files_.erase(iter);
+    }
+
+    // Check misses.
+    if (timestamp_t *miss = misses_cache_.get(cmd)) {
+        if (allow_stale || is_fresh(*miss, now)) {
+            // Re-use this cached miss.
+            return none();
+        }
+        // The miss is stale, remove it.
+        misses_cache_.evict_node(cmd);
+    }
+
+    // We couldn't satisfy this request from the cache. Hit the disk.
+    // Don't re-use 'now', the disk access could have taken a long time.
+    maybe_t<autoloadable_file_t> file = locate_file(cmd);
+    if (file.has_value()) {
+        auto ins = known_files_.emplace(cmd, known_file_t{*file, current_timestamp()});
+        assert(ins.second && "Known files cache should not have contained this cmd");
+        (void)ins;
+    } else {
+        bool ins = misses_cache_.insert(cmd, current_timestamp());
+        assert(ins && "Misses cache should not have contained this cmd");
+        (void)ins;
+    }
+    return file;
+}

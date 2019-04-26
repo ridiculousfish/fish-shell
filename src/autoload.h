@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <time.h>
 
+#include <chrono>
 #include <set>
 #include <unordered_set>
 
@@ -95,4 +96,58 @@ class autoload_t : private lru_cache_t<autoload_t, autoload_function_t> {
     /// Invalidates all entries. Uesd when the underlying path variable changes.
     void invalidate();
 };
+
+/// Represents a file that we might want to autoload.
+struct autoloadable_file_t {
+    /// The path to the file.
+    wcstring path;
+
+    /// The metadata for the file.
+    file_id_t file_id;
+};
+
+/// Class representing an autoloader observing a set of paths.
+class autoload_observer_t {
+    /// A timestamp is a monotonic point in time.
+    using timestamp_t = std::chrono::time_point<std::chrono::steady_clock>;
+
+    /// The directories from which to load.
+    const wcstring_list_t dirs_;
+
+    /// Our LRU cache of checks that were misses.
+    /// The key is the command, the  value is the time of the check.
+    struct misses_lru_cache_t : public lru_cache_t<misses_lru_cache_t, timestamp_t> {};
+    misses_lru_cache_t misses_cache_;
+
+    /// The set of files that we have returned to the caller, along with the time of the check.
+    /// The key is the command (not the path).
+    struct known_file_t {
+        autoloadable_file_t file;
+        timestamp_t last_checked;
+    };
+    std::unordered_map<wcstring, known_file_t> known_files_;
+
+    /// \return the current timestamp.
+    static timestamp_t current_timestamp() { return std::chrono::steady_clock::now(); }
+
+    /// \return whether a timestamp is fresh enough to use.
+    static bool is_fresh(timestamp_t then, timestamp_t now);
+
+    /// Attempt to find an autoloadable file by searching our path list for a given comand.
+    /// \return the file, or none() if none.
+    maybe_t<autoloadable_file_t> locate_file(const wcstring &cmd) const;
+
+   public:
+    /// Initialize with a set of directories.
+    explicit autoload_observer_t(wcstring_list_t dirs) : dirs_(std::move(dirs)) {}
+
+    /// \return the directories.
+    const wcstring_list_t &dirs() const { return dirs_; }
+
+    /// Check if a command \p cmd can be loaded.
+    /// If \p allow_stale is true, allow stale entries; otherwise discard them.
+    /// This returns an autoloadable file, or none() if there is no such file.
+    maybe_t<autoloadable_file_t> check(const wcstring &cmd, bool allow_stale = false);
+};
+
 #endif
