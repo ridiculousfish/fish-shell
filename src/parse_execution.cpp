@@ -1237,8 +1237,9 @@ parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> jo
 
     job->set_flag(job_flag_t::TERMINAL, job->get_flag(job_flag_t::JOB_CONTROL) && !is_event);
 
+    auto &ld = parser->libdata();
     job->set_flag(job_flag_t::SKIP_NOTIFICATION,
-                  is_subshell || is_block || is_event || !shell_is_interactive());
+                  ld.is_subshell || ld.is_block || ld.is_event || !shell_is_interactive());
 
     // We are about to populate a job. One possible argument to the job is a command substitution
     // which may be interested in the job that's populating it, via '--on-job-exit caller'. Record
