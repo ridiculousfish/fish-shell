@@ -386,7 +386,7 @@ static void s_desired_append_char(screen_t *s, wchar_t b, highlight_spec_t c, in
 
     if (b == L'\n') {
         // Current line is definitely hard wrapped.
-        s->desired.create_line(s->desired.line_count());
+        s->desired.create_line(s->desired.line_count(), &s->line_pool);
         s->desired.line(s->desired.cursor.y).is_soft_wrapped = false;
         s->desired.cursor.y++;
         s->desired.cursor.x = 0;
@@ -401,7 +401,7 @@ static void s_desired_append_char(screen_t *s, wchar_t b, highlight_spec_t c, in
         int screen_width = common_get_width();
         int cw = bwidth;
 
-        s->desired.create_line(line_no);
+        s->desired.create_line(line_no, &s->line_pool);
 
         // Check if we are at the end of the line. If so, continue on the next line.
         if ((s->desired.cursor.x + cw) > screen_width) {
@@ -410,7 +410,7 @@ static void s_desired_append_char(screen_t *s, wchar_t b, highlight_spec_t c, in
             // std::fwprintf(stderr, L"\n\n1 Soft wrapping %d\n\n", s->desired.cursor.y);
 
             line_no = (int)s->desired.line_count();
-            s->desired.add_line();
+            s->desired.add_line(&s->line_pool);
             s->desired.cursor.y++;
             s->desired.cursor.x = 0;
         }
@@ -467,8 +467,8 @@ static void s_move(screen_t *s, int new_x, int new_y) {
         str = cursor_up;
     } else if (y_steps > 0) {
         str = cursor_down;
-        if ((shell_modes.c_oflag & ONLCR) != 0
-            && std::strcmp(str, "\n") == 0) { // See GitHub issue #4505.
+        if ((shell_modes.c_oflag & ONLCR) != 0 &&
+            std::strcmp(str, "\n") == 0) {  // See GitHub issue #4505.
             // Most consoles use a simple newline as the cursor down escape.
             // If ONLCR is enabled (which it normally is) this will of course
             // also move the cursor to the beginning of the line.
@@ -558,7 +558,8 @@ static size_t line_shared_prefix(const line_t &a, const line_t &b) {
         if (ac != bc || a.color_at(idx) != b.color_at(idx)) {
             if (idx > 0) {
                 const line_t *c = nullptr;
-                // Possible combining mark, go back until we hit _two_ printable characters or idx of 0.
+                // Possible combining mark, go back until we hit _two_ printable characters or idx
+                // of 0.
                 if (fish_wcwidth(a.char_at(idx)) < 1) {
                     c = &a;
                 } else if (fish_wcwidth(b.char_at(idx)) < 1) {
@@ -566,7 +567,9 @@ static size_t line_shared_prefix(const line_t &a, const line_t &b) {
                 }
 
                 if (c) {
-                    while (idx > 1 && (fish_wcwidth(c->char_at(idx - 1)) < 1 || fish_wcwidth(c->char_at(idx)) < 1)) idx--;
+                    while (idx > 1 && (fish_wcwidth(c->char_at(idx - 1)) < 1 ||
+                                       fish_wcwidth(c->char_at(idx)) < 1))
+                        idx--;
                     if (idx == 1 && fish_wcwidth(c->char_at(idx)) < 1) idx = 0;
                 }
             }
@@ -644,7 +647,7 @@ static void s_update(screen_t *scr, const wcstring &left_prompt, const wcstring 
 
     for (size_t i = 0; i < scr->desired.line_count(); i++) {
         const line_t &o_line = scr->desired.line(i);
-        line_t &s_line = scr->actual.create_line(i);
+        line_t &s_line = scr->actual.create_line(i, &scr->line_pool);
         size_t start_pos = i == 0 ? left_prompt_width : 0;
         int current_width = 0;
 
@@ -1010,7 +1013,7 @@ void s_write(screen_t *s, const wcstring &left_prompt, const wcstring &right_pro
         !autosuggestion.empty() && autosuggestion != layout.autosuggestion;
 
     // Clear the desired screen.
-    s->desired.resize(0);
+    s->desired.clear(&s->line_pool);
     s->desired.cursor.x = s->desired.cursor.y = 0;
 
     // Append spaces for the left prompt.
@@ -1036,7 +1039,8 @@ void s_write(screen_t *s, const wcstring &left_prompt, const wcstring &right_pro
             cursor_arr = s->desired.cursor;
         }
         s_desired_append_char(s, effective_commandline.at(i), colors[i], indent[i],
-                              first_line_prompt_space, fish_wcwidth_min_0(effective_commandline.at(i)));
+                              first_line_prompt_space,
+                              fish_wcwidth_min_0(effective_commandline.at(i)));
     }
 
     // Cursor may have been at the end too.
@@ -1109,7 +1113,7 @@ void s_reset(screen_t *s, screen_reset_mode_t mode) {
     }
 
     if (repaint_prompt) s->actual_left_prompt.clear();
-    s->actual.resize(0);
+    s->actual.clear(&s->line_pool);
     s->need_clear_lines = true;
     s->need_clear_screen = s->need_clear_screen || clear_to_eos;
 

@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <deque>
 #include <list>
 #include <memory>
 #include <unordered_map>
@@ -66,6 +67,19 @@ struct line_t {
     wcstring to_string() const { return wcstring(this->text.begin(), this->text.end()); }
 };
 
+struct line_pool_t {
+    std::deque<line_t> storage;
+
+    bool empty() const { return storage.empty(); }
+
+    line_t dequeue() {
+        line_t line = std::move(storage.back());
+        line.clear();
+        storage.pop_back();
+        return line;
+    }
+};
+
 /// A class representing screen contents.
 class screen_data_t {
     std::vector<line_t> line_datas;
@@ -78,15 +92,28 @@ class screen_data_t {
         cursor_t(int a, int b) : x(a), y(b) {}
     } cursor;
 
-    line_t &add_line(void) {
-        line_datas.resize(line_datas.size() + 1);
+    line_t &add_line(line_pool_t *pool = nullptr) {
+        if (pool && !pool->empty()) {
+            line_datas.push_back(pool->dequeue());
+        } else {
+            line_datas.push_back({});
+        }
         return line_datas.back();
     }
 
-    void resize(size_t size) { line_datas.resize(size); }
+    void clear(line_pool_t *pool) {
+        if (pool) {
+            // Transfer our lines back to the pool.
+            std::move(line_datas.begin(), line_datas.end(), std::back_inserter(pool->storage));
+        }
+        line_datas.clear();
+    }
 
-    line_t &create_line(size_t idx) {
-        if (idx >= line_datas.size()) {
+    line_t &create_line(size_t idx, line_pool_t *pool = nullptr) {
+        while (idx >= line_count() && pool && !pool->empty()) {
+            line_datas.push_back(pool->dequeue());
+        }
+        if (idx >= line_count()) {
             line_datas.resize(idx + 1);
         }
         return line_datas.at(idx);
@@ -148,6 +175,8 @@ class screen_t {
     /// These status buffers are used to check if any output has occurred other than from fish's
     /// main loop, in which case we need to redraw.
     struct stat prev_buff_1, prev_buff_2, post_buff_1, post_buff_2;
+    /// Object pool of lines to avoid unnecessary allocations.
+    line_pool_t line_pool;
 
     /// \return the outputter for this screen.
     outputter_t &outp() { return outp_; }

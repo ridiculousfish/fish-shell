@@ -549,7 +549,7 @@ page_rendering_t pager_t::render() const {
 
     for (size_t cols = PAGER_MAX_COLS; cols > 0; cols--) {
         // Initially empty rendering.
-        rendering.screen_data.resize(0);
+        rendering.screen_data.clear(nullptr);
 
         // Determine how many rows we would need if we had 'cols' columns. Then determine how many
         // columns we want from that. For example, say we had 19 completions. We can fit them into 6
