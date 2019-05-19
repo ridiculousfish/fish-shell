@@ -34,6 +34,7 @@
 #include "fallback.h"  // IWYU pragma: keep
 #include "flog.h"
 #include "function.h"
+#include "future_feature_flags.h"
 #include "io.h"
 #include "iothread.h"
 #include "parse_tree.h"
@@ -778,6 +779,119 @@ static bool exec_external_command(parser_t &parser, const std::shared_ptr<job_t>
     return true;
 }
 
+// We are in a background thread!
+static proc_status_t exec_concurrent_func_process_impl(
+    parser_t &parser, const wcstring &func_name, const wcstring_list_t &argv,
+    const std::map<wcstring, env_var_t> &inherit_vars,
+    const std::shared_ptr<const function_properties_t> &props, const io_chain_t &io_chain) {
+    block_t *fb = parser.push_block(block_t::function_block(func_name, argv, props->shadow_scope));
+    function_prepare_environment(parser.vars(), func_name, std::move(argv), inherit_vars);
+    parser.forbid_function(func_name);
+
+    internal_exec_helper(parser, props->parsed_source, props->body_node, io_chain,
+                         nullptr /* parent job */);
+
+    parser.allow_function();
+    parser.pop_block(fb);
+
+    // If we returned due to a return statement, then stop returning now.
+    parser.libdata().returning = false;
+
+    int status = parser.get_last_status();
+    // FIXME: setting the status this way is dangerous nonsense, we need to decode the status
+    // properly if it was a signal.
+    return proc_status_t::from_exit_code(status);
+}
+
+static bool exec_concurrent_func_process(parser_t &parser, std::shared_ptr<job_t> j, process_t *p,
+                                         const io_chain_t &user_ios, io_chain_t io_chain) {
+    (void)j;
+    (void)user_ios;
+    assert(p->type == process_type_t::function && "Unexpected process type");
+    const wcstring func_name = p->argv0();
+    auto props = function_get_properties(func_name);
+    if (!props) {
+        debug(0, _(L"Unknown function '%ls'"), p->argv0());
+        return false;
+    }
+
+    const std::map<wcstring, env_var_t> inherit_vars = function_get_inherit_vars(func_name);
+
+    // TODO: we want to store the args in both the function block and the environment.
+    // Find a way to share memory here?
+    wcstring_list_t argv = p->get_argv_array().to_list();
+    // Remove the function name from argv.
+    if (!argv.empty()) argv.erase(argv.begin());
+
+    // Branch our parser so we have a new place to execute.
+    // TODO: this new value should be passed in.
+    auto child_internal_pg = pgid_selector_t::create();
+    auto child = parser.branch(child_internal_pg);
+
+    // Make an internal process.
+    auto internal_proc = std::make_shared<internal_proc_t>();
+    FLOGF(proc_internal_proc, "Created internal proc %llu to concurrently exec proc '%ls'",
+          internal_proc->get_id(), p->argv0());
+
+    // Kick us off on a background thread.
+    p->check_generations_before_launch();
+    p->internal_proc_ = internal_proc;
+    pthread_t thread = {};
+    if (!make_pthread(&thread, [=] {
+            // TODO: passing io_chain here is suspect.
+            proc_status_t status = exec_concurrent_func_process_impl(*child, func_name, argv,
+                                                                     inherit_vars, props, io_chain);
+            internal_proc->mark_exited(status);
+        })) {
+        return false;
+    }
+    return true;
+}
+
+// We are on a background thread!
+static proc_status_t exec_concurrent_block_process_impl(
+    parser_t &parser, parsed_source_ref_t block_node_source,
+    tnode_t<grammar::statement> internal_block_node, io_chain_t io_chain) {
+    internal_exec_helper(parser, block_node_source, internal_block_node, io_chain,
+                         nullptr /* parent_job */);
+    int status = parser.get_last_status();
+    // FIXME: setting the status this way is dangerous nonsense, we need to decode the status
+    // properly if it was a signal.
+    return proc_status_t::from_exit_code(status);
+}
+
+static bool exec_concurrent_block_process(parser_t &parser, std::shared_ptr<job_t> j, process_t *p,
+                                          const io_chain_t &user_ios, io_chain_t io_chain) {
+    (void)j;
+    (void)user_ios;
+    // Branch our parser so we have a new place to execute.
+    // TODO: this new value should be passed in.
+    auto child_internal_pg = pgid_selector_t::create();
+    auto child = parser.branch(child_internal_pg);
+
+    // Make an internal process.
+    auto internal_proc = std::make_shared<internal_proc_t>();
+    FLOGF(proc_internal_proc, "Created internal proc %llu to concurrently exec proc '%ls'",
+          internal_proc->get_id(), p->argv0());
+
+    auto block_node_source = p->block_node_source;
+    auto internal_block_node = p->internal_block_node;
+
+    // Kick us off on a background thread.
+    p->check_generations_before_launch();
+    p->internal_proc_ = internal_proc;
+    pthread_t thread = {};
+    if (!make_pthread(&thread, [=] {
+            // TODO: passing io_chain here is suspect.
+            proc_status_t status = exec_concurrent_block_process_impl(
+                *child, block_node_source, internal_block_node, io_chain);
+            internal_proc->mark_exited(status);
+        })) {
+        return false;
+    }
+    return true;
+}
+
 /// Execute a block node or function "process".
 /// \p user_ios contains the list of user-specified ios, used so we can avoid stomping on them with
 /// our pipes.
@@ -941,6 +1055,22 @@ static bool exec_process_in_job(parser_t &parser, process_t *p, std::shared_ptr<
     switch (p->type) {
         case process_type_t::function:
         case process_type_t::block_node: {
+            // Execute background functions/blocks concurrently if enabled.
+            if (! j->is_foreground() && feature_test(features_t::concurrent)) {
+                if (p->type == process_type_t::function) {
+                    if (!exec_concurrent_func_process(parser, j, p, all_ios,
+                                                      process_net_io_chain)) {
+                        return false;
+                    }
+
+                } else if (p->type == process_type_t::block_node) {
+                    if (!exec_concurrent_block_process(parser, j, p, all_ios,
+                                                       process_net_io_chain)) {
+                        return false;
+                    }
+                }
+                break;
+            }
             // Allow buffering unless this is a deferred run. If deferred, then processes after us
             // were already launched, so they are ready to receive (or reject) our output.
             bool allow_buffering = !is_deferred_run;
