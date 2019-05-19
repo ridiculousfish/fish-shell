@@ -303,8 +303,8 @@ static void handle_child_status(parser_t &parser, process_t *proc, proc_status_t
         int sig = status.signal_code();
         if (sig == SIGINT || sig == SIGQUIT) {
             if (is_interactive_session()) {
-                // In an interactive session, tell the principal parser to skip all blocks we're
-                // executing so control-C returns control to the user.
+                // In an interactive session, mark the pgid selector as cancelled so control-C
+                // returns control to the user.
                 parser.get_pgid_selector().set_cancel_signalled(true);
             } else {
                 // Deliver the SIGINT or SIGQUIT signal to ourself since we're not interactive.

@@ -311,6 +311,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Get the pgid_selector.
     pgid_selector_t &get_pgid_selector() { return *pgid_selector; }
     const pgid_selector_t &get_pgid_selector() const { return *pgid_selector; }
+    const std::shared_ptr<pgid_selector_t> &get_pgid_selector_ref() const { return pgid_selector; }
 
     /// Pushes a new block. Returns a pointer to the block, stored in the parser. The pointer is
     /// valid until the call to pop_block()
