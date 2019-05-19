@@ -847,6 +847,46 @@ static bool exec_block_or_func_process(parser_t &parser, std::shared_ptr<job_t> 
     return true;
 }
 
+/// Execute a block node or function process concurrently (in a background thread).
+static bool exec_concurrent_block_or_func_process(parser_t &parser, std::shared_ptr<job_t> j,
+                                                  process_t *p, const io_chain_t &io_chain) {
+    assert((p->type == process_type_t::function || p->type == process_type_t::block_node) &&
+           "Unexpected process type");
+
+    bool success = false;
+    if (auto performer = get_performer_for_process(p, j.get(), io_chain)) {
+        // We can perform this process.
+        // Branch our parser so we have a new place to execute.
+        std::shared_ptr<parser_t> bg_executor = parser.branch(j->job_tree);
+
+        // Make an internal process.
+        auto internal_proc = std::make_shared<internal_proc_t>();
+        FLOGF(proc_internal_proc, "Created internal proc %llu to concurrently exec proc '%ls'",
+              internal_proc->get_id(), p->argv0());
+        p->internal_proc_ = internal_proc;
+
+        p->check_generations_before_launch();
+        success = make_detached_pthread([=] {
+            proc_status_t status = performer(*bg_executor);
+            internal_proc->mark_exited(status);
+        });
+    }
+    return success;
+}
+
+static bool use_concurrent_internal_procs(const std::shared_ptr<job_t> &j) {
+    return feature_test(features_t::concurrent) && j->processes.size() > 1;
+}
+
+/// Determine which job tree to use for a job.
+static job_tree_ref_t determine_job_tree_for_job(const parser_t &parser,
+                                                 const std::shared_ptr<job_t> &j) {
+    if (j->wants_job_control() && use_concurrent_internal_procs(j)) {
+        return job_tree_t::create();
+    }
+    return parser.get_job_tree_ref();
+}
+
 /// Executes a process \p in job \j, using the pipes \p pipes (which may have invalid fds if this is
 /// the first or last process).
 /// \p deferred_pipes represents the pipes from our deferred process; if set ensure they get closed
@@ -942,6 +982,14 @@ static bool exec_process_in_job(parser_t &parser, process_t *p, std::shared_ptr<
     switch (p->type) {
         case process_type_t::function:
         case process_type_t::block_node: {
+            // Execute background functions concurrently if enabled.
+            if ((p->type == process_type_t::function || p->type == process_type_t::block_node) &&
+                use_concurrent_internal_procs(j)) {
+                if (!exec_concurrent_block_or_func_process(parser, j, p, process_net_io_chain)) {
+                    return false;
+                }
+                break;
+            }
             // Allow buffering unless this is a deferred run. If deferred, then processes after us
             // were already launched, so they are ready to receive (or reject) our output.
             bool allow_buffering = !is_deferred_run;
@@ -1070,6 +1118,8 @@ bool exec_job(parser_t &parser, shared_ptr<job_t> j, const job_lineage_t &lineag
         j->pgid = getpgrp();
     }
 
+    // Figure out what tree to use for this job.
+    j->job_tree = determine_job_tree_for_job(parser, j);
     const size_t stdout_read_limit = parser.libdata().read_limit;
 
     // Get the list of all FDs so we can ensure our pipes do not conflict.

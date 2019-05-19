@@ -324,6 +324,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Get the job_tree for this parser.
     job_tree_t &get_job_tree() { return *job_tree; }
     const job_tree_t &get_job_tree() const { return *job_tree; }
+    const std::shared_ptr<job_tree_t> &get_job_tree_ref() const { return job_tree; }
 
     /// Pushes a new block. Returns a pointer to the block, stored in the parser. The pointer is
     /// valid until the call to pop_block()

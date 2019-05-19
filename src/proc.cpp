@@ -305,8 +305,8 @@ static void handle_child_status(parser_t &parser, process_t *proc, proc_status_t
         int sig = status.signal_code();
         if (sig == SIGINT || sig == SIGQUIT) {
             if (is_interactive_session()) {
-                // In an interactive session, tell the principal parser to skip all blocks we're
-                // executing so control-C returns control to the user.
+                // In an interactive session, mark the job tree as cancelled so control-C
+                // returns control to the user.
                 parser.get_job_tree().set_cancel_signalled(true);
             } else {
                 // Deliver the SIGINT or SIGQUIT signal to ourself since we're not interactive.
@@ -422,7 +422,7 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
                         // Try reaping an internal process.
                         if (proc->internal_proc_->exited()) {
                             proc->status = proc->internal_proc_->get_status();
-                            proc->completed = true;
+                            handle_child_status(parser, proc.get(), proc->status);
                             FLOGF(proc_reap_internal,
                                   "Reaped internal process '%ls' (id %llu, status %d)",
                                   proc->argv0(), proc->internal_proc_->get_id(),
