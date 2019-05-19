@@ -20,6 +20,7 @@ const features_t::metadata_t features_t::metadata[features_t::flag_count] = {
     {qmark_noglob, L"qmark-noglob", L"3.0", L"? no longer globs", false},
     {string_replace_backslash, L"regex-easyesc", L"3.1", L"string replace -r needs fewer \\'s",
      false},
+    {concurrent, L"concurrent", L"3.4", L"Concurrent execution", false},
 };
 
 const struct features_t::metadata_t *features_t::metadata_for(const wchar_t *name) {

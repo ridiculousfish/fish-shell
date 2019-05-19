@@ -57,6 +57,7 @@ status features
 #CHECK: stderr-nocaret	on	3.0	^ no longer redirects stderr
 #CHECK: qmark-noglob	off	3.0	? no longer globs
 #CHECK: regex-easyesc	off	3.1	string replace -r needs fewer \'s
+#CHECK: concurrent	{{[a-z]+}}	3.4	Concurrent execution
 status test-feature stderr-nocaret
 echo $status
 #CHECK: 0
