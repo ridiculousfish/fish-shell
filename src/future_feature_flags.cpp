@@ -25,6 +25,7 @@ const features_t::metadata_t features_t::metadata[features_t::flag_count] = {
      true, false},
     {ampersand_nobg_in_token, L"ampersand-nobg-in-token", L"3.4",
      L"& only backgrounds if followed by a separator", true, false},
+    {concurrent, L"concurrent", L"3.4", L"Concurrent execution", false, false},
 };
 
 const struct features_t::metadata_t *features_t::metadata_for(const wchar_t *name) {
