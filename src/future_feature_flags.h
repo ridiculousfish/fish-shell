@@ -20,6 +20,9 @@ class features_t {
         /// Whether string replace -r double-unescapes the replacement.
         string_replace_backslash,
 
+        /// Whether concurrent execution is supported.
+        concurrent,
+
         /// The number of flags.
         flag_count
     };
