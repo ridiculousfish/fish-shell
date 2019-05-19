@@ -42,6 +42,7 @@
 #include "event.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "flog.h"
+#include "future_feature_flags.h"
 #include "global_safety.h"
 #include "io.h"
 #include "job_group.h"
@@ -290,9 +291,12 @@ bool process_t::is_internal() const {
 }
 
 wait_handle_ref_t process_t::make_wait_handle(internal_job_id_t jid) {
-    if (type != process_type_t::external || pid <= 0) {
-        // Not waitable.
-        return nullptr;
+    // In non-concurrent mode, we cannot background fish functions,
+    // so no reason to wait on them.
+    if (!feature_test(features_t::concurrent)) {
+        if (type != process_type_t::external || pid <= 0) {
+            return nullptr;
+        }
     }
     if (!wait_handle_) {
         wait_handle_ = std::make_shared<wait_handle_t>(this->pid, jid, wbasename(this->actual_cmd));

@@ -750,6 +750,35 @@ static launch_result_t exec_block_or_func_process(parser_t &parser, const std::s
     return launch_result_t::ok;
 }
 
+/// Execute a block node or function process concurrently (in a background thread).
+static launch_result_t exec_concurrent_block_or_func_process(parser_t &parser,
+                                                             std::shared_ptr<job_t> j, process_t *p,
+                                                             const io_chain_t &io_chain) {
+    assert((p->type == process_type_t::function || p->type == process_type_t::block_node) &&
+           "Unexpected process type");
+
+    auto performer = get_performer_for_process(p, j.get(), io_chain);
+    if (!performer) {
+        return launch_result_t::failed;
+    }
+
+    // We can perform this process.
+    // Branch our parser so we have a new place to execute.
+    std::shared_ptr<parser_t> bg_executor = parser.branch();
+
+    // Make an internal process.
+    auto internal_proc = std::make_shared<internal_proc_t>();
+    FLOGF(proc_internal_proc, "Created internal proc %llu to concurrently exec proc '%ls'",
+          internal_proc->get_id(), p->argv0());
+    p->internal_proc_ = internal_proc;
+
+    bool launched = make_detached_pthread([=] {
+        proc_status_t status = performer(*bg_executor);
+        internal_proc->mark_exited(status);
+    });
+    return launched ? launch_result_t::ok : launch_result_t::failed;
+}
+
 static proc_performer_t get_performer_for_builtin(
     process_t *p, job_t *job, const io_chain_t &io_chain,
     const std::shared_ptr<output_stream_t> &output_stream,
@@ -830,6 +859,10 @@ static launch_result_t exec_builtin_process(parser_t &parser, const std::shared_
     }
     handle_builtin_output(parser, j, p, io_chain, *out, *err);
     return launch_result_t::ok;
+}
+
+static bool use_concurrent_internal_procs(const std::shared_ptr<job_t> &j) {
+    return feature_test(features_t::concurrent) && j->processes.size() > 1;
 }
 
 /// Executes a process \p \p in \p job, using the pipes \p pipes (which may have invalid fds if this
@@ -924,7 +957,10 @@ static launch_result_t exec_process_in_job(parser_t &parser, process_t *p,
         parser.vars().set(assignment.variable_name, ENV_LOCAL | ENV_EXPORT, assignment.values);
     }
 
-    // Decide if outputting to a pipe may deadlock.
+    // Decide whether internal fish processes should run concurrently or serially.
+    bool concurrent_procs = use_concurrent_internal_procs(j);
+
+    // If we are not concurrent, decide if outputting to a pipe may deadlock.
     // This happens if fish pipes from an internal process into another internal process:
     //    echo $big | string match...
     // Here fish will only run one process at a time, so the pipe buffer may overfill.
@@ -933,16 +969,21 @@ static launch_result_t exec_process_in_job(parser_t &parser, process_t *p,
     // fish wants to run `echo` before launching external_proc, so the pipe may deadlock.
     // However if we are a deferred run, it means that we are piping into an external process
     // which got launched before us!
-    bool piped_output_needs_buffering = !p->is_last_in_job && !is_deferred_run;
+    bool piped_output_needs_buffering = !concurrent_procs && !p->is_last_in_job && !is_deferred_run;
 
     // Execute the process.
     p->check_generations_before_launch();
     switch (p->type) {
         case process_type_t::function:
         case process_type_t::block_node: {
-            if (exec_block_or_func_process(parser, j, p, process_net_io_chain,
-                                           piped_output_needs_buffering) ==
-                launch_result_t::failed) {
+            launch_result_t result;
+            if (concurrent_procs) {
+                result = exec_concurrent_block_or_func_process(parser, j, p, process_net_io_chain);
+            } else {
+                result = exec_block_or_func_process(parser, j, p, process_net_io_chain,
+                                                    piped_output_needs_buffering);
+            }
+            if (result == launch_result_t::failed) {
                 return launch_result_t::failed;
             }
             break;
