@@ -334,6 +334,15 @@ std::vector<completion_t> parser_t::expand_argument_list(const wcstring &arg_lis
 
 std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
+std::shared_ptr<parser_t> parser_t::branch() const {
+    std::shared_ptr<parser_t> clone{new parser_t(variables)};
+    clone->cancellation_requested = this->cancellation_requested;
+    clone->block_list = this->block_list;
+    clone->eval_level = this->eval_level;
+    clone->library_data = this->library_data;
+    return clone;
+}
+
 /// Append stack trace info for the block \p b to \p trace.
 static void append_block_description_to_stack_trace(const block_t &b, wcstring &trace,
                                                     const environment_t &vars) {
