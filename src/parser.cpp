@@ -326,6 +326,14 @@ operation_context_t parser_t::context() {
     return operation_context_t{this->shared(), this->vars(), this->cancel_checker()};
 }
 
+std::shared_ptr<parser_t> parser_t::branch() const {
+    std::shared_ptr<parser_t> clone{new parser_t(variables)};
+    clone->block_list = this->block_list;
+    clone->eval_level = this->eval_level;
+    clone->library_data = this->library_data;
+    return clone;
+}
+
 /// Append stack trace info for the block \p b to \p trace.
 static void append_block_description_to_stack_trace(const parser_t &parser, const block_t &b,
                                                     wcstring &trace) {
