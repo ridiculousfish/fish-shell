@@ -348,6 +348,17 @@ wcstring parser_t::stack_trace() const {
 
 std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
+std::shared_ptr<parser_t> parser_t::branch() const {
+    // Copy over some things. Other parts cannot be shared. TODO: factor this sanely.
+    std::shared_ptr<parser_t> clone{new parser_t(variables)};
+    clone->cancellation_requested = this->cancellation_requested;
+    clone->forbidden_function = this->forbidden_function;
+    clone->block_stack = this->block_stack;
+    clone->eval_level = this->eval_level;
+    clone->library_data = this->library_data;
+    return clone;
+}
+
 void parser_t::stack_trace_internal(size_t block_idx, wcstring *buff) const {
     // Check if we should end the recursion.
     if (block_idx >= this->block_count()) return;
