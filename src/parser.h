@@ -92,7 +92,7 @@ class block_t {
 
    private:
     /// Type of block.
-    const block_type_t block_type;
+    block_type_t block_type;
 
    public:
     /// Whether we should pop the environment variable stack when we're popped off of the block
@@ -485,6 +485,10 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Checks if the max eval depth has been exceeded
     bool is_eval_depth_exceeded() const { return eval_level >= FISH_MAX_EVAL_DEPTH; }
+
+    /// Branch this parser: return a new parser suitable for executing in another thread. Like
+    /// fork() but for parsers. Black magic.
+    std::shared_ptr<parser_t> branch() const;
 
     ~parser_t();
 };
