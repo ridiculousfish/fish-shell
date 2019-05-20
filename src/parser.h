@@ -63,7 +63,7 @@ class block_t {
     explicit block_t(block_type_t t);
 
     /// Type of block.
-    const block_type_t block_type;
+    block_type_t block_type;
 
    public:
     /// Name of file that created this block. This string is intern'd.
@@ -444,6 +444,10 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// \return the operation context for this parser.
     operation_context_t context();
+
+    /// Branch this parser: return a new parser suitable for executing in another thread. Like
+    /// fork() but for parsers. Black magic.
+    std::shared_ptr<parser_t> branch() const;
 
     ~parser_t();
 };
