@@ -505,8 +505,6 @@ int parser_t::get_lineno() const {
 }
 
 const wchar_t *parser_t::current_filename() const {
-    ASSERT_IS_MAIN_THREAD();
-
     for (size_t i = 0; i < this->block_count(); i++) {
         const block_t *b = this->block_at_index(i);
         if (b->type() == FUNCTION_CALL || b->type() == FUNCTION_CALL_NO_SHADOW) {
