@@ -474,8 +474,6 @@ int parser_t::get_lineno() const {
 }
 
 const wchar_t *parser_t::current_filename() const {
-    ASSERT_IS_MAIN_THREAD();
-
     for (const auto &b : block_list) {
         if (b.is_function_call()) {
             return function_get_definition_file(b.function_name);
