@@ -223,7 +223,7 @@ static bool resolve_file_redirections_to_fds(const io_chain_t &in_chain, io_chai
             case io_mode_t::file: {
                 // We have a path-based redireciton. Resolve it to a file.
                 io_file_t *in_file = static_cast<io_file_t *>(in.get());
-                int fd = wopen(in_file->filename, in_file->flags, OPEN_MASK);
+                int fd = wopen_cloexec(in_file->filename, in_file->flags, OPEN_MASK);
                 if (fd < 0) {
                     debug(1, FILE_ERROR, in_file->filename.c_str());
                     wperror(L"open");
