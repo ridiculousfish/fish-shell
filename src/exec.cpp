@@ -193,7 +193,6 @@ static int has_fd(const io_chain_t &d, int fd) { return io_chain_get(d, fd).get(
 static bool resolve_file_redirections_to_fds(const io_chain_t &in_chain, const wcstring &pwd,
                                              io_chain_t *out_chain,
                                              std::vector<autoclose_fd_t> *out_opened_fds) {
-    ASSERT_IS_MAIN_THREAD();
     assert(out_chain != NULL && out_opened_fds != NULL);
     assert(out_chain->empty());
 
