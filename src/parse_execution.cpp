@@ -800,7 +800,7 @@ parse_execution_result_t parse_execution_context_t::populate_plain_process(
     }
 
     // Protect against exec with background processes running
-    if (process_type == process_type_t::exec && shell_is_interactive()) {
+    if (process_type == process_type_t::exec && parser->is_interactive()) {
         bool have_bg = false;
         for (const auto &bg : parser->jobs()) {
             // The assumption here is that if it is a foreground job,
@@ -1165,7 +1165,7 @@ parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> jo
 
     // Get terminal modes.
     struct termios tmodes = {};
-    if (shell_is_interactive() && tcgetattr(STDIN_FILENO, &tmodes)) {
+    if (parser->is_interactive() && tcgetattr(STDIN_FILENO, &tmodes)) {
         // Need real error handling here.
         wperror(L"tcgetattr");
         return parse_execution_errored;
@@ -1235,16 +1235,16 @@ parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> jo
     auto &ld = parser->libdata();
     job->tmodes = tmodes;
     auto job_control_mode = get_job_control_mode();
-    job->set_flag(job_flag_t::JOB_CONTROL,
-                  (job_control_mode == job_control_t::all) ||
-                      ((job_control_mode == job_control_t::interactive) && shell_is_interactive()));
+    job->set_flag(job_flag_t::JOB_CONTROL, (job_control_mode == job_control_t::all) ||
+                                               ((job_control_mode == job_control_t::interactive) &&
+                                                parser->is_interactive()));
 
     job->set_flag(job_flag_t::FOREGROUND, !job_node_is_background(job_node));
 
     job->set_flag(job_flag_t::TERMINAL, job->get_flag(job_flag_t::JOB_CONTROL) && !ld.is_event);
 
     job->set_flag(job_flag_t::SKIP_NOTIFICATION,
-                  ld.is_subshell || ld.is_block || ld.is_event || !shell_is_interactive());
+                  ld.is_subshell || ld.is_block || ld.is_event || !parser->is_interactive());
 
     // We are about to populate a job. One possible argument to the job is a command substitution
     // which may be interested in the job that's populating it, via '--on-job-exit caller'. Record
