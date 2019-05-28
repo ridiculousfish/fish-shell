@@ -1154,7 +1154,7 @@ bool exec_job(parser_t &parser, shared_ptr<job_t> j, const job_lineage_t &lineag
 
 static int exec_subshell_internal(const wcstring &cmd, parser_t &parser, wcstring_list_t *lst,
                                   bool apply_exit_status, bool is_subcmd) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     auto &ld = parser.libdata();
     bool prev_subshell = ld.is_subshell;
     auto prev_statuses = parser.get_last_statuses();
@@ -1242,11 +1242,11 @@ static int exec_subshell_internal(const wcstring &cmd, parser_t &parser, wcstrin
 
 int exec_subshell(const wcstring &cmd, parser_t &parser, wcstring_list_t &outputs,
                   bool apply_exit_status, bool is_subcmd) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     return exec_subshell_internal(cmd, parser, &outputs, apply_exit_status, is_subcmd);
 }
 
 int exec_subshell(const wcstring &cmd, parser_t &parser, bool apply_exit_status, bool is_subcmd) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     return exec_subshell_internal(cmd, parser, nullptr, apply_exit_status, is_subcmd);
 }
