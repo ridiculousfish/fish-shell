@@ -173,7 +173,6 @@ static void iothread_spawn() {
 }
 
 int iothread_perform_impl(void_function_t &&func, void_function_t &&completion) {
-    ASSERT_IS_MAIN_THREAD();
     ASSERT_IS_NOT_FORKED_CHILD();
 
     struct spawn_request_t req(std::move(func), std::move(completion));
