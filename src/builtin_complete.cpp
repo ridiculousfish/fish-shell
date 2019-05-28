@@ -111,8 +111,7 @@ static void builtin_complete_remove(const wcstring_list_t &cmds, const wcstring_
 /// The complete builtin. Used for specifying programmable tab-completions. Calls the functions in
 // complete.cpp for any heavy lifting.
 maybe_t<int> builtin_complete(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
-    ASSERT_IS_MAIN_THREAD();
-
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     completion_mode_t result_mode{};
