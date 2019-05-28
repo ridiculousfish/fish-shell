@@ -1088,7 +1088,7 @@ static void populate_subshell_output(wcstring_list_t *lst, const io_buffer_t &bu
 /// of $status.
 static int exec_subshell_internal(const wcstring &cmd, parser_t &parser, wcstring_list_t *lst,
                                   bool *break_expand, bool apply_exit_status, bool is_subcmd) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     auto &ld = parser.libdata();
 
     scoped_push<bool> is_subshell(&ld.is_subshell, true);
@@ -1130,7 +1130,7 @@ static int exec_subshell_internal(const wcstring &cmd, parser_t &parser, wcstrin
 }
 
 int exec_subshell_for_expand(const wcstring &cmd, parser_t &parser, wcstring_list_t &outputs) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     bool break_expand = false;
     int ret = exec_subshell_internal(cmd, parser, &outputs, &break_expand, true, true);
     // Only return an error code if we should break expansion.
