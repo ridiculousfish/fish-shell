@@ -140,7 +140,7 @@ void io_buffer_t::run_background_fillthread(autoclose_fd_t readfd) {
 }
 
 void io_buffer_t::begin_background_fillthread(autoclose_fd_t fd) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     assert(!fillthread_running() && "Already have a fillthread");
 
     // We want our background thread to own the fd but it's not easy to move into a std::function.
@@ -164,7 +164,7 @@ void io_buffer_t::begin_background_fillthread(autoclose_fd_t fd) {
 }
 
 void io_buffer_t::complete_background_fillthread() {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     assert(fillthread_running() && "Should have a fillthread");
     shutdown_fillthread_ = true;
 
