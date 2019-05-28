@@ -63,6 +63,7 @@ struct _iothread_trampoline<void> {
 // on the main thread. The value returned from the handler is passed to the completion.
 // In other words, this is like COMPLETION(HANDLER()) except the handler part is invoked
 // on a background thread.
+// This may only be called on the main thread unless the completion function is empty.
 template <typename HANDLER, typename COMPLETION>
 int iothread_perform(const HANDLER &handler, const COMPLETION &completion) {
     return _iothread_trampoline<decltype(handler())>::perform(handler, completion);
