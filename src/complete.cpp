@@ -417,7 +417,7 @@ bool completer_t::condition_test(const wcstring &condition) {
         return false;
     }
 
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     bool test_res;
     auto cached_entry = condition_cache.find(condition);
     if (cached_entry == condition_cache.end()) {
@@ -568,7 +568,7 @@ void completer_t::complete_strings(const wcstring &wc_escaped, const description
 /// If command to complete is short enough, substitute the description with the whatis information
 /// for the executable.
 void completer_t::complete_cmd_desc(const wcstring &str) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     if (!ctx.parser) return;
 
     wcstring cmd;
