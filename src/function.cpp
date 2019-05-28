@@ -86,7 +86,7 @@ static std::shared_ptr<function_properties_t> copy_props(const function_properti
 /// loaded.
 /// Note this executes fish script code.
 static void try_autoload(const wcstring &name, parser_t &parser) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     maybe_t<wcstring> path_to_autoload;
     // Note we can't autoload while holding the funcset lock.
     // Lock around a local region.
@@ -137,8 +137,7 @@ static void autoload_names(std::unordered_set<wcstring> &names, int get_hidden) 
 }
 
 void function_add(wcstring name, std::shared_ptr<function_properties_t> props) {
-    ASSERT_IS_MAIN_THREAD();
-    assert(props && "Null props");
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     auto funcset = function_set.acquire();
 
     // Historical check. TODO: rationalize this.
@@ -164,14 +163,14 @@ function_properties_ref_t function_get_props(const wcstring &name) {
 }
 
 function_properties_ref_t function_get_props_autoload(const wcstring &name, parser_t &parser) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     if (parser_keywords_is_reserved(name)) return nullptr;
     try_autoload(name, parser);
     return function_get_props(name);
 }
 
 bool function_exists(const wcstring &cmd, parser_t &parser) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     if (!valid_func_name(cmd)) return false;
     return function_get_props_autoload(cmd, parser) != nullptr;
 }
@@ -216,7 +215,7 @@ static wcstring get_function_body_source(const function_properties_t &props) {
 }
 
 void function_set_desc(const wcstring &name, const wcstring &desc, parser_t &parser) {
-    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT();
     try_autoload(name, parser);
     auto funcset = function_set.acquire();
     auto iter = funcset->funcs.find(name);
