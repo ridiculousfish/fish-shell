@@ -430,9 +430,6 @@ wcstring parser_t::stack_trace() const {
 /// is of type FUNCTION_CALL. If the caller doesn't specify a starting position in the stack we
 /// begin with the current block.
 const wchar_t *parser_t::is_function(size_t idx) const {
-    // PCA: Have to make this a string somehow.
-    ASSERT_IS_MAIN_THREAD();
-
     for (size_t block_idx = idx; block_idx < block_list.size(); block_idx++) {
         const block_t &b = block_list[block_idx];
         if (b.is_function_call()) {
