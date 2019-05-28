@@ -430,9 +430,6 @@ void parser_t::stack_trace_internal(size_t block_idx, wcstring *buff) const {
 /// is of type FUNCTION_CALL. If the caller doesn't specify a starting position in the stack we
 /// begin with the current block.
 const wchar_t *parser_t::is_function(size_t idx) const {
-    // PCA: Have to make this a string somehow.
-    ASSERT_IS_MAIN_THREAD();
-
     const wchar_t *result = NULL;
     for (size_t block_idx = idx; block_idx < this->block_count(); block_idx++) {
         const block_t *b = this->block_at_index(block_idx);
