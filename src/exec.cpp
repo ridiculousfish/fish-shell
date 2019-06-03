@@ -111,9 +111,7 @@ enum class launch_result_t {
 /// This function is similar to launch_process, except it is not called after a fork (i.e. it only
 /// calls exec) and therefore it can allocate memory.
 [[noreturn]] static void launch_process_nofork(env_stack_t &vars, process_t *p) {
-    ASSERT_IS_MAIN_THREAD();
     ASSERT_IS_NOT_FORKED_CHILD();
-
     // Construct argv. Ensure the strings stay alive for the duration of this function.
     std::vector<std::string> narrow_strings = wide_string_list_to_narrow(p->argv());
     null_terminated_array_t<char> narrow_argv(narrow_strings);
