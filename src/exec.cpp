@@ -102,9 +102,7 @@ static relaxed_atomic_t<int> s_fork_count{0};
 /// This function is similar to launch_process, except it is not called after a fork (i.e. it only
 /// calls exec) and therefore it can allocate memory.
 [[noreturn]] static void launch_process_nofork(env_stack_t &vars, process_t *p) {
-    ASSERT_IS_MAIN_THREAD();
     ASSERT_IS_NOT_FORKED_CHILD();
-
     null_terminated_array_t<char> argv_array;
     convert_wide_array_to_narrow(p->get_argv_array(), &argv_array);
 
