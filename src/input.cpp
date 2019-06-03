@@ -675,7 +675,6 @@ static std::vector<terminfo_mapping_t> create_input_terminfo() {
 }
 
 bool input_terminfo_get_sequence(const wchar_t *name, wcstring *out_seq) {
-    ASSERT_IS_MAIN_THREAD();
     assert(s_input_initialized);
     assert(name && "null name");
 
