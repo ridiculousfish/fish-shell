@@ -175,8 +175,6 @@ int setup_child_process(process_t *p, const dup2_list_t &dup2s) {
 /// FORK_LAPS times, with a very slight delay between each lap. If fork fails even then, the process
 /// will exit with an error message.
 pid_t execute_fork(bool wait_for_threads_to_die) {
-    ASSERT_IS_MAIN_THREAD();
-
     if (wait_for_threads_to_die || JOIN_THREADS_BEFORE_FORK) {
         // Make sure we have no outstanding threads before we fork. This is a pretty sketchy thing
         // to do here, both because exec.cpp shouldn't have to know about iothreads, and because the
