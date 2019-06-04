@@ -29,6 +29,7 @@
 #include "global_safety.h"
 #include "history.h"
 #include "input.h"
+#include "iothread.h"
 #include "path.h"
 #include "proc.h"
 #include "reader.h"
@@ -1186,7 +1187,6 @@ int env_stack_impl_t::remove(const wcstring &key, int mode, bool *out_needs_uvar
 }
 
 bool env_stack_t::universal_barrier() {
-    ASSERT_IS_MAIN_THREAD();
     if (!uvars()) return false;
 
     callback_data_list_t callbacks;
@@ -1195,7 +1195,10 @@ bool env_stack_t::universal_barrier() {
         universal_notifier_t::default_notifier().post_notification();
     }
 
-    env_universal_callbacks(this, callbacks);
+    // TODO: This is a hack. We need to rationalize how universal variable updates work in the
+    // presence of multiple threads.
+    iothread_perform_on_main(
+        [=] { env_universal_callbacks(&env_stack_t::principal(), callbacks); });
     return changed || !callbacks.empty();
 }
 
