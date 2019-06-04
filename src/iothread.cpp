@@ -19,6 +19,8 @@
 #include "common.h"
 #include "flog.h"
 #include "global_safety.h"
+#include "iothread.h"
+#include "topic_monitor.h"
 #include "wutil.h"
 
 #ifdef _POSIX_THREAD_THREADS_MAX
@@ -214,6 +216,7 @@ void *thread_pool_t::run() {
         if (req->completion != nullptr) {
             // Enqueue the result, and tell the main thread about it.
             enqueue_thread_result(req.acquire());
+            topic_monitor_t::principal().post(topic_t::mainthread_req);
             const char wakeup_byte = IO_SERVICE_RESULT_QUEUE;
             int notify_fd = get_notify_pipes().write;
             assert_with_errno(write_loop(notify_fd, &wakeup_byte, sizeof wakeup_byte) != -1);
@@ -419,6 +422,9 @@ void iothread_perform_on_main(void_function_t &&func) {
     // Append it. Ensure we don't hold the lock after.
     s_main_thread_request_queue.acquire()->push(&req);
 
+    // Tell the topic monitor.
+    topic_monitor_t::principal().post(topic_t::mainthread_req);
+
     // Tell the pipe.
     const char wakeup_byte = IO_SERVICE_MAIN_THREAD_REQUEST_QUEUE;
     int notify_fd = get_notify_pipes().write;
@@ -481,6 +487,19 @@ bool make_detached_pthread(void_func_t &&func) {
     // Thread spawning failed, clean up our heap allocation.
     delete vf;
     return false;
+}
+
+static uint64_t s_main_thread_req_generation = 0;
+
+uint64_t get_main_thread_req_generation() {
+    ASSERT_IS_MAIN_THREAD();
+    return s_main_thread_req_generation;
+}
+
+void set_main_thread_req_generation(uint64_t v) {
+    ASSERT_IS_MAIN_THREAD();
+    assert(v >= s_main_thread_req_generation && "Generation should not go backwards");
+    s_main_thread_req_generation = v;
 }
 
 static uint64_t next_thread_id() {

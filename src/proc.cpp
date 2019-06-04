@@ -42,6 +42,7 @@
 #include "flog.h"
 #include "global_safety.h"
 #include "io.h"
+#include "iothread.h"
 #include "output.h"
 #include "parse_tree.h"
 #include "parser.h"
@@ -316,30 +317,36 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
     // The exit generation tells us if we have an exit; the signal generation allows for detecting
     // SIGHUP and SIGINT.
     // Get the gen count of all reapable processes.
-    topic_set_t reaptopics{};
+    topic_set_t topics{};
     generation_list_t gens{};
     gens.fill(invalid_generation);
     for (const auto &j : parser.jobs()) {
         for (const auto &proc : j->processes) {
             if (auto mtopic = j->reap_topic_for_process(proc.get())) {
                 topic_t topic = *mtopic;
-                reaptopics.set(topic);
+                topics.set(topic);
                 gens[topic] = std::min(gens[topic], proc->gens_[topic]);
 
-                reaptopics.set(topic_t::sighupint);
+                topics.set(topic_t::sighupint);
                 gens[topic_t::sighupint] =
                     std::min(gens[topic_t::sighupint], proc->gens_[topic_t::sighupint]);
             }
         }
     }
 
-    if (reaptopics.none()) {
+    if (topics.none()) {
         // No reapable processes, nothing to wait for.
         return;
     }
 
+    // If this is the main thread, wait for main thread requests.
+    if (is_main_thread()) {
+        gens[topic_t::mainthread_req] = get_main_thread_req_generation();
+        topics.set(topic_t::mainthread_req);
+    }
+
     // Now check for changes, optionally waiting.
-    auto changed_topics = topic_monitor_t::principal().check(&gens, reaptopics, block_ok);
+    auto changed_topics = topic_monitor_t::principal().check(&gens, topics, block_ok);
     if (changed_topics.none()) return;
 
     // We got some changes. Since we last checked we received SIGCHLD, and or HUP/INT.
@@ -384,6 +391,14 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
 
     // Remove any zombies.
     reap_disowned_pids();
+
+    // Handle any main thread requests.
+    if (changed_topics.get(topic_t::mainthread_req)) {
+        // Note it is important to set the generation *before* servicing completions, because a
+        // completion could spawn and handle new requests which would increase the generation.
+        set_main_thread_req_generation(gens[topic_t::mainthread_req]);
+        iothread_service_completion();
+    }
 }
 
 /// Given a command like "cat file", truncate it to a reasonable length.
