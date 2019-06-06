@@ -4,6 +4,7 @@
 // IWYU pragma: no_include <cstring>
 // IWYU pragma: no_include <cstddef>
 #include <errno.h>
+#include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
 #include <math.h>
@@ -2495,6 +2496,13 @@ struct autoload_tester_t {
         do_test(status == 0);
     }
 
+    static void touch_file(const wcstring &path) {
+        int fd = wopen_cloexec(path, O_RDWR | O_CREAT, 0666);
+        do_test(fd >= 0);
+        write_loop(fd, "Hello", 5);
+        close(fd);
+    }
+
     static void run_test() {
         char t1[] = "/tmp/fish_test_autoload.XXXXXX";
         wcstring p1 = str2wcstring(mkdtemp(t1));
@@ -2539,7 +2547,7 @@ struct autoload_tester_t {
         autoload.mark_autoload_finished(L"file2");
 
         do_test(!autoload.resolve_command(L"file1", paths));
-        run(L"touch %ls/file1.fish", p1.c_str());
+        touch_file(format_string(L"%ls/file1.fish", p1.c_str()));
         autoload.invalidate_cache();
         do_test(autoload.resolve_command(L"file1", paths));
         autoload.mark_autoload_finished(L"file1");
