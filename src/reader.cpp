@@ -1914,7 +1914,7 @@ void set_env_cmd_duration(struct timeval *after, struct timeval *before, env_sta
     vars.set_one(ENV_CMD_DURATION, ENV_UNEXPORT, std::to_wstring((secs * 1000) + (usecs / 1000)));
 }
 
-void reader_run_command(parser_t &parser, const wcstring &cmd) {
+static void reader_run_command(parser_t &parser, const wcstring &cmd) {
     struct timeval time_before, time_after;
 
     wcstring ft = tok_first(cmd);
