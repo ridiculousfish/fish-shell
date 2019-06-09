@@ -349,7 +349,7 @@ std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
 std::shared_ptr<parser_t> parser_t::branch() const {
     // Copy over some things. Other parts cannot be shared. TODO: factor this sanely.
-    std::shared_ptr<parser_t> clone{new parser_t(variables)};
+    std::shared_ptr<parser_t> clone{new parser_t(variables->branch())};
     clone->cancellation_requested = this->cancellation_requested;
     clone->forbidden_function = this->forbidden_function;
     clone->block_stack = this->block_stack;
