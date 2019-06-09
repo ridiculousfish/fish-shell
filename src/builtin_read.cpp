@@ -27,6 +27,7 @@
 #include "highlight.h"
 #include "history.h"
 #include "io.h"
+#include "iothread.h"
 #include "parser.h"
 #include "proc.h"
 #include "reader.h"
@@ -200,6 +201,7 @@ static int parse_cmd_opts(read_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
 static int read_interactive(parser_t &parser, wcstring &buff, int nchars, bool shell, bool silent,
                             const wchar_t *prompt, const wchar_t *right_prompt,
                             const wchar_t *commandline, int in) {
+    ASSERT_IS_MAIN_THREAD();
     int exit_res = STATUS_CMD_OK;
 
     // Construct a configuration.
@@ -495,9 +497,12 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
         int stream_stdin_is_a_tty = isatty(streams.stdin_fd);
         if (stream_stdin_is_a_tty && !opts.split_null) {
             // Read interactively using reader_readline(). This does not support splitting on null.
-            exit_res =
-                read_interactive(parser, buff, opts.nchars, opts.shell, opts.silent, opts.prompt,
-                                 opts.right_prompt, opts.commandline, streams.stdin_fd);
+            // Note this call is synchronous.
+            iothread_perform_on_main([&] {
+                exit_res = read_interactive(parser, buff, opts.nchars, opts.shell, opts.silent,
+                                            opts.prompt, opts.right_prompt, opts.commandline,
+                                            streams.stdin_fd);
+            });
         } else if (!opts.nchars && !stream_stdin_is_a_tty &&
                    lseek(streams.stdin_fd, 0, SEEK_CUR) != -1) {
             exit_res = read_in_chunks(streams.stdin_fd, buff, opts.split_null);
