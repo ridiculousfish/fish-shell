@@ -289,6 +289,9 @@ class env_stack_t final : public environment_t {
     /// \return a list of events for changed variables.
     std::vector<event_t> universal_sync(bool always);
 
+    /// Branch this variable stack: return a new variable stack with the same nodes.
+    std::shared_ptr<env_stack_t> branch() const;
+
     // Compatibility hack; access the "environment stack" from back when there was just one.
     static const std::shared_ptr<env_stack_t> &principal_ref();
     static env_stack_t &principal() { return *principal_ref(); }
