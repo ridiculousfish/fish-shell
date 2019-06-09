@@ -335,7 +335,7 @@ std::vector<completion_t> parser_t::expand_argument_list(const wcstring &arg_lis
 std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
 std::shared_ptr<parser_t> parser_t::branch() const {
-    std::shared_ptr<parser_t> clone{new parser_t(variables)};
+    std::shared_ptr<parser_t> clone{new parser_t(variables->branch())};
     clone->cancellation_requested = this->cancellation_requested;
     clone->block_list = this->block_list;
     clone->eval_level = this->eval_level;
