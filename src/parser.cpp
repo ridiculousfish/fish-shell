@@ -279,7 +279,7 @@ operation_context_t parser_t::context() {
 }
 
 std::shared_ptr<parser_t> parser_t::branch() const {
-    std::shared_ptr<parser_t> clone{new parser_t(variables)};
+    std::shared_ptr<parser_t> clone{new parser_t(variables->branch())};
     clone->block_list = this->block_list;
     clone->eval_level = this->eval_level;
     clone->library_data = this->library_data;
