@@ -11,6 +11,7 @@
 #include "fallback.h"  // IWYU pragma: keep
 #include "input.h"
 #include "io.h"
+#include "iothread.h"
 #include "parse_util.h"
 #include "parser.h"
 #include "proc.h"
@@ -123,7 +124,7 @@ static void write_part(const wchar_t *begin, const wchar_t *end, int cut_at_curs
 }
 
 /// The commandline builtin. It is used for specifying a new value for the commandline.
-int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+int builtin_commandline_impl(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     // Pointer to what the commandline builtin considers to be the current contents of the command
     // line buffer.
     const wchar_t *current_buffer = 0;
@@ -431,4 +432,11 @@ int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv)
     }
 
     return STATUS_CMD_OK;
+}
+
+/// All reader manipulation must happen on the main thread.
+int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+    int ret = 0;
+    iothread_perform_on_main([&] { ret = builtin_commandline_impl(parser, streams, argv); });
+    return ret;
 }
