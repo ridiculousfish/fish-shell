@@ -574,8 +574,6 @@ class env_scoped_impl_t : public environment_t {
 
     std::shared_ptr<owning_null_terminated_array_t> export_array();
 
-    env_scoped_impl_t(env_scoped_impl_t &&) = delete;
-    env_scoped_impl_t(const env_scoped_impl_t &) = delete;
     void operator=(env_scoped_impl_t &&) = delete;
     void operator=(const env_scoped_impl_t &) = delete;
 
@@ -595,6 +593,10 @@ class env_scoped_impl_t : public environment_t {
     // Cached list of export generations corresponding to the above export_array_.
     // If this differs from the current export generations then we need to regenerate the array.
     std::vector<export_generation_t> export_array_generations_{};
+
+    /// These are exposed to support branch().
+    env_scoped_impl_t(env_scoped_impl_t &&) = default;
+    env_scoped_impl_t(const env_scoped_impl_t &) = default;
 
    private:
     // These "try" methods return true on success, false on failure. On a true return, \p result is
@@ -919,6 +921,9 @@ class env_stack_impl_t final : public env_scoped_impl_t {
         return make_unique<env_stack_impl_t>(std::move(local), s_global_node);
     }
 
+    /// Create a copy of this impl.
+    std::unique_ptr<env_stack_impl_t> branch() const;
+
     ~env_stack_impl_t() override = default;
 
    private:
@@ -1029,6 +1034,12 @@ env_node_ref_t env_stack_impl_t::pop() {
     }
     assert(locals_ && "Attempt to pop first local scope");
     return popped;
+}
+
+std::unique_ptr<env_stack_impl_t> env_stack_impl_t::branch() const {
+    // Note that strictly speaking we do not need to copy shadowed scopes, but we do anyways.
+    env_stack_impl_t clone = *this;
+    return make_unique<env_stack_impl_t>(std::move(clone));
 }
 
 /// Apply the pathvar behavior, splitting about colons.
@@ -1378,6 +1389,11 @@ std::shared_ptr<owning_null_terminated_array_t> env_stack_t::export_arr() {
 }
 
 std::shared_ptr<environment_t> env_stack_t::snapshot() const { return acquire_impl()->snapshot(); }
+
+std::shared_ptr<env_stack_t> env_stack_t::branch() const {
+    std::unique_ptr<env_stack_impl_t> new_impl = acquire_impl()->branch();
+    return std::shared_ptr<env_stack_t>(new env_stack_t(std::move(new_impl)));
+}
 
 void env_stack_t::set_argv(wcstring_list_t argv) { set(L"argv", ENV_LOCAL, std::move(argv)); }
 
