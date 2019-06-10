@@ -200,4 +200,30 @@ int make_fd_blocking(int fd);
 /// Close a file descriptor \p fd, retrying on EINTR.
 void exec_close(int fd);
 
+/// A "thread-safe fchdir."
+/// Switch to a directory given by \p dir_fd in a coordinated way, so as not to interfere with other
+/// threads that need the chdir to be set (e.g. for posix_spawn).
+/// \return the result of fchdir().
+/// If \p out_lock is not null, then the directory will not change as long as the object lives.
+/// This uses a "counting lock" so that multiple threads which agree on the chdir can all hold the
+/// lock simultaneously.
+class fchdir_lock_t;
+int safe_fchdir(const std::shared_ptr<const autoclose_fd_t> &dir_fd,
+                fchdir_lock_t *out_lock = nullptr);
+
+class fchdir_lock_t : noncopyable_t, nonmovable_t {
+   public:
+    ~fchdir_lock_t();
+    fchdir_lock_t() = default;
+
+   private:
+    bool locked_{};
+    void release();
+
+    friend class cwd_coordinator_t;
+};
+
+// Helper to get the underlying lock count, for testing.
+size_t safe_fchdir_lock_count();
+
 #endif

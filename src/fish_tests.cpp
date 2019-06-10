@@ -925,6 +925,71 @@ static void test_fd_monitor() {
     do_test(item_pokee.pokes == 1);
 }
 
+static void test_safe_fchdir() {
+    say(L"Testing safe_fchdir");
+    char buff1[] = "/tmp/safe_fchdir_XXXXXXXX";
+    char buff2[] = "/tmp/safe_fchdir_XXXXXXXX";
+    mkdtemp(buff1);
+    mkdtemp(buff2);
+    auto dir1 = std::make_shared<const autoclose_fd_t>(open_cloexec(buff1, O_RDONLY | O_DIRECTORY));
+    auto dir2 = std::make_shared<const autoclose_fd_t>(open_cloexec(buff2, O_RDONLY | O_DIRECTORY));
+    do_test(dir1->valid());
+    do_test(dir2->valid());
+
+    int ret;
+
+    // We can just fchdir without locking, no problem.
+    ret = safe_fchdir(dir1, nullptr);
+    do_test(ret == 0);
+    ret = safe_fchdir(dir2, nullptr);
+    do_test(ret == 0);
+
+    auto lock1 = make_unique<fchdir_lock_t>();
+    auto lock2 = make_unique<fchdir_lock_t>();
+    do_test(safe_fchdir_lock_count() == 0);
+
+    // Take the lock.
+    ret = safe_fchdir(dir1, lock1.get());
+    do_test(ret == 0);
+    do_test(safe_fchdir_lock_count() == 1);
+
+    // We can take a second lock for the same directory, it is uncontended.
+    ret = safe_fchdir(dir1, lock2.get());
+    do_test(safe_fchdir_lock_count() == 2);
+
+    // We can 'chdir' to the same directory without locking.
+    ret = safe_fchdir(dir1, nullptr);
+    do_test(ret == 0);
+    do_test(safe_fchdir_lock_count() == 2);
+
+    // Kick off a thread which will try to take the lock, and block.
+    std::atomic<bool> thread_done{false};
+    std::thread t([&] {
+        fchdir_lock_t lock3;
+        int ret = safe_fchdir(dir2, &lock3);
+        do_test(ret == 0);
+        thread_done = true;
+    });
+    usleep(100000);
+
+    // We still hold the lock but now we expect it to be contended.
+    // Nevertheless we can still 'chdir' to the same directory as long as we don't want the lock.
+    ret = safe_fchdir(dir1, nullptr);
+    do_test(ret == 0);
+    do_test(safe_fchdir_lock_count() == 2);
+
+    // Release our locks, unblocking the thread.
+    lock1.reset();
+    do_test(safe_fchdir_lock_count() == 1);
+    lock2.reset();
+
+    t.join();
+    do_test(thread_done);
+
+    rmdir(buff1);
+    rmdir(buff2);
+}
+
 static void test_iothread() {
     say(L"Testing iothreads");
     std::atomic<int> shared_int{0};
@@ -7183,6 +7248,7 @@ static const test_t s_tests[]{
     {TEST_GROUP("convert_nulls"), test_convert_nulls},
     {TEST_GROUP("tokenizer"), test_tokenizer},
     {TEST_GROUP("fd_monitor"), test_fd_monitor},
+    {TEST_GROUP("safe_fchdir"), test_safe_fchdir},
     {TEST_GROUP("iothread"), test_iothread},
     {TEST_GROUP("pthread"), test_pthread},
     {TEST_GROUP("debounce"), test_debounce},

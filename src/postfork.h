@@ -38,7 +38,7 @@ void report_setpgid_error(int err, bool is_parent, pid_t desired_pgid, const job
 /// If \p claim_tty_from is >= 0 and owns the tty, use tcsetpgrp() to claim it.
 ///
 /// \return 0 on success, -1 on failure, in which case an error will be printed.
-int child_setup_process(pid_t claim_tty_from, const job_t &job, bool is_forked,
+int child_setup_process(pid_t claim_tty_from, const job_t &job, int cwd_fd, bool is_forked,
                         const dup2_list_t &dup2s);
 
 /// Call fork(), retrying on failure a few times.

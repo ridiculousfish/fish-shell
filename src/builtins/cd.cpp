@@ -79,9 +79,10 @@ maybe_t<int> builtin_cd(parser_t &parser, io_streams_t &streams, const wchar_t *
         wcstring norm_dir = normalize_path(dir);
 
         // We need to keep around the fd for this directory, in the parser.
+        // Use a locking safe_fchdir() to prevent a race with fchdir() calls inside exec.
         errno = 0;
-        autoclose_fd_t dir_fd(wopen_cloexec(norm_dir, O_RDONLY));
-        bool success = dir_fd.valid() && fchdir(dir_fd.fd()) == 0;
+        auto dir_fd = std::make_shared<const autoclose_fd_t>(wopen_cloexec(norm_dir, O_RDONLY));
+        bool success = dir_fd->valid() && safe_fchdir(dir_fd) == 0;
 
         if (!success) {
             // Some errors we skip and only report if nothing worked.
@@ -105,7 +106,7 @@ maybe_t<int> builtin_cd(parser_t &parser, io_streams_t &streams, const wchar_t *
             break;
         }
 
-        parser.libdata().cwd_fd = std::make_shared<const autoclose_fd_t>(std::move(dir_fd));
+        parser.libdata().cwd_fd = dir_fd;
         parser.set_var_and_fire(L"PWD", ENV_EXPORT | ENV_GLOBAL, std::move(norm_dir));
         return STATUS_CMD_OK;
     }

@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <condition_variable>
 
 #include "flog.h"
 #include "wutil.h"
@@ -336,4 +337,101 @@ void exec_close(int fd) {
             break;
         }
     }
+}
+
+// Coordinates fchdir calls using a counting lock.
+// The counting lock enables multiple threads which all share the same CWD to call fork()
+// concurrently. This is less of a performance optimization than a way to flush out more bugs,
+// by enabling more concurrency.
+class cwd_coordinator_t : noncopyable_t, nonmovable_t {
+   public:
+    // Release a lock, posting to the cv if our users goes to zero.
+    void release_1_lock();
+
+    // Set the CWD to \p dir_fd, optionally taking a lock if \p out_lock is set.
+    int chdir(const std::shared_ptr<const autoclose_fd_t> &dir_fd, fchdir_lock_t *out_lock);
+
+   private:
+    struct data_t {
+        // The cwd itself. Note this is held strongly so as not to thrash calls to fchdir().
+        std::shared_ptr<const autoclose_fd_t> cwd;
+
+        // Number of outstanding users for this cwd. This may be zero yet cwd is still set.
+        size_t lock_count{};
+
+        // If set, someone else is waiting to apply their cwd. Do not add new users, to prevent
+        // writer starvation.
+        bool contended{};
+    };
+    owning_lock<data_t> data_;
+
+    // When lock_count reaches zero, this cv is triggered.
+    std::condition_variable cv_;
+
+    friend size_t safe_fchdir_lock_count();
+};
+
+static cwd_coordinator_t &cwd_coord() {
+    static auto *const cwd_coord = new cwd_coordinator_t();
+    return *cwd_coord;
+}
+
+fchdir_lock_t::~fchdir_lock_t() { this->release(); }
+
+void fchdir_lock_t::release() {
+    if (locked_) {
+        locked_ = false;
+        cwd_coord().release_1_lock();
+    }
+}
+
+// static
+size_t safe_fchdir_lock_count() { return cwd_coord().data_.acquire()->lock_count; }
+
+void cwd_coordinator_t::release_1_lock() {
+    bool post = false;
+    {
+        auto data = data_.acquire();
+        assert(data->lock_count > 0 && "was not locked");
+        data->lock_count--;
+        post = (data->lock_count == 0);
+    }
+    if (post) {
+        cv_.notify_all();
+    }
+}
+
+int cwd_coordinator_t::chdir(const std::shared_ptr<const autoclose_fd_t> &dir_fd,
+                             fchdir_lock_t *out_lock) {
+    if (out_lock) out_lock->release();
+    auto data = data_.acquire();
+
+    // We can share the CWD if it's correct, unless we want to lock and it's contended.
+    auto can_share_cwd = [&] { return data->cwd == dir_fd && !(out_lock && data->contended); };
+
+    // Wait until existing users of other fds are done.
+    while (data->lock_count > 0 && !can_share_cwd()) {
+        data->contended = true;
+        cv_.wait(data.get_lock());
+    }
+
+    // Our turn.
+    if (data->cwd != dir_fd) {
+        assert(data->lock_count == 0 && "Should be unlocked");
+        if (int ret = fchdir(dir_fd->fd())) {
+            return ret;
+        }
+        data->cwd = dir_fd;
+        data->contended = false;
+    }
+    // Either the above or a previous fchdir() must have succeeded.
+    if (out_lock) {
+        out_lock->locked_ = true;
+        data->lock_count++;
+    }
+    return 0;
+}
+
+int safe_fchdir(const std::shared_ptr<const autoclose_fd_t> &dir_fd, fchdir_lock_t *out_lock) {
+    return cwd_coord().chdir(dir_fd, out_lock);
 }

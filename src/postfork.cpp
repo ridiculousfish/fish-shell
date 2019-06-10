@@ -137,9 +137,25 @@ int execute_setpgid(pid_t pid, pid_t pgroup, bool is_parent) {
     }
 }
 
-int child_setup_process(pid_t claim_tty_from, const job_t &job, bool is_forked,
+int child_setup_process(pid_t claim_tty_from, const job_t &job, int cwd_fd, bool is_forked,
                         const dup2_list_t &dup2s) {
     // Note we are called in a forked child.
+    // Attempt to switch to the cwd.
+    if (cwd_fd >= 0 && fchdir(cwd_fd) < 0) {
+        int err = errno;
+        switch (err) {
+            case EACCES:
+                FLOGF_SAFE(error, "fchdir: Permission denied");
+                break;
+            default: {
+                char errno_buff[64];
+                format_long_safe(errno_buff, errno);
+                FLOGF_SAFE(error, "fchdir: Unknown error number %s", errno_buff);
+                break;
+            }
+        }
+    }
+
     for (const auto &act : dup2s.get_actions()) {
         int err;
         if (act.target < 0) {

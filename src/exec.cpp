@@ -241,7 +241,7 @@ static void internal_exec(env_stack_t &vars, job_t *j, const io_chain_t &block_i
 
     // child_setup_process makes sure signals are properly set up.
     dup2_list_t redirs = dup2_list_t::resolve_chain(all_ios);
-    if (child_setup_process(false /* not claim_tty */, *j, false /* not is_forked */, redirs) ==
+    if (child_setup_process(false /* not claim_tty */, *j, -1, false /* not is_forked */, redirs) ==
         0) {
         // Decrement SHLVL as we're removing ourselves from the shell "stack".
         if (is_interactive_session()) {
@@ -392,9 +392,10 @@ void blocked_signals_for_job(const job_t &job, sigset_t *sigmask) {
     }
 }
 
-/// Call fork() as part of executing a process \p p in a job \j. Execute \p child_action in the
-/// context of the child.
+/// Call fork() as part of executing a process \p p in a job \j. Switch to directory \p cwd_fd in
+/// the child. Execute \p child_action in the context of the child.
 static launch_result_t fork_child_for_process(const std::shared_ptr<job_t> &job, process_t *p,
+                                              const autoclose_fd_t &cwd_fd,
                                               const dup2_list_t &dup2s, const char *fork_type,
                                               const std::function<void()> &child_action) {
     // Claim the tty from fish, if the job wants it and we are the pgroup leader.
@@ -424,7 +425,7 @@ static launch_result_t fork_child_for_process(const std::shared_ptr<job_t> &job,
 
     if (!is_parent) {
         // Child process.
-        child_setup_process(claim_tty_from, *job, true, dup2s);
+        child_setup_process(claim_tty_from, *job, cwd_fd.fd(), true, dup2s);
         child_action();
         DIE("Child process returned control to fork_child lambda!");
     }
@@ -529,7 +530,16 @@ static launch_result_t exec_external_command(parser_t &parser, const std::shared
 #if FISH_USE_POSIX_SPAWN
     // Prefer to use posix_spawn, since it's faster on some systems like OS X.
     if (can_use_posix_spawn_for_job(j, dup2s)) {
-        ++s_fork_count;  // spawn counts as a fork+exec
+        // Ensure our process-wide cwd matches our parser, and that nobody calls chdir() until our
+        // fork or spawn is complete. This also sets up PWD correctly for the dup2 list we are about
+        // to construct.
+        fchdir_lock_t chdir_lock{};
+        if (safe_fchdir(parser.libdata().cwd_fd, &chdir_lock) < 0) {
+            wperror(L"fchdir");
+            return launch_result_t::failed;
+        }
+
+        s_fork_count++;  // spawn counts as a fork+exec
 
         posix_spawner_t spawner(j.get(), dup2s);
         maybe_t<pid_t> pid = spawner.spawn(actual_cmd, const_cast<char *const *>(argv),
@@ -562,7 +572,8 @@ static launch_result_t exec_external_command(parser_t &parser, const std::shared
     } else
 #endif
     {
-        return fork_child_for_process(j, p, dup2s, "external command",
+        const autoclose_fd_t &cwd_fd = *parser.libdata().cwd_fd;
+        return fork_child_for_process(j, p, cwd_fd, dup2s, "external command",
                                       [&] { safe_launch_process(p, actual_cmd, argv, envv); });
     }
 }
