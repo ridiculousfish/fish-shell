@@ -32,10 +32,9 @@
 #include "env.h"
 #include "exec.h"
 #include "fallback.h"  // IWYU pragma: keep
-#include "fds.h"
 #include "flog.h"
 #include "function.h"
-#include "global_safety.h"
+#include "future_feature_flags.h"
 #include "io.h"
 #include "iothread.h"
 #include "job_group.h"
@@ -946,6 +945,9 @@ static launch_result_t exec_process_in_job(parser_t &parser, process_t *p,
 // This should show the output as it comes, not buffer until the end.
 // Any such process (only one per job) will be called the "deferred" process.
 static process_t *get_deferred_process(const shared_ptr<job_t> &j) {
+    // Do not defer processes if we are using concurrent execution, because there's no benefit.
+    if (feature_test(features_t::concurrent)) return nullptr;
+
     // Common case is no deferred proc.
     if (j->processes.size() <= 1) return nullptr;
 
