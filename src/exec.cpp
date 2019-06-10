@@ -49,6 +49,7 @@
 #include "signal.h"
 #include "timer.h"
 #include "trace.h"
+#include "util.h"
 #include "wcstringutil.h"
 #include "wutil.h"  // IWYU pragma: keep
 
@@ -399,9 +400,10 @@ void blocked_signals_for_job(const job_t &job, sigset_t *sigmask) {
     }
 }
 
-/// Call fork() as part of executing a process \p p in a job \j. Execute \p child_action in the
-/// context of the child.
+/// Call fork() as part of executing a process \p p in a job \j. Switch to directory \p cwd_fd in
+/// the child. Execute \p child_action in the context of the child.
 static launch_result_t fork_child_for_process(const std::shared_ptr<job_t> &job, process_t *p,
+                                              const autoclose_fd_t &cwd_fd,
                                               const dup2_list_t &dup2s, const char *fork_type,
                                               const std::function<void()> &child_action) {
     assert(!job->group->is_internal() && "Internal groups should never need to fork");
@@ -416,6 +418,11 @@ static launch_result_t fork_child_for_process(const std::shared_ptr<job_t> &job,
         // stdout and stderr, and then exit.
         p->pid = getpid();
         pid_t pgid = maybe_assign_pgid_from_child(job, p->pid);
+
+        // Attempt to switch to the cwd.
+        if (cwd_fd.valid() && fchdir(cwd_fd.fd()) < 0) {
+            safe_perror("fchdir");
+        }
 
         // The child attempts to join the pgroup.
         if (int err = execute_setpgid(p->pid, pgid, false /* not parent */)) {
@@ -545,6 +552,15 @@ static launch_result_t exec_external_command(parser_t &parser, const std::shared
 #if FISH_USE_POSIX_SPAWN
     // Prefer to use posix_spawn, since it's faster on some systems like OS X.
     if (can_use_posix_spawn_for_job(j, dup2s)) {
+        // Ensure our process-wide cwd matches our parser, and that nobody calls chdir() until our
+        // fork or spawn is complete. This also sets up PWD correctly for the dup2 list we are about
+        // to construct.
+        std::unique_lock<std::mutex> chdir_lock{};
+        if (locking_fchdir(parser.libdata().cwd_fd, &chdir_lock) < 0) {
+            wperror(L"fchdir");
+            return launch_result_t::failed;
+        }
+
         s_fork_count++;  // spawn counts as a fork+exec
 
         posix_spawner_t spawner(j.get(), dup2s);
@@ -578,7 +594,8 @@ static launch_result_t exec_external_command(parser_t &parser, const std::shared
     } else
 #endif
     {
-        return fork_child_for_process(j, p, dup2s, "external command",
+        const autoclose_fd_t &cwd_fd = *parser.libdata().cwd_fd;
+        return fork_child_for_process(j, p, cwd_fd, dup2s, "external command",
                                       [&] { safe_launch_process(p, actual_cmd, argv, envv); });
     }
 }

@@ -16,6 +16,7 @@
 #include "parser.h"
 #include "path.h"
 #include "proc.h"
+#include "util.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 /// The cd builtin. Changes the current directory to the one specified or to $HOME if none is
@@ -64,9 +65,10 @@ maybe_t<int> builtin_cd(parser_t &parser, io_streams_t &streams, const wchar_t *
         wcstring norm_dir = normalize_path(dir);
 
         // We need to keep around the fd for this directory, in the parser.
+        // Use a locking fchdir() to prevent a race with fchdir() calls inside exec.
         errno = 0;
-        autoclose_fd_t dir_fd(wopen_cloexec(norm_dir, O_RDONLY));
-        bool success = dir_fd.valid() && fchdir(dir_fd.fd()) == 0;
+        auto dir_fd = std::make_shared<const autoclose_fd_t>(wopen_cloexec(norm_dir, O_RDONLY));
+        bool success = dir_fd->valid() && locking_fchdir(dir_fd) == 0;
 
         if (!success) {
             // Some errors we skip and only report if nothing worked.
@@ -85,7 +87,7 @@ maybe_t<int> builtin_cd(parser_t &parser, io_streams_t &streams, const wchar_t *
             break;
         }
 
-        parser.libdata().cwd_fd = std::make_shared<const autoclose_fd_t>(std::move(dir_fd));
+        parser.libdata().cwd_fd = dir_fd;
         std::vector<event_t> evts;
         parser.vars().set_one(L"PWD", ENV_EXPORT | ENV_GLOBAL, std::move(norm_dir), &evts);
         for (const auto &evt : evts) {
