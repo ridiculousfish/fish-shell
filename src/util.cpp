@@ -12,6 +12,7 @@
 
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
+#include "fds.h"
 #include "wutil.h"     // IWYU pragma: keep
 
 // Compare the strings to see if they begin with an integer that can be compared and return the
@@ -154,4 +155,32 @@ long long get_time() {
     struct timeval time_struct;
     gettimeofday(&time_struct, nullptr);
     return 1000000LL * time_struct.tv_sec + time_struct.tv_usec;
+}
+
+int locking_fchdir(const std::shared_ptr<const autoclose_fd_t> &dir_fd,
+                   std::unique_lock<std::mutex> *out_lock) {
+    static std::mutex s_lock;
+
+    // Take the lock, perhaps giving it to the caller.
+    // TODO: it would be nice to make this a counting lock that can be held by multiple callers so
+    // long as they all agree on the cwd. In practice we won't have different threads with different
+    // PWDs often.
+    std::unique_lock<std::mutex> locker(s_lock);
+    if (out_lock) {
+        *out_lock = std::move(locker);
+    }
+
+    // Change directories if needed.
+    // Note s_current_cwd is protected by the lock.
+    static std::shared_ptr<const autoclose_fd_t> s_current_cwd;
+    if (s_current_cwd == dir_fd) {
+        // The cwd has not changed.
+        return 0;
+    }
+
+    int ret = fchdir(dir_fd->fd());
+    if (ret == 0) {
+        s_current_cwd = dir_fd;
+    }
+    return ret;
 }
