@@ -43,6 +43,7 @@
 #include "reader.h"
 #include "redirection.h"
 #include "signal.h"
+#include "util.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 /// File descriptor redirection error message.
@@ -684,6 +685,14 @@ static bool exec_external_command(parser_t &parser, const std::shared_ptr<job_t>
     std::string actual_cmd_str = wcs2string(p->actual_cmd);
     const char *actual_cmd = actual_cmd_str.c_str();
     const wchar_t *file = parser.libdata().current_filename;
+
+    // Ensure our process-wide cwd matches our parser, and that nobody calls chdir() until our fork
+    // or spawn is complete.
+    std::unique_lock<std::mutex> chdir_lock{};
+    if (locking_fchdir(parser.libdata().cwd_fd, &chdir_lock) < 0) {
+        wperror(L"fchdir");
+        return false;
+    }
 
 #if FISH_USE_POSIX_SPAWN
     // Prefer to use posix_spawn, since it's faster on some systems like OS X.
