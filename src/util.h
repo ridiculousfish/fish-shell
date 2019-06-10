@@ -2,6 +2,9 @@
 #ifndef FISH_UTIL_H
 #define FISH_UTIL_H
 
+#include <memory>
+#include <mutex>
+
 /// Compares two wide character strings with an (arguably) intuitive ordering. This function tries
 /// to order strings in a way which is intuitive to humans with regards to sorting strings
 /// containing numbers.
@@ -36,5 +39,12 @@ int wcsfilecmp_glob(const wchar_t *a, const wchar_t *b);
 
 /// Get the current time in microseconds since Jan 1, 1970.
 long long get_time();
+
+/// Switch to a directory given by an dir_fd, returning by reference a lock which, while held,
+/// blocks other calls to locking_fchdir. This caches dir_fd and elides the call if the cwd does not
+/// change. \return the result of the fchdir call.
+class autoclose_fd_t;
+int locking_fchdir(const std::shared_ptr<const autoclose_fd_t> &dir_fd,
+                   std::unique_lock<std::mutex> *out_lock = nullptr);
 
 #endif
