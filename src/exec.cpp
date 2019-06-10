@@ -994,6 +994,9 @@ static bool exec_process_in_job(parser_t &parser, process_t *p, std::shared_ptr<
 // This should show the output as it comes, not buffer until the end.
 // Any such process (only one per job) will be called the "deferred" process.
 static process_t *get_deferred_process(const shared_ptr<job_t> &j) {
+    // Do not defer processes if we are using concurrent execution, because there's no benefit.
+    if (feature_test(features_t::concurrent)) return nullptr;
+
     // By enumerating in reverse order, we can avoid walking the entire list
     for (auto i = j->processes.rbegin(); i != j->processes.rend(); ++i) {
         const auto &p = *i;
