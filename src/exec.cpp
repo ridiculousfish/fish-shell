@@ -44,6 +44,7 @@
 #include "reader.h"
 #include "redirection.h"
 #include "signal.h"
+#include "util.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 /// File descriptor redirection error message.
@@ -670,6 +671,15 @@ static bool exec_external_command(parser_t &parser, const std::shared_ptr<job_t>
     // Get argv and envv before we fork.
     null_terminated_array_t<char> argv_array;
     convert_wide_array_to_narrow(p->get_argv_array(), &argv_array);
+
+    // Ensure our process-wide cwd matches our parser, and that nobody calls chdir() until our fork
+    // or spawn is complete.
+    // This also sets up PWD correctly for the dup2 list we are about to construct.
+    std::unique_lock<std::mutex> chdir_lock{};
+    if (locking_fchdir(parser.libdata().cwd_fd, &chdir_lock) < 0) {
+        wperror(L"fchdir");
+        return false;
+    }
 
     // Convert our IO chain to a dup2 sequence.
     auto dup2s = dup2_list_t::resolve_chain(proc_io_chain);
