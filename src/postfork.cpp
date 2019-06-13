@@ -175,14 +175,25 @@ int child_setup_process(pid_t claim_tty_from, const job_t &job, bool is_forked,
         signal(SIGTTOU, SIG_IGN);
         (void)tcsetpgrp(STDIN_FILENO, getpid());
     }
-    sigset_t sigmask;
-    sigemptyset(&sigmask);
-    if (blocked_signals_for_job(job, &sigmask)) {
-        sigprocmask(SIG_SETMASK, &sigmask, nullptr);
-    }
+
     // Set the handling for job control signals back to the default.
     // Do this after any tcsetpgrp call so that we swallow SIGTTIN.
     signal_reset_handlers();
+
+    // Unblock everything except perhaps SIGHUP if it is set to be ignored. TODO: rationalize this
+    // against our posix_spawn path.
+    sigset_t sigmask;
+    sigemptyset(&sigmask);
+    blocked_signals_for_job(job, &sigmask);
+    struct sigaction act = {};
+    sigaction(SIGHUP, nullptr, &act);
+    if (act.sa_handler == SIG_IGN) {
+        sigaddset(&sigmask, SIGHUP);
+    }
+    int err = sigprocmask(SIG_SETMASK, &sigmask, nullptr);
+    assert(err == 0 && "sigprocmask should always succeed");
+    (void)err;
+
     return 0;
 }
 
