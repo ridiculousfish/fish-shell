@@ -166,8 +166,22 @@ int setup_child_process(process_t *p, const dup2_list_t &dup2s) {
             return err;
         }
     }
-    // Set the handling for job control signals back to the default.
+    // Set the handling for job control signals back to the default, and remove all signal blocks.
     signal_reset_handlers();
+
+    // Unblock everything except perhaps SIGHUP if it is set to be ignored. TODO: rationalize this
+    // against our posix_spawn path.
+    sigset_t sigdefault;
+    sigemptyset(&sigdefault);
+    struct sigaction act = {};
+    sigaction(SIGHUP, nullptr, &act);
+    if (act.sa_handler == SIG_IGN) {
+        sigaddset(&sigdefault, SIGHUP);
+    }
+    int err = sigprocmask(SIG_SETMASK, &sigdefault, nullptr);
+    assert(err == 0 && "sigprocmask should always succeed");
+    (void)err;
+
     return 0;
 }
 
