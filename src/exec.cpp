@@ -395,14 +395,12 @@ static void run_internal_process_or_short_circuit(parser_t &parser, const std::s
     }
 }
 
-bool blocked_signals_for_job(const job_t &job, sigset_t *sigmask) {
+void blocked_signals_for_job(const job_t &job, sigset_t *sigmask) {
     // Block some signals in background jobs for which job control is turned off (#6828).
     if (!job.is_foreground() && !job.wants_job_control()) {
         sigaddset(sigmask, SIGINT);
         sigaddset(sigmask, SIGQUIT);
-        return true;
     }
-    return false;
 }
 
 /// Call fork() as part of executing a process \p p in a job \j. Execute \p child_action in the
