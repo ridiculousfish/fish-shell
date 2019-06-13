@@ -165,6 +165,7 @@ int child_setup_process(const job_t *job, process_t *p, const dup2_list_t &dup2s
             return err;
         }
     }
+
     if (job != nullptr && job->wants_terminal() && job->is_foreground()) {
         // Assign the terminal within the child to avoid the well-known race between tcsetgrp() in
         // the parent and the child executing. We are not interested in error handling here, except
@@ -180,6 +181,20 @@ int child_setup_process(const job_t *job, process_t *p, const dup2_list_t &dup2s
     // Set the handling for job control signals back to the default.
     // Do this after any tcsetpgrp call so that we swallow SIGTTIN.
     signal_reset_handlers();
+
+    // Unblock everything except perhaps SIGHUP if it is set to be ignored. TODO: rationalize this
+    // against our posix_spawn path.
+    sigset_t sigdefault;
+    sigemptyset(&sigdefault);
+    struct sigaction act = {};
+    sigaction(SIGHUP, nullptr, &act);
+    if (act.sa_handler == SIG_IGN) {
+        sigaddset(&sigdefault, SIGHUP);
+    }
+    int err = sigprocmask(SIG_SETMASK, &sigdefault, nullptr);
+    assert(err == 0 && "sigprocmask should always succeed");
+    (void)err;
+
     return 0;
 }
 
