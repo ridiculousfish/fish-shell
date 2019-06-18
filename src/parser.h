@@ -198,6 +198,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     std::deque<block_t> block_stack;
     /// The 'depth' of the fish call stack.
     int eval_level = -1;
+    /// The internal process group of this parser.
+    /// This controls whether the parser's jobs runs in the foreground or not.
+    const pgid_selector_ref_t pgid_selector;
     /// Set of variables for the parser.
     const std::shared_ptr<env_stack_t> variables;
     /// Miscellaneous library data.
@@ -228,8 +231,10 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     void stack_trace_internal(size_t block_idx, wcstring *out) const;
 
     /// Create a parser.
-    parser_t();
-    parser_t(std::shared_ptr<env_stack_t> vars);
+    parser_t(std::shared_ptr<env_stack_t> vars, pgid_selector_ref_t pgid_selector);
+
+    /// Create the principal parser.
+    static std::shared_ptr<parser_t> create_principal();
 
     /// The main parser.
     static std::shared_ptr<parser_t> principal;
@@ -309,6 +314,10 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     statuses_t get_last_statuses() const { return vars().get_last_statuses(); }
     void set_last_statuses(statuses_t s) { vars().set_last_statuses(std::move(s)); }
 
+    /// Get the pgid_selector.
+    pgid_selector_t &get_pgid_selector() { return *pgid_selector; }
+    const pgid_selector_t &get_pgid_selector() const { return *pgid_selector; }
+
     /// Pushes a new block. Returns a pointer to the block, stored in the parser. The pointer is
     /// valid until the call to pop_block()
     block_t *push_block(block_t &&b);
@@ -365,7 +374,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Branch this parser: return a new parser suitable for executing in another thread. Like
     /// fork() but for parsers. Black magic.
-    std::shared_ptr<parser_t> branch() const;
+    std::shared_ptr<parser_t> branch(const pgid_selector_ref_t &pg) const;
 
     ~parser_t();
 };
