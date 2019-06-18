@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <deque>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -150,6 +151,50 @@ class internal_proc_t {
 /// -1 should not be used; it is a possible return value of the getpgid()
 ///   function
 enum { INVALID_PID = -2 };
+
+/// job_tree_t is conceptually similar to the idea of a process group. It represents data which
+/// is shared among all of the "subjobs" that may be spawned by a single job.
+/// Note these nested jobs may be external or internal, and may span threads and processes.
+/// job_tree_t also multiplexes access to the tty within fish. Distinct trees represent distinct
+/// processes, and have their own idea of which pgrp is foreground. Only one tree may
+/// be "focused"; that is the tree that truly owns the tty and only that tree may transfer
+/// ownership of the tty to its foreground pgrp (via tcsetpgrp).
+/// Each parser has a reference to a single job tree which does not change throughout its lifetime;
+/// however a job tree may be shared among multiple parsers running on different threads. Note that
+/// when concurrent execution is not enabled, there is only one job tree, the one associated with
+/// the principal parser.
+class job_t;
+class job_tree_t;
+using job_tree_ref_t = std::shared_ptr<job_tree_t>;
+
+class job_tree_t {
+   public:
+    /// Create a new job tree.
+    static job_tree_ref_t create();
+
+    /// \return the job tree associated with the principal parser.
+    /// This is the moral equivalent of fish's own pgroup.
+    /// Initially this is focused.
+    static const job_tree_ref_t &principal();
+
+    /// Make the given job foreground in this tree. If \p continuing_from_stopped is set, we are
+    /// giving back control to a job that was previously stopped. In that case, we need to set the
+    /// terminal attributes to those saved in the job.
+    /// \return 1 if successfully transferred, 0 if no transfer was necessary, -1 on error.
+    int set_foreground_job(const job_t *job, bool continuing_from_stopped);
+
+    /// \return if this is focused, that is, jobs in this tree may own the terminal.
+    /// Note this may change at any time.
+    bool is_focused() const;
+
+   private:
+    /// The current (real) process group ID which is foreground in this tree.
+    pid_t fg_pgrp_{INVALID_PID};
+
+    static int terminal_maybe_give_to_job(const job_t *j, bool continuing_from_stopped);
+
+    job_tree_t() = default;
+};
 
 /// A structure representing a single fish process. Contains variables for tracking process state
 /// and the process argument list. Actually, a fish process can be either a regular external
@@ -400,6 +445,9 @@ class job_t {
 
     /// All the processes in this job.
     process_list_t processes;
+
+    // The tree containing this job.
+    job_tree_ref_t job_tree{};
 
     /// Process group ID for the process group that this job is running in.
     /// Set to a nonexistent, non-return-value of getpgid() integer by the constructor
