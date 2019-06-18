@@ -80,7 +80,8 @@ static wcstring user_presentable_path(const wcstring &path, const environment_t 
     return replace_home_directory_with_tilde(path, vars);
 }
 
-parser_t::parser_t(std::shared_ptr<env_stack_t> vars) : variables(std::move(vars)) {
+parser_t::parser_t(std::shared_ptr<env_stack_t> vars, job_tree_ref_t job_tree)
+    : job_tree(std::move(job_tree)), variables(std::move(vars)) {
     assert(variables.get() && "Null variables in parser initializer");
     int cwd = open_cloexec(".", O_RDONLY);
     if (cwd < 0) {
@@ -90,12 +91,16 @@ parser_t::parser_t(std::shared_ptr<env_stack_t> vars) : variables(std::move(vars
     libdata().cwd_fd = std::make_shared<const autoclose_fd_t>(cwd);
 }
 
-parser_t::parser_t() : parser_t(env_stack_t::principal_ref()) {}
+std::shared_ptr<parser_t> parser_t::create_principal() {
+    std::shared_ptr<parser_t> result{
+        new parser_t(env_stack_t::principal_ref(), job_tree_t::principal())};
+    return result;
+}
 
 // Out of line destructor to enable forward declaration of parse_execution_context_t
 parser_t::~parser_t() = default;
 
-std::shared_ptr<parser_t> parser_t::principal{new parser_t()};
+std::shared_ptr<parser_t> parser_t::principal{create_principal()};
 
 parser_t &parser_t::principal_parser() {
     ASSERT_IS_MAIN_THREAD();
@@ -334,8 +339,8 @@ std::vector<completion_t> parser_t::expand_argument_list(const wcstring &arg_lis
 
 std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
-std::shared_ptr<parser_t> parser_t::branch() const {
-    std::shared_ptr<parser_t> clone{new parser_t(variables->branch())};
+std::shared_ptr<parser_t> parser_t::branch(const job_tree_ref_t &pg) const {
+    std::shared_ptr<parser_t> clone{new parser_t(variables->branch(), pg)};
     clone->cancellation_requested = this->cancellation_requested;
     clone->block_list = this->block_list;
     clone->eval_level = this->eval_level;

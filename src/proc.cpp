@@ -221,6 +221,40 @@ static int64_t next_proc_id() {
 
 internal_proc_t::internal_proc_t() : internal_proc_id_(next_proc_id()) {}
 
+struct focus_data_t {
+    /// The focused job tree.
+    job_tree_ref_t focused;
+
+    bool is_focused(const job_tree_t *jt) { return focused.get() == jt; }
+};
+
+static acquired_lock<focus_data_t> get_locked_data() {
+    static owning_lock<focus_data_t> s_data{focus_data_t{job_tree_t::principal()}};
+    return s_data.acquire();
+}
+
+job_tree_ref_t job_tree_t::create() { return job_tree_ref_t(new job_tree_t()); }
+
+const job_tree_ref_t &job_tree_t::principal() {
+    static job_tree_ref_t ref = create();
+    return ref;
+}
+
+int job_tree_t::set_foreground_job(const job_t *job, bool continuing_from_stopped) {
+    int ret = 0;
+    pid_t pgrp = job->pgid;
+    fg_pgrp_ = pgrp;
+    if (fg_pgrp_ != INVALID_PID) {
+        auto data = get_locked_data();
+        if (data->is_focused(this)) {
+            ret = terminal_maybe_give_to_job(job, continuing_from_stopped);
+        }
+    }
+    return ret;
+}
+
+bool job_tree_t::is_focused() const { return get_locked_data()->is_focused(this); }
+
 void job_mark_process_as_failed(const std::shared_ptr<job_t> &job, const process_t *failed_proc) {
     // The given process failed to even lift off (e.g. posix_spawn failed) and so doesn't have a
     // valid pid. Mark it and everything after it as dead.
@@ -696,9 +730,14 @@ void proc_update_jiffies(parser_t &parser) {
     }
 }
 
-// Return control of the terminal to a job's process group. restore_attrs is true if we are
-// restoring a previously-stopped job, in which case we need to restore terminal attributes.
-int terminal_maybe_give_to_job(const job_t *j, bool continuing_from_stopped) {
+/// Give ownership of the terminal to the specified job, if it wants it.
+///
+/// \param j The job to give the terminal to.
+/// \param continuing_from_stopped If this variable is set, we are giving back control to a job that
+/// was previously stopped. In that case, we need to set the terminal attributes to those saved in
+/// the job.
+/// \return 1 if transferred, 0 if no transfer was necessary, -1 on error.
+int job_tree_t::terminal_maybe_give_to_job(const job_t *j, bool continuing_from_stopped) {
     enum { notneeded = 0, success = 1, error = -1 };
 
     if (!j->should_claim_terminal()) {
@@ -883,9 +922,9 @@ void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp, bool se
     });
 
     if (!is_completed()) {
-        int transfer = terminal_maybe_give_to_job(this, send_sigcont);
+        int transfer = parser.get_job_tree().set_foreground_job(this, send_sigcont);
         if (transfer < 0) {
-            // terminal_maybe_give_to_job prints an error.
+            // An error has been printed.
             return;
         }
         term_transferred = (transfer > 0);
