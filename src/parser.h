@@ -195,6 +195,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     std::deque<block_t> block_stack;
     /// The 'depth' of the fish call stack.
     int eval_level = -1;
+    /// The internal process group of this parser.
+    /// This controls whether the parser's jobs runs in the foreground or not.
+    internal_proc_group_t internal_pg = k_invalid_internal_proc_group;
     /// Set of variables for the parser.
     const std::shared_ptr<env_stack_t> variables;
     /// Miscellaneous library data.
@@ -225,8 +228,10 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     void stack_trace_internal(size_t block_idx, wcstring *out) const;
 
     /// Create a parser.
-    parser_t();
     parser_t(std::shared_ptr<env_stack_t> vars);
+
+    /// Create the principal parser.
+    static std::shared_ptr<parser_t> create_principal();
 
     /// The main parser.
     static std::shared_ptr<parser_t> principal;
@@ -367,7 +372,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Branch this parser: return a new parser suitable for executing in another thread. Like
     /// fork() but for parsers. Black magic.
-    std::shared_ptr<parser_t> branch() const;
+    std::shared_ptr<parser_t> branch(internal_proc_group_t pg) const;
 
     ~parser_t();
 };

@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <deque>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -139,6 +140,30 @@ class internal_proc_t {
 
     internal_proc_t();
 };
+
+/// An identifier for "internal process group."
+/// Only one internal process group is foreground and only that group may spawn foreground processes
+/// (including external processes).
+using internal_proc_group_t = uint64_t;
+constexpr internal_proc_group_t k_invalid_internal_proc_group = (internal_proc_group_t)-1;
+
+/// Get the next internal process group. These are never recycled.
+/// The value 1 is associated with the principal parser. The value -1 is considered invalid.
+internal_proc_group_t acquire_next_internal_pg();
+
+/// Get the foreground internal pg. This may change at any time so this is only useful for
+/// debugging.
+internal_proc_group_t get_foreground_internal_pg();
+
+/// Make a process group foreground. This is analogous to tcsetpgrp(). It cannot fail.
+/// \return the old foreground pg.
+internal_proc_group_t set_foreground_internal_pg(internal_proc_group_t pg);
+
+/// Check if the current process group is as specified. If so, run some code while guaranteeing that
+/// the internal process group will not change, and return true. Otherwise return false.
+/// The function must not attempt to change the process group, that will deadlock.
+bool run_if_internal_pg_is_foreground(internal_proc_group_t pg,
+                                      const std::function<void(void)> &func);
 
 /// 0 should not be used; although it is not a valid PGID in userspace,
 ///   the Linux kernel will use it for kernel processes.

@@ -820,7 +820,9 @@ static bool exec_concurrent_func_process(parser_t &parser, std::shared_ptr<job_t
     if (!argv.empty()) argv.erase(argv.begin());
 
     // Branch our parser so we have a new place to execute.
-    auto child = parser.branch();
+    // TODO: this new value should be passed in.
+    auto child_internal_pg = acquire_next_internal_pg();
+    auto child = parser.branch(child_internal_pg);
 
     // Make an internal process.
     auto internal_proc = std::make_shared<internal_proc_t>();
@@ -859,7 +861,8 @@ static bool exec_concurrent_block_process(parser_t &parser, std::shared_ptr<job_
     (void)j;
     (void)user_ios;
     // Branch our parser so we have a new place to execute.
-    auto child = parser.branch();
+    auto child_internal_pg = acquire_next_internal_pg();
+    auto child = parser.branch(child_internal_pg);
 
     // Make an internal process.
     auto internal_proc = std::make_shared<internal_proc_t>();
@@ -1049,20 +1052,22 @@ static bool exec_process_in_job(parser_t &parser, process_t *p, std::shared_ptr<
         case process_type_t::block_node: {
             // If we support concurrent execution and we have a pipeline, then we are going to
             // launch a concurrent thread.
-            if (feature_test(features_t::concurrent) && j->processes.size() > 1) {
-                if (p->type == process_type_t::function) {
-                    if (!exec_concurrent_func_process(parser, j, p, all_ios,
-                                                      process_net_io_chain)) {
-                        return false;
-                    }
+            if (feature_test(features_t::concurrent)) {
+                if (!j->is_foreground() || j->processes.size() > 1) {
+                    if (p->type == process_type_t::function) {
+                        if (!exec_concurrent_func_process(parser, j, p, all_ios,
+                                                          process_net_io_chain)) {
+                            return false;
+                        }
 
-                } else if (p->type == process_type_t::block_node) {
-                    if (!exec_concurrent_block_process(parser, j, p, all_ios,
-                                                       process_net_io_chain)) {
-                        return false;
+                    } else if (p->type == process_type_t::block_node) {
+                        if (!exec_concurrent_block_process(parser, j, p, all_ios,
+                                                           process_net_io_chain)) {
+                            return false;
+                        }
                     }
+                    break;
                 }
-                break;
             }
             // Allow buffering unless this is a deferred run. If deferred, then processes after us
             // were already launched, so they are ready to receive (or reject) our output.

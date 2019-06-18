@@ -212,6 +212,32 @@ static int64_t next_proc_id() {
 
 internal_proc_t::internal_proc_t() : internal_proc_id_(next_proc_id()) {}
 
+internal_proc_group_t acquire_next_internal_pg() {
+    static std::atomic<internal_proc_group_t> s_next{1};
+    return ++s_next;
+}
+
+static owning_lock<internal_proc_group_t> s_foreground_internal_pg{1};
+
+internal_proc_group_t get_foreground_internal_pg() { return *s_foreground_internal_pg.acquire(); }
+
+internal_proc_group_t set_foreground_internal_pg(internal_proc_group_t pg) {
+    auto fgpg = s_foreground_internal_pg.acquire();
+    internal_proc_group_t old = *fgpg;
+    *fgpg = pg;
+    return old;
+}
+
+bool run_if_internal_pg_is_foreground(internal_proc_group_t pg,
+                                      const std::function<void(void)> &func) {
+    auto fgpg = s_foreground_internal_pg.acquire();
+    if (*fgpg != pg) {
+        return false;
+    }
+    func();
+    return true;
+}
+
 static void mark_job_complete(const job_t *j) {
     for (auto &p : j->processes) {
         p->completed = 1;
