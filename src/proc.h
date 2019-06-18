@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <deque>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -145,6 +146,57 @@ class internal_proc_t {
 /// -1 should not be used; it is a possible return value of the getpgid()
 ///   function
 enum { INVALID_PID = -2 };
+
+/// pgid_selector_t multiplexes access to the tty within fish. Distinct selectors represent distinct
+/// threads of execution, and have their own idea of which pgrp is foreground. Only one selector may
+/// be "focused"; that is the selector that truly owns the tty and only that selector may transfer
+/// ownrship of the tty to its foreground pgrp (via tcsetpgrp).
+class job_t;
+class pgid_selector_t {
+    /// Selector IDs are used to identify selectors.
+    using selector_id_t = uint64_t;
+
+    struct data_t {
+        /// The next selector ID to allocate.
+        selector_id_t next_sid{0};
+
+        /// The focused selector ID.
+        selector_id_t focused{0};
+    };
+    static acquired_lock<data_t> get_locked_data();
+
+    /// The internal ID for this selector.
+    /// These are never recycled.
+    const uint64_t selector_id_;
+
+    /// The current (real) process group ID which is foreground in this selector.
+    pid_t fg_pgrp_{INVALID_PID};
+
+    bool this_is_focused(const acquired_lock<data_t> &data) const {
+        return data->focused == this->selector_id_;
+    }
+
+    static int terminal_maybe_give_to_job(const job_t *j, bool continuing_from_stopped);
+
+    explicit pgid_selector_t(uint64_t intern_pgid) : selector_id_(intern_pgid) {}
+
+   public:
+    /// Create a new process group selector.
+    static std::shared_ptr<pgid_selector_t> create();
+
+    /// Make the given job foreground in this selector. If \p continuing_from_stopped is set, we are
+    /// giving back control to a job that was previously stopped. In that case, we need to set the
+    /// terminal attributes to those saved in the job.
+    /// \return 1 if successfully transferred, 0 if no transfer was necessary, -1 on error.
+    int set_foreground_job(const job_t *job, bool continuing_from_stopped);
+
+    /// Become focused.
+    void acquire_focus();
+
+    /// \return if this is focused. Note this may change at any time. This is mainly of use for
+    /// debugging, and for inherently racey situations such as the call to tcsetpgrp after fork.
+    bool is_focused() const;
+};
 
 /// A structure representing a single fish process. Contains variables for tracking process state
 /// and the process argument list. Actually, a fish process can be either a regular external
@@ -514,15 +566,6 @@ bool is_within_fish_initialization();
 
 /// Terminate all background jobs
 void hup_background_jobs(const parser_t &parser);
-
-/// Give ownership of the terminal to the specified job, if it wants it.
-///
-/// \param j The job to give the terminal to.
-/// \param continuing_from_stopped If this variable is set, we are giving back control to a job that
-/// was previously stopped. In that case, we need to set the terminal attributes to those saved in
-/// the job.
-/// \return 1 if transferred, 0 if no transfer was necessary, -1 on error.
-int terminal_maybe_give_to_job(const job_t *j, bool continuing_from_stopped);
 
 /// Given that we are about to run a builtin, acquire the terminal if it is owned by the given job.
 /// Returns the pid to restore after running the builtin, or -1 if there is no pid to restore.

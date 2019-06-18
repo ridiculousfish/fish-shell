@@ -432,10 +432,14 @@ static bool run_internal_process(process_t *p, std::string outdata, std::string 
 
 /// Call fork() as part of executing a process \p p in a job \j. Execute \p child_action in the
 /// context of the child. Returns true if fork succeeded, false if fork failed.
-static bool fork_child_for_process(const std::shared_ptr<job_t> &job, process_t *p,
-                                   const dup2_list_t &dup2s, bool drain_threads,
+static bool fork_child_for_process(parser_t &parser, const std::shared_ptr<job_t> &job,
+                                   process_t *p, const dup2_list_t &dup2s, bool drain_threads,
                                    const char *fork_type,
                                    const std::function<void()> &child_action) {
+    // Figure out if we should claim the terminal.
+    // TODO: factor this logic sanely.
+    bool claim_terminal =
+        job->wants_terminal() && job->is_foreground() && parser.get_pgid_selector().is_focused();
     pid_t pid = execute_fork(drain_threads);
     if (pid == 0) {
         // This is the child process. Setup redirections, print correct output to
@@ -443,8 +447,7 @@ static bool fork_child_for_process(const std::shared_ptr<job_t> &job, process_t 
         maybe_t<pid_t> new_termowner{};
         p->pid = getpid();
         child_set_group(job.get(), p);
-        child_setup_process(job->wants_terminal() && job->is_foreground() ? job->pgid : INVALID_PID,
-                            true, dup2s);
+        child_setup_process(claim_terminal ? job->pgid : INVALID_PID, true, dup2s);
         child_action();
         DIE("Child process returned control to fork_child lambda!");
     }
@@ -464,7 +467,7 @@ static bool fork_child_for_process(const std::shared_ptr<job_t> &job, process_t 
     p->pid = pid;
     on_process_created(job, p->pid);
     set_child_group(job.get(), p->pid);
-    terminal_maybe_give_to_job(job.get(), false);
+    parser.get_pgid_selector().set_foreground_job(job.get(), false);
     return true;
 }
 
@@ -762,12 +765,11 @@ static bool exec_external_command(parser_t &parser, const std::shared_ptr<job_t>
             j->pgid = pid;
         }
 #endif
-
-        terminal_maybe_give_to_job(j.get(), false);
+        parser.get_pgid_selector().set_foreground_job(j.get(), false);
     } else
 #endif
     {
-        if (!fork_child_for_process(j, p, *dup2s, false, "external command",
+        if (!fork_child_for_process(parser, j, p, *dup2s, false, "external command",
                                     [&] { safe_launch_process(p, actual_cmd, argv, envv); })) {
             return false;
         }
