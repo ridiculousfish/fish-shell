@@ -433,8 +433,8 @@ static bool run_internal_process(process_t *p, std::string outdata, std::string 
 
 /// Call fork() as part of executing a process \p p in a job \j. Execute \p child_action in the
 /// context of the child. Returns true if fork succeeded, false if fork failed.
-static bool fork_child_for_process(const std::shared_ptr<job_t> &job, process_t *p,
-                                   const dup2_list_t &dup2s, bool drain_threads,
+static bool fork_child_for_process(const parser_t &parser, const std::shared_ptr<job_t> &job,
+                                   process_t *p, const dup2_list_t &dup2s, bool drain_threads,
                                    const char *fork_type,
                                    const std::function<void()> &child_action) {
     pid_t pid = execute_fork(drain_threads);
@@ -463,7 +463,8 @@ static bool fork_child_for_process(const std::shared_ptr<job_t> &job, process_t 
     p->pid = pid;
     on_process_created(job, p->pid);
     set_child_group(job.get(), p->pid);
-    maybe_assign_terminal(job.get());
+    run_if_internal_pg_is_foreground(parser.get_internal_pg(),
+                                     [&] { maybe_assign_terminal(job.get()); });
     return true;
 }
 
@@ -761,12 +762,12 @@ static bool exec_external_command(parser_t &parser, const std::shared_ptr<job_t>
             j->pgid = pid;
         }
 #endif
-
-        maybe_assign_terminal(j.get());
+        run_if_internal_pg_is_foreground(parser.get_internal_pg(),
+                                         [&] { maybe_assign_terminal(j.get()); });
     } else
 #endif
     {
-        if (!fork_child_for_process(j, p, *dup2s, false, "external command",
+        if (!fork_child_for_process(parser, j, p, *dup2s, false, "external command",
                                     [&] { safe_launch_process(p, actual_cmd, argv, envv); })) {
             return false;
         }

@@ -311,6 +311,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     statuses_t get_last_statuses() const { return vars().get_last_statuses(); }
     void set_last_statuses(statuses_t s) { vars().set_last_statuses(std::move(s)); }
 
+    /// Get the internal process group for jobs spawned from this parser.
+    internal_proc_group_t get_internal_pg() const { return internal_pg; }
+
     /// Pushes a new block. Returns a pointer to the block, stored in the parser. The pointer is
     /// valid until the call to pop_block()
     block_t *push_block(block_t &&b);
