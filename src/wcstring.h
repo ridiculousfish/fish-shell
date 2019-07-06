@@ -6,9 +6,15 @@ class wcstring {
     using contents_t = std::wstring;
     using CharT = contents_t::value_type;
 
-    contents_t s_;
-    std::wstring &s() { return s_; }
-    const std::wstring &s() const { return s_; }
+    std::shared_ptr<contents_t> s_;
+
+    contents_t &s() {
+        if (s_.use_count() > 1) {
+            s_ = std::make_shared<contents_t>(*s_);
+        }
+        return *s_;
+    }
+    const contents_t &s() const { return *s_; }
 
    public:
     using size_type = contents_t::size_type;
@@ -65,15 +71,18 @@ class wcstring {
     const_reverse_iterator crbegin() { return s().crbegin(); }
     const_reverse_iterator crend() { return s().crend(); }
 
+    /* implicit */ wcstring(std::wstring &&s) : s_(std::make_shared<contents_t>(std::move(s))) {}
+    /* implicit */ wcstring(const std::wstring &s) : s_(std::make_shared<contents_t>(s)) {}
+
     template <
         typename... Args,
         typename std::enable_if<std::is_constructible<contents_t, Args...>::value, int>::type = 0>
-    wcstring(Args &&... args) : s_(std::forward<Args>(args)...) {}
+    wcstring(Args &&... args) : wcstring(std::wstring(std::forward<Args>(args)...)) {}
 
     wcstring(const wcstring &str, size_t pos, size_t count = npos)
         : wcstring(str.s(), pos, count) {}
 
-    wcstring(std::initializer_list<CharT> ilist) : s_(ilist) {}
+    wcstring(std::initializer_list<CharT> ilist) : s_(std::make_shared<contents_t>(ilist)) {}
 
     wcstring(wcstring &&) = default;
     wcstring(const wcstring &) = default;
@@ -96,7 +105,7 @@ class wcstring {
     }
 
     wcstring &assign(wcstring &&str) {
-        s().assign(std::move(str.s_));
+        s_ = str.s_;
         return *this;
     }
 
