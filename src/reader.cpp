@@ -685,7 +685,7 @@ void reader_data_t::kill(editable_line_t *el, size_t begin_idx, size_t length, i
 
 // This is called from a signal handler!
 void reader_handle_sigint() {
-    parser_t::skip_all_blocks();
+    pgid_selector_t::received_cancel_signal();
     interrupted = 1;
 }
 
@@ -3398,7 +3398,7 @@ int reader_reading_interrupted() {
     reader_data_t *data = current_data_or_null();
     if (res && data && data->exit_on_interrupt) {
         reader_set_end_loop(true);
-        parser_t::skip_all_blocks();
+        pgid_selector_t::received_cancel_signal();
         // We handled the interrupt ourselves, our caller doesn't need to handle it.
         return 0;
     }

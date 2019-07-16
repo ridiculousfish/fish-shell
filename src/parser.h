@@ -185,8 +185,6 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     friend class parse_execution_context_t;
 
    private:
-    /// Indication that we should skip all blocks.
-    volatile sig_atomic_t cancellation_requested = false;
     /// The current execution context.
     std::unique_ptr<parse_execution_context_t> execution_context;
     /// List of called functions, used to help prevent infinite recursion.
@@ -242,10 +240,6 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
    public:
     /// Get the "principal" parser, whatever that is.
     static parser_t &principal_parser();
-
-    /// Indicates that execution of all blocks in the principal parser should stop. This is called
-    /// from signal handlers!
-    static void skip_all_blocks();
 
     /// Global event blocks.
     event_blockage_list_t global_event_blocks;
@@ -353,6 +347,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Undo last call to parser_forbid_function().
     void allow_function();
+
+    /// \return whether the pgid selector has been cancel-signalled.
+    bool is_cancel_signalled() const { return get_pgid_selector().is_cancel_signalled(); }
 
     /// Output profiling data to the given filename.
     void emit_profiling(const char *path) const;

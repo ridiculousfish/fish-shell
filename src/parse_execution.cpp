@@ -189,7 +189,7 @@ parse_execution_context_t::cancellation_reason(const block_t *block) const {
     if (shell_is_exiting()) {
         return execution_cancellation_exit;
     }
-    if (parser && parser->cancellation_requested) {
+    if (parser->get_pgid_selector().is_cancel_signalled()) {
         return execution_cancellation_skip;
     }
     const auto &ld = parser->libdata();
@@ -638,7 +638,7 @@ parse_execution_result_t parse_execution_context_t::report_error(const parse_nod
 
 parse_execution_result_t parse_execution_context_t::report_errors(
     const parse_error_list_t &error_list) const {
-    if (!parser->cancellation_requested) {
+    if (!parser->is_cancel_signalled()) {
         if (error_list.empty()) {
             FLOG(error, L"Error reported but no error text found.");
         }

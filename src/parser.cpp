@@ -129,12 +129,6 @@ parser_t &parser_t::principal_parser() {
     return *principal;
 }
 
-void parser_t::skip_all_blocks() {
-    // Tell all blocks to skip.
-    // This may be called from a signal handler!
-    principal->cancellation_requested = true;
-}
-
 // Given a new-allocated block, push it onto our block stack, acquiring ownership
 block_t *parser_t::push_block(block_t &&block) {
     block_t new_current{std::move(block)};
@@ -356,7 +350,8 @@ std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 std::shared_ptr<parser_t> parser_t::branch(const pgid_selector_ref_t &pg) const {
     // Copy over some things. Other parts cannot be shared. TODO: factor this sanely.
     std::shared_ptr<parser_t> clone{new parser_t(variables->branch(), pg)};
-    clone->cancellation_requested = this->cancellation_requested;
+    // Hackish way to propagate signalling.
+    pg->set_cancel_signalled(is_cancel_signalled());
     clone->forbidden_function = this->forbidden_function;
     clone->block_stack = this->block_stack;
     clone->eval_level = this->eval_level;
@@ -653,11 +648,11 @@ int parser_t::eval_node(parsed_source_ref_t ps, tnode_t<T> node, const io_chain_
     // Handle cancellation requests. If our block stack is currently empty, then we already did
     // successfully cancel (or there was nothing to cancel); clear the flag. If our block stack is
     // not empty, we are still in the process of cancelling; refuse to evaluate anything.
-    if (this->cancellation_requested) {
+    if (this->is_cancel_signalled()) {
         if (!block_stack.empty()) {
             return 1;
         }
-        this->cancellation_requested = false;
+        get_pgid_selector().set_cancel_signalled(false);
     }
 
     // Only certain blocks are allowed.

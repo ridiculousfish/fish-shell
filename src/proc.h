@@ -19,6 +19,7 @@
 
 #include "common.h"
 #include "event.h"
+#include "global_safety.h"
 #include "io.h"
 #include "parse_tree.h"
 #include "tnode.h"
@@ -167,12 +168,20 @@ class pgid_selector_t {
     };
     static acquired_lock<data_t> get_locked_data();
 
+    /// A note that we have received a cancellation-inducing signal.
+    /// The signal is directed at the focused selector.
+    static volatile sig_atomic_t pending_cancel_signal_;
+
     /// The internal ID for this selector.
     /// These are never recycled.
     const uint64_t selector_id_;
 
     /// The current (real) process group ID which is foreground in this selector.
     pid_t fg_pgrp_{INVALID_PID};
+
+    /// Whether we have received a cancellation-inducing signal.
+    /// This is mutable because it may be computed lazily.
+    mutable relaxed_atomic_bool_t cancel_signalled_{false};
 
     bool this_is_focused(const acquired_lock<data_t> &data) const {
         return data->focused == this->selector_id_;
@@ -186,6 +195,9 @@ class pgid_selector_t {
     /// Create a new process group selector.
     static pgid_selector_ref_t create();
 
+    /// Called from a signal handler to report a SIGINT or similar.
+    static void received_cancel_signal();
+
     /// Make the given job foreground in this selector. If \p continuing_from_stopped is set, we are
     /// giving back control to a job that was previously stopped. In that case, we need to set the
     /// terminal attributes to those saved in the job.
@@ -198,6 +210,12 @@ class pgid_selector_t {
     /// \return if this is focused. Note this may change at any time. This is mainly of use for
     /// debugging, and for inherently racey situations such as the call to tcsetpgrp after fork.
     bool is_focused() const;
+
+    /// \return if this process group should exit due to a signal.
+    bool is_cancel_signalled() const;
+
+    /// Set whether we are cancel-signalled.
+    void set_cancel_signalled(bool flag) { cancel_signalled_ = flag; }
 };
 
 /// A structure representing a single fish process. Contains variables for tracking process state
