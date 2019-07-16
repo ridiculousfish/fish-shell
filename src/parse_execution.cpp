@@ -189,7 +189,7 @@ maybe_t<end_execution_reason_t> parse_execution_context_t::check_end_execution()
     if (shell_is_exiting()) {
         return end_execution_reason_t::cancelled;
     }
-    if (parser && parser->cancellation_signal) {
+    if (parser->get_cancel_signal()) {
         return end_execution_reason_t::cancelled;
     }
     const auto &ld = parser->libdata();
@@ -636,7 +636,7 @@ end_execution_reason_t parse_execution_context_t::report_error(int status, const
 
 end_execution_reason_t parse_execution_context_t::report_errors(
     int status, const parse_error_list_t &error_list) const {
-    if (!parser->cancellation_signal) {
+    if (!parser->get_cancel_signal()) {
         if (error_list.empty()) {
             FLOG(error, L"Error reported but no error text found.");
         }

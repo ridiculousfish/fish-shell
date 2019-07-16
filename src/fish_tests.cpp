@@ -1169,7 +1169,7 @@ static void test_cancellation() {
 
     // Ensure that we don't think we should cancel.
     reader_reset_interrupted();
-    parser.clear_cancel();
+    parser.get_job_tree().set_cancel_signal(0);
 }
 
 static void test_indents() {

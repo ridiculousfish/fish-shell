@@ -107,10 +107,7 @@ parser_t &parser_t::principal_parser() {
     return *principal;
 }
 
-void parser_t::cancel_requested(int sig) {
-    assert(sig != 0 && "Signal must not be 0");
-    principal->cancellation_signal = sig;
-}
+bool parser_t::is_principal() const { return this == principal.get(); }
 
 // Given a new-allocated block, push it onto our block list, acquiring ownership.
 block_t *parser_t::push_block(block_t &&block) {
@@ -337,7 +334,7 @@ completion_list_t parser_t::expand_argument_list(const wcstring &arg_list_src,
 std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
 cancel_checker_t parser_t::cancel_checker() const {
-    return [this]() { return this->cancellation_signal != 0; };
+    return [this]() { return this->get_cancel_signal() != 0; };
 }
 
 operation_context_t parser_t::context() {
@@ -346,7 +343,8 @@ operation_context_t parser_t::context() {
 
 std::shared_ptr<parser_t> parser_t::branch(const job_tree_ref_t &pg) const {
     std::shared_ptr<parser_t> clone{new parser_t(variables->branch(), pg)};
-    clone->cancellation_signal = this->cancellation_signal;
+    // Hackish way to propagate signalling.
+    pg->set_cancel_signal(get_cancel_signal());
     clone->block_list = this->block_list;
     clone->eval_level = this->eval_level;
     clone->library_data = this->library_data;
@@ -676,11 +674,11 @@ eval_res_t parser_t::eval_node(const parsed_source_ref_t &ps, tnode_t<T> node,
     // Handle cancellation requests. If our block stack is currently empty, then we already did
     // successfully cancel (or there was nothing to cancel); clear the flag. If our block stack is
     // not empty, we are still in the process of cancelling; refuse to evaluate anything.
-    if (this->cancellation_signal) {
-        if (!block_list.empty()) {
-            return proc_status_t::from_signal(this->cancellation_signal);
-        }
-        this->cancellation_signal = 0;
+    if (int sig = this->get_cancel_signal()) {
+        if (block_list.empty() && is_principal()) {
+            get_job_tree().set_cancel_signal(0);
+        } else
+            return proc_status_t::from_signal(sig);
     }
 
     // Only certain blocks are allowed.
@@ -708,9 +706,9 @@ eval_res_t parser_t::eval_node(const parsed_source_ref_t &ps, tnode_t<T> node,
 
     job_reap(*this, false);  // reap again
 
-    if (this->cancellation_signal) {
+    if (int sig = this->get_cancel_signal()) {
         // We were signalled.
-        return proc_status_t::from_signal(this->cancellation_signal);
+        return proc_status_t::from_signal(sig);
     } else {
         auto status = proc_status_t::from_exit_code(this->get_last_status());
         bool break_expand = (reason == end_execution_reason_t::error);

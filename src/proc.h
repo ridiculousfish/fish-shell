@@ -177,6 +177,9 @@ class job_tree_t {
     /// Initially this is focused.
     static const job_tree_ref_t &principal();
 
+    /// Called from a signal handler to report a SIGINT or similar.
+    static void received_cancel_signal(int sig);
+
     /// Make the given job foreground in this tree. If \p continuing_from_stopped is set, we are
     /// giving back control to a job that was previously stopped. In that case, we need to set the
     /// terminal attributes to those saved in the job.
@@ -187,9 +190,23 @@ class job_tree_t {
     /// Note this may change at any time.
     bool is_focused() const;
 
+    /// \return the signal triggering cancellation, or 0 if none.
+    int get_cancel_signal() const;
+
+    /// Set whether we are cancel-signalled.
+    void set_cancel_signal(int sig) { cancel_signal_ = sig; }
+
    private:
+    /// A note that we have received a cancellation-inducing signal.
+    /// The signal is directed at the focused tree.
+    static volatile sig_atomic_t pending_cancel_signal_;
+
     /// The current (real) process group ID which is foreground in this tree.
     pid_t fg_pgrp_{INVALID_PID};
+
+    /// Whether we have received a cancellation-inducing signal.
+    /// This is mutable because it may be computed lazily.
+    mutable relaxed_atomic_t<int> cancel_signal_{false};
 
     static int terminal_maybe_give_to_job(const job_t *j, bool continuing_from_stopped);
 

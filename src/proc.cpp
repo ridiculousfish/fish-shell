@@ -244,6 +244,27 @@ int job_tree_t::set_foreground_job(const job_t *job, bool continuing_from_stoppe
 
 bool job_tree_t::is_focused() const { return get_locked_data()->is_focused(this); }
 
+volatile sig_atomic_t job_tree_t::pending_cancel_signal_{false};
+
+void job_tree_t::received_cancel_signal(int sig) {
+    // Beware, we are in a signal handler.
+    pending_cancel_signal_ = sig;
+}
+
+int job_tree_t::get_cancel_signal() const {
+    if (cancel_signal_) return cancel_signal_;
+    if (!pending_cancel_signal_) return false;
+    // There's a pending signal.
+    // See if it's for us. If so, grab it.
+    auto data = get_locked_data();
+    if (data->is_focused(this)) {
+        // Note this is inherently somewhat racey.
+        cancel_signal_ = pending_cancel_signal_;
+        pending_cancel_signal_ = 0;
+    }
+    return cancel_signal_;
+}
+
 void job_mark_process_as_failed(const std::shared_ptr<job_t> &job, const process_t *failed_proc) {
     // The given process failed to even lift off (e.g. posix_spawn failed) and so doesn't have a
     // valid pid. Mark it and everything after it as dead.
@@ -257,7 +278,7 @@ void job_mark_process_as_failed(const std::shared_ptr<job_t> &job, const process
 }
 
 /// Set the status of \p proc to \p status.
-static void handle_child_status(process_t *proc, proc_status_t status) {
+static void handle_child_status(parser_t &parser, process_t *proc, proc_status_t status) {
     proc->status = status;
     if (status.stopped()) {
         proc->stopped = true;
@@ -270,9 +291,8 @@ static void handle_child_status(process_t *proc, proc_status_t status) {
         int sig = status.signal_code();
         if (sig == SIGINT || sig == SIGQUIT) {
             if (session_interactivity() != session_interactivity_t::not_interactive) {
-                // In an interactive session, tell the principal parser to skip all blocks we're
-                // executing so control-C returns control to the user.
-                parser_t::cancel_requested(sig);
+                // In an interactive session, inform the parser that it has been cancel-signalled.
+                parser.get_job_tree().set_cancel_signal(sig);
             } else {
                 // Deliver the SIGINT or SIGQUIT signal to ourself since we're not interactive.
                 struct sigaction act;
@@ -411,7 +431,8 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
                     if (proc->internal_proc_) {
                         // Try reaping an internal process.
                         if (proc->internal_proc_->exited()) {
-                            handle_child_status(proc.get(), proc->internal_proc_->get_status());
+                            handle_child_status(parser, proc.get(),
+                                                proc->internal_proc_->get_status());
                             FLOGF(proc_reap_internal,
                                   "Reaped internal process '%ls' (id %llu, status %d)",
                                   proc->argv0(), proc->internal_proc_->get_id(),
@@ -423,7 +444,8 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
                         auto pid = waitpid(proc->pid, &status, WNOHANG | WUNTRACED);
                         if (pid > 0) {
                             assert(pid == proc->pid && "Unexpcted waitpid() return");
-                            handle_child_status(proc.get(), proc_status_t::from_waitpid(status));
+                            handle_child_status(parser, proc.get(),
+                                                proc_status_t::from_waitpid(status));
                             FLOGF(proc_reap_external,
                                   "Reaped external process '%ls' (pid %d, status %d)",
                                   proc->argv0(), pid, proc->status.status_value());

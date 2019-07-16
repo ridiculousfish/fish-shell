@@ -222,8 +222,6 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     friend class parse_execution_context_t;
 
    private:
-    /// If not zero, the signal triggering cancellation.
-    volatile sig_atomic_t cancellation_signal = 0;
     /// The current execution context.
     std::unique_ptr<parse_execution_context_t> execution_context;
     /// The jobs associated with this parser.
@@ -274,11 +272,8 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Get the "principal" parser, whatever that is.
     static parser_t &principal_parser();
 
-    /// Indicates that we should stop execution due to the given signal.
-    static void cancel_requested(int sig);
-
-    /// Clear any cancel.
-    void clear_cancel() { cancellation_signal = 0; }
+    /// \return whether this is the principal parser.
+    bool is_principal() const;
 
     /// Global event blocks.
     event_blockage_list_t global_event_blocks;
@@ -384,6 +379,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     void get_backtrace(const wcstring &src, const parse_error_list_t &errors,
                        wcstring &output) const;
+
+    /// \return the signal triggering cancellation, or 0 if none.
+    int get_cancel_signal() const { return get_job_tree().get_cancel_signal(); }
 
     /// Output profiling data to the given filename.
     void emit_profiling(const char *path) const;
