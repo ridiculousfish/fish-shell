@@ -107,13 +107,7 @@ parser_t &parser_t::principal_parser() {
     return *principal;
 }
 
-void parser_t::skip_all_blocks() {
-    // Tell all blocks to skip.
-    // This may be called from a signal handler!
-    principal->cancellation_requested = true;
-}
-
-// Given a new-allocated block, push it onto our block list, acquiring ownership.
+// Given a new-allocated block, push it onto our block list, acquiring ownership
 block_t *parser_t::push_block(block_t &&block) {
     block_t new_current{std::move(block)};
     const enum block_type_t type = new_current.type();
@@ -341,7 +335,9 @@ std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
 std::shared_ptr<parser_t> parser_t::branch(const job_tree_ref_t &pg) const {
     std::shared_ptr<parser_t> clone{new parser_t(variables->branch(), pg)};
-    clone->cancellation_requested = this->cancellation_requested;
+    // Hackish way to propagate signalling.
+    pg->set_cancel_signalled(is_cancel_signalled());
+
     clone->block_list = this->block_list;
     clone->eval_level = this->eval_level;
     clone->library_data = this->library_data;
@@ -657,11 +653,11 @@ eval_result_t parser_t::eval_node(parsed_source_ref_t ps, tnode_t<T> node, job_l
     // Handle cancellation requests. If our block stack is currently empty, then we already did
     // successfully cancel (or there was nothing to cancel); clear the flag. If our block stack is
     // not empty, we are still in the process of cancelling; refuse to evaluate anything.
-    if (this->cancellation_requested) {
+    if (this->is_cancel_signalled()) {
         if (!block_list.empty()) {
             return eval_result_t::cancelled;
         }
-        this->cancellation_requested = false;
+        get_job_tree().set_cancel_signalled(false);
     }
 
     // Only certain blocks are allowed.
