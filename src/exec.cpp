@@ -938,10 +938,14 @@ static bool exec_block_or_func_process(parser_t &parser, std::shared_ptr<job_t> 
     return true;
 }
 
+static bool use_concurrent_internal_procs(const std::shared_ptr<job_t> &j) {
+    return feature_test(features_t::concurrent) && j->processes.size() > 1;
+}
+
 /// Determine which pgid selector to use for a job.
 static pgid_selector_ref_t determine_pgid_selector_for_job(const parser_t &parser,
                                                            const std::shared_ptr<job_t> &j) {
-    if (feature_test(features_t::concurrent) && j->wants_job_control()) {
+    if (j->wants_job_control() && use_concurrent_internal_procs(j)) {
         return pgid_selector_t::create();
     }
     return parser.get_pgid_selector_ref();
@@ -1023,8 +1027,7 @@ static bool exec_process_in_job(parser_t &parser, process_t *p, std::shared_ptr<
         case process_type_t::function:
         case process_type_t::block_node: {
             // Execute background functions concurrently if enabled.
-            if (p->type == process_type_t::function && !j->is_foreground() &&
-                feature_test(features_t::concurrent)) {
+            if (p->type == process_type_t::function && use_concurrent_internal_procs(j)) {
                 if (!exec_concurrent_func_process(parser, j, p, all_ios, process_net_io_chain)) {
                     return false;
                 }
