@@ -73,3 +73,8 @@ wcstring wcstolower(wcstring input) {
     std::transform(result.begin(), result.end(), result.begin(), towlower);
     return result;
 }
+
+std::shared_ptr<wcstring::contents_t> wcstring::get_shared_empty() {
+    static auto s_empty = std::make_shared<wcstring::contents_t>();
+    return s_empty;
+}
