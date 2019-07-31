@@ -16,6 +16,9 @@ class wcstring {
     }
     const contents_t &s() const { return *s_; }
 
+    /// \return the singleton empty string.
+    static std::shared_ptr<contents_t> get_shared_empty();
+
    public:
     using size_type = contents_t::size_type;
     using value_type = contents_t::value_type;
@@ -70,6 +73,8 @@ class wcstring {
 
     const_reverse_iterator crbegin() { return s().crbegin(); }
     const_reverse_iterator crend() { return s().crend(); }
+
+    wcstring() : s_(get_shared_empty()) {}
 
     /* implicit */ wcstring(std::wstring &&s) : s_(std::make_shared<contents_t>(std::move(s))) {}
     /* implicit */ wcstring(const std::wstring &s) : s_(std::make_shared<contents_t>(s)) {}
@@ -256,7 +261,7 @@ class wcstring {
     size_type size() const { return s().size(); }
     size_type length() const { return s().length(); }
 
-    void clear() { return s().clear(); }
+    void clear() { s_ = get_shared_empty(); }
 
     const wchar_t *c_str() const { return s().c_str(); }
 
