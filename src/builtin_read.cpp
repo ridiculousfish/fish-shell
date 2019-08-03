@@ -501,11 +501,11 @@ int builtin_read(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             chars.reserve(n_splits);
 
             int i = 0;
-            for (auto it = buff.begin(), end = buff.end(); it != end; ++i, ++it) {
+            for (auto it = buff.cbegin(), end = buff.cend(); it != end; ++i, ++it) {
                 if (opts.array || i + 1 < vars_left()) {
                     chars.emplace_back(1, *it);
                 } else {
-                    chars.emplace_back(it, buff.end());
+                    chars.emplace_back(it, buff.cend());
                     break;
                 }
             }

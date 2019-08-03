@@ -22,10 +22,88 @@ class wcstring {
    public:
     using size_type = contents_t::size_type;
     using value_type = contents_t::value_type;
-    using iterator = contents_t::iterator;
     using const_iterator = contents_t::const_iterator;
-    using reverse_iterator = contents_t::reverse_iterator;
+    using reverse_iterator = contents_t::const_reverse_iterator;
     using const_reverse_iterator = contents_t::const_reverse_iterator;
+
+    class iterator {
+        friend class wcstring;
+        wcstring *ref;
+        size_type idx;
+
+        iterator(wcstring *ref, size_type idx) : ref(ref), idx(idx) {}
+
+        int compare(const iterator &rhs) const {
+            assert(rhs.ref == ref && "Iterators are from different strings");
+            if (idx > rhs.idx) {
+                return 1;
+            } else if (idx < rhs.idx) {
+                return -1;
+            } else {
+                return 0;
+            }
+        }
+
+       public:
+        iterator() : ref(nullptr), idx(0) {}
+        using value_type = wcstring::value_type;
+        using difference_type = std::wstring::iterator::difference_type;
+        using pointer = value_type *;
+        using reference = value_type &;
+        using iterator_category = std::random_access_iterator_tag;
+
+        /* implicit */ operator const_iterator() const { return ref->cbegin() + idx; }
+
+        iterator operator++(int) /* postfix */ {
+            auto ret = *this;
+            idx++;
+            return ret;
+        }
+        iterator &operator++() /* prefix */ {
+            idx++;
+            return *this;
+        }
+
+        iterator operator--(int) /* postfix */ {
+            auto ret = *this;
+            idx--;
+            return ret;
+        }
+        iterator &operator--() /* prefix */ {
+            idx--;
+            return *this;
+        }
+
+        wchar_t &operator*() { return ref->s().at(idx); }
+        wchar_t operator*() const { return ref->s().at(idx); }
+        wchar_t *operator->() { return &ref->s().at(idx); }
+        const wchar_t *operator->() const { return &ref->s().at(idx); }
+        iterator operator+(difference_type v) const {
+            // Note we are sloppy about overflow here.
+            ptrdiff_t tmp = idx + v;
+            assert(tmp >= 0 && "Underflow");
+            return iterator{ref, (size_type)tmp};
+        }
+
+        iterator operator-(difference_type v) const {
+            // Note we are sloppy about overflow here.
+            ptrdiff_t tmp = idx - v;
+            assert(tmp >= 0 && "Underflow");
+            return iterator{ref, (size_type)tmp};
+        }
+
+        difference_type operator-(const iterator &rhs) const {
+            assert(rhs.ref == ref && "Iterators are from different strings");
+            return idx - rhs.idx;
+        }
+
+        bool operator<(const iterator &rhs) const { return compare(rhs) < 0; }
+        bool operator<=(const iterator &rhs) const { return compare(rhs) <= 0; }
+        bool operator>(const iterator &rhs) const { return compare(rhs) > 0; }
+        bool operator>=(const iterator &rhs) const { return compare(rhs) >= 0; }
+        bool operator==(const iterator &rhs) const { return compare(rhs) == 0; }
+        bool operator!=(const iterator &rhs) const { return compare(rhs) != 0; }
+    };
 
     static constexpr size_type npos = contents_t::npos;
 
@@ -49,15 +127,15 @@ class wcstring {
     bool operator>=(const wcstring &rhs) const { return s() >= rhs.s(); }
     bool operator>=(const CharT *rhs) const { return s() >= rhs; }
 
-    const value_type &at(size_type idx) const { return s().at(idx); }
+    value_type at(size_type idx) const { return s().at(idx); }
     value_type &at(size_type idx) { return s().at(idx); }
     value_type operator[](size_type idx) const { return s()[idx]; }
     value_type &operator[](size_type idx) { return s()[idx]; }
 
     size_type hash() const { return std::hash<contents_t>{}(s()); }
 
-    iterator begin() { return s().begin(); }
-    iterator end() { return s().end(); }
+    iterator begin() { return iterator{this, 0}; }
+    iterator end() { return iterator{this, size()}; }
 
     const_iterator begin() const { return s().begin(); }
     const_iterator end() const { return s().end(); }
@@ -364,9 +442,7 @@ class wcstring {
         return *this;
     }
 
-    iterator insert(iterator pos, CharT ch) { return s().insert(pos, ch); }
-
-    iterator insert(const_iterator pos, size_type count, CharT ch) {
+    const_iterator insert(const_iterator pos, size_type count, CharT ch) {
         return s().insert(pos, count, ch);
     }
 
@@ -401,9 +477,11 @@ class wcstring {
         return *this;
     }
 
-    iterator erase(const_iterator position) { return s().erase(position); }
+    const_iterator erase(const_iterator position) { return s().erase(position); }
 
-    iterator erase(const_iterator first, const_iterator last) { return s().erase(first, last); }
+    const_iterator erase(const_iterator first, const_iterator last) {
+        return s().erase(first, last);
+    }
 
     std::wstring as_wstring() const { return s(); }
 };
