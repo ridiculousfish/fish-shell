@@ -15,6 +15,7 @@
 #include "event.h"
 #include "expand.h"
 #include "parse_constants.h"
+#include "parse_execution.h"
 #include "parse_tree.h"
 #include "proc.h"
 
@@ -261,7 +262,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// The node type must be grammar::statement or grammar::job_list.
     template <typename T>
     int eval_node(parsed_source_ref_t ps, tnode_t<T> node, const io_chain_t &io,
-                  block_type_t block_type, std::shared_ptr<job_t> parent_job);
+                  block_type_t block_type, const maybe_t<parent_job_info_t> &parent_info);
 
     /// Evaluate line as a list of parameters, i.e. tokenize it and perform parameter expansion and
     /// cmdsubst execution on the tokens. Errors are ignored. If a parser is provided, it is used

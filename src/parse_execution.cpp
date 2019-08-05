@@ -81,8 +81,8 @@ static wcstring profiling_cmd_name_for_redirectable_block(const parse_node_t &no
 }
 
 parse_execution_context_t::parse_execution_context_t(parsed_source_ref_t pstree, parser_t *p,
-                                                     std::shared_ptr<job_t> parent)
-    : pstree(std::move(pstree)), parser(p), parent_job(std::move(parent)) {}
+                                                     const maybe_t<parent_job_info_t> &parent_info)
+    : pstree(std::move(pstree)), parser(p), parent_info(parent_info) {}
 
 // Utilities
 
@@ -1261,7 +1261,7 @@ parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> jo
         ld.is_subshell || ld.is_block || ld.is_event || !parser->is_interactive();
     props.from_event_handler = ld.is_event;
 
-    shared_ptr<job_t> job = std::make_shared<job_t>(acquire_job_id(), props, block_io, parent_job);
+    shared_ptr<job_t> job = std::make_shared<job_t>(acquire_job_id(), props, block_io, parent_info);
     job->tmodes = tmodes;
 
     job->mut_flags().foreground = !job_node_is_background(job_node);

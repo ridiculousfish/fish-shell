@@ -173,7 +173,8 @@ bool job_t::job_chain_is_fully_constructed() const {
     const job_t *cursor = this;
     while (cursor) {
         if (!cursor->is_constructed()) return false;
-        cursor = cursor->get_parent().get();
+        const auto &info = cursor->get_parent_info();
+        cursor = info ? info->parent.get() : nullptr;
     }
     return true;
 }
@@ -326,8 +327,11 @@ void process_t::check_generations_before_launch() {
 }
 
 job_t::job_t(job_id_t job_id, const properties_t &props, io_chain_t bio,
-             std::shared_ptr<job_t> parent)
-    : properties(props), block_io(std::move(bio)), parent_job(std::move(parent)), job_id(job_id) {}
+             maybe_t<parent_job_info_t> parent_info)
+    : properties(props),
+      block_io(std::move(bio)),
+      parent_info(std::move(parent_info)),
+      job_id(job_id) {}
 
 job_t::~job_t() { release_job_id(job_id); }
 

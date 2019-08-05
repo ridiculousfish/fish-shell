@@ -254,7 +254,7 @@ static bool resolve_file_redirections_to_fds(const io_chain_t &in_chain, const w
 /// \param ios the io redirections to be performed on this block
 template <typename T>
 void internal_exec_helper(parser_t &parser, parsed_source_ref_t parsed_source, tnode_t<T> node,
-                          const io_chain_t &ios, std::shared_ptr<job_t> parent_job) {
+                          const io_chain_t &ios, const maybe_t<parent_job_info_t> &parent_info) {
     assert(parsed_source && node && "exec_helper missing source or without node");
 
     io_chain_t morphed_chain;
@@ -265,7 +265,7 @@ void internal_exec_helper(parser_t &parser, parsed_source_ref_t parsed_source, t
         return;
     }
 
-    parser.eval_node(parsed_source, node, morphed_chain, TOP, parent_job);
+    parser.eval_node(parsed_source, node, morphed_chain, TOP, parent_info);
 
     morphed_chain.clear();
     job_reap(parser, false);
@@ -789,8 +789,7 @@ static proc_status_t exec_concurrent_func_process_impl(
     function_prepare_environment(parser.vars(), func_name, std::move(argv), inherit_vars);
     parser.forbid_function(func_name);
 
-    internal_exec_helper(parser, props->parsed_source, props->body_node, io_chain,
-                         nullptr /* parent job */);
+    internal_exec_helper(parser, props->parsed_source, props->body_node, io_chain, none());
 
     parser.allow_function();
     parser.pop_block(fb);
@@ -871,6 +870,7 @@ static bool exec_block_or_func_process(parser_t &parser, std::shared_ptr<job_t> 
         io_chain.push_back(block_output_bufferfill);
     }
 
+    parent_job_info_t info{j->pgid, j};
     if (p->type == process_type_t::function) {
         const wcstring func_name = p->argv0();
         auto props = function_get_properties(func_name);
@@ -891,7 +891,7 @@ static bool exec_block_or_func_process(parser_t &parser, std::shared_ptr<job_t> 
         function_prepare_environment(parser.vars(), func_name, std::move(argv), inherit_vars);
         parser.forbid_function(func_name);
 
-        internal_exec_helper(parser, props->parsed_source, props->body_node, io_chain, j);
+        internal_exec_helper(parser, props->parsed_source, props->body_node, io_chain, info);
 
         parser.allow_function();
         parser.pop_block(fb);
@@ -901,7 +901,7 @@ static bool exec_block_or_func_process(parser_t &parser, std::shared_ptr<job_t> 
     } else {
         assert(p->type == process_type_t::block_node);
         assert(p->block_node_source && p->internal_block_node && "Process is missing node info");
-        internal_exec_helper(parser, p->block_node_source, p->internal_block_node, io_chain, j);
+        internal_exec_helper(parser, p->block_node_source, p->internal_block_node, io_chain, info);
     }
 
     int status = parser.get_last_status();
@@ -1159,11 +1159,11 @@ bool exec_job(parser_t &parser, shared_ptr<job_t> j) {
     // Check to see if we should reclaim the foreground pgrp after the job finishes or stops.
     const bool reclaim_foreground_pgrp = (tcgetpgrp(STDIN_FILENO) == getpgrp());
 
-    const std::shared_ptr<job_t> parent_job = j->get_parent();
+    const maybe_t<parent_job_info_t> &parent_info = j->get_parent_info();
 
     // Perhaps inherit our parent's pgid and job control flag.
-    if (parent_job && parent_job->pgid != INVALID_PID) {
-        j->pgid = parent_job->pgid;
+    if (parent_info && parent_info->pgrp != INVALID_PID) {
+        j->pgid = parent_info->pgrp;
         j->mut_flags().job_control = true;
     }
 

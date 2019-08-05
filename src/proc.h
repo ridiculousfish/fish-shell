@@ -328,6 +328,19 @@ typedef int job_id_t;
 job_id_t acquire_job_id(void);
 void release_job_id(job_id_t jobid);
 
+/// A struct wrapping up information from the parent job.
+struct parent_job_info_t {
+    /// The pgrp into which to place external processes.
+    pid_t pgrp{INVALID_PID};
+
+    /// The traditional parent job.
+    std::shared_ptr<job_t> parent{nullptr};
+
+    parent_job_info_t() = default;
+    parent_job_info_t(pid_t pgrp, std::shared_ptr<job_t> parent)
+        : pgrp(pgrp), parent(std::move(parent)) {}
+};
+
 /// A struct represeting a job. A job is basically a pipeline of one or more processes and a couple
 /// of flags.
 class job_t {
@@ -357,9 +370,10 @@ class job_t {
     // The IO chain associated with the block.
     const io_chain_t block_io;
 
-    // The parent job. If we were created as a nested job due to execution of a block or function in
-    // a pipeline, then this refers to the job corresponding to that pipeline. Otherwise it is null.
-    const std::shared_ptr<job_t> parent_job;
+    // The parent info. If we were created as a nested job due to execution of a block or function
+    // in a pipeline, then this refers to the job corresponding to that pipeline. Otherwise it is
+    // null.
+    const maybe_t<parent_job_info_t> parent_info;
 
     // No copying.
     job_t(const job_t &rhs) = delete;
@@ -367,7 +381,7 @@ class job_t {
 
    public:
     job_t(job_id_t job_id, const properties_t &props, io_chain_t bio,
-          std::shared_ptr<job_t> parent);
+          maybe_t<parent_job_info_t> parent_info);
     ~job_t();
 
     /// Returns the command as a wchar_t *. */
@@ -496,8 +510,8 @@ class job_t {
     /// This implements some historical behavior which has not been justified.
     bool should_report_process_exits() const;
 
-    /// \return the parent job, or nullptr.
-    const std::shared_ptr<job_t> get_parent() const { return parent_job; }
+    /// \return the parent info, possibly none.
+    const maybe_t<parent_job_info_t> &get_parent_info() const { return parent_info; }
 
     /// \return whether this job and its parent chain are fully constructed.
     bool job_chain_is_fully_constructed() const;
