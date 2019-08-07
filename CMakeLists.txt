@@ -9,6 +9,8 @@ ENDIF()
 
 PROJECT(fish)
 
+
+
 # We are C++11.
 SET(CMAKE_CXX_STANDARD 11)
 SET(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
@@ -85,6 +87,9 @@ ENDIF()
 IF(CMAKE_SYSTEM_NAME STREQUAL NetBSD)
   SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 ENDIF()
+
+# Set up libyaml before we mess with the include path.
+ADD_SUBDIRECTORY(libyaml/ EXCLUDE_FROM_ALL)
 
 # All objects that the system needs to build fish, except fish.cpp
 SET(FISH_SRCS
