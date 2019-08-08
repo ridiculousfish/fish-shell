@@ -91,6 +91,10 @@ ENDIF()
 # Set up libyaml before we mess with the include path.
 ADD_SUBDIRECTORY(libyaml/ EXCLUDE_FROM_ALL)
 
+# Create the fish_yaml target. This is the only target which may link libyaml.
+ADD_LIBRARY(fish_yaml STATIC src/fish_yaml.cpp)
+TARGET_LINK_LIBRARIES(fish_yaml yaml)
+
 # All objects that the system needs to build fish, except fish.cpp
 SET(FISH_SRCS
     src/autoload.cpp src/builtin.cpp src/builtin_bg.cpp src/builtin_bind.cpp
@@ -171,7 +175,7 @@ ADD_LIBRARY(fishlib STATIC ${FISH_SRCS})
 TARGET_SOURCES(fishlib PRIVATE ${FISH_HEADERS})
 TARGET_LINK_LIBRARIES(fishlib
   ${CURSES_LIBRARY} ${CURSES_EXTRA_LIBRARY} Threads::Threads ${CMAKE_DL_LIBS}
-  ${PCRE2_LIB} ${Intl_LIBRARIES})
+  ${PCRE2_LIB} ${Intl_LIBRARIES} fish_yaml)
 
 # Define fish.
 ADD_EXECUTABLE(fish src/fish.cpp)
