@@ -79,3 +79,69 @@ int fish_yaml_generator_t::append_handler(void *data, unsigned char *buffer, siz
     self->output_.insert(self->output_.end(), buffer, buffer + size);
     return 1; /* success */
 }
+
+struct fish_yaml_reader_t::impl_t {
+    yaml_parser_t parser;
+    yaml_event_t event;
+};
+
+fish_yaml_reader_t::fish_yaml_reader_t(const unsigned char *data, size_t size)
+    : impl_(new impl_t()) {
+    success_ = yaml_parser_initialize(&impl_->parser);
+    if (success_) yaml_parser_set_input_string(&impl_->parser, data, size);
+}
+
+static bool populate_read_event(const yaml_event_t &evt, fish_yaml_read_event_t *out) {
+    out->position = evt.start_mark.index;
+    out->value.clear();
+    switch (evt.type) {
+        case YAML_NO_EVENT:
+        case YAML_STREAM_START_EVENT:
+        case YAML_STREAM_END_EVENT:
+        case YAML_DOCUMENT_START_EVENT:
+        case YAML_DOCUMENT_END_EVENT:
+        case YAML_ALIAS_EVENT:
+            // These are ignored.
+            return false;
+
+        case YAML_SCALAR_EVENT:
+            out->type = fish_yaml_read_event_t::scalar;
+            out->value.assign((const char *)evt.data.scalar.value, evt.data.scalar.length);
+            return true;
+
+        case YAML_SEQUENCE_START_EVENT:
+            out->type = fish_yaml_read_event_t::sequence_start;
+            return true;
+        case YAML_SEQUENCE_END_EVENT:
+            out->type = fish_yaml_read_event_t::sequence_end;
+            return true;
+        case YAML_MAPPING_START_EVENT:
+            out->type = fish_yaml_read_event_t::mapping_start;
+            return true;
+        case YAML_MAPPING_END_EVENT:
+            out->type = fish_yaml_read_event_t::mapping_end;
+            return true;
+        default:
+            assert(0 && "Unknown event type");
+            break;
+    }
+}
+
+bool fish_yaml_reader_t::read_next(fish_yaml_read_event_t *evt) {
+    for (;;) {
+        if (!(success_ && yaml_parser_parse(&impl_->parser, &impl_->event))) {
+            success_ = false;
+            return false;
+        }
+        auto type = impl_->event.type;
+        bool populated = populate_read_event(impl_->event, evt);
+        yaml_event_delete(&impl_->event);
+        if (populated) {
+            return true;
+        } else if (type == YAML_NO_EVENT) {
+            return false;
+        }
+    }
+}
+
+fish_yaml_reader_t::~fish_yaml_reader_t() { yaml_parser_delete(&impl_->parser); }
