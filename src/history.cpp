@@ -59,7 +59,7 @@
 //   Newlines are replaced by \n. Backslashes are replaced by \\.
 
 // This is the history session ID we use by default if the user has not set env var fish_history.
-#define DFLT_FISH_HISTORY_SESSION_ID L"fish"
+#define DFLT_FISH_HISTORY_SESSION_ID L"fish_yaml"
 
 // When we rewrite the history, the number of items we keep.
 #define HISTORY_SAVE_MAX (1024 * 256)

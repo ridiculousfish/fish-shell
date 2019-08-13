@@ -1,5 +1,7 @@
 #include "config.h"
 
+#include "fish_yaml.h"
+#include "history.h"
 #include "history_file.h"
 
 #include <cstring>
@@ -447,26 +449,30 @@ static size_t offset_of_next_item_fish_2_0(const history_file_contents_t &conten
 }
 
 void append_history_item_to_buffer(const history_item_t &item, std::string *buffer) {
-    auto append = [=](const char *a, const char *b = nullptr, const char *c = nullptr) {
-        if (a) buffer->append(a);
-        if (b) buffer->append(b);
-        if (c) buffer->append(c);
-    };
+    fish_yaml_generator_t yaml(*buffer);
+    yaml.start_sequence();
+    yaml.start_mapping();
 
-    std::string cmd = wcs2string(item.str());
-    escape_yaml_fish_2_0(&cmd);
-    append("- cmd: ", cmd.c_str(), "\n");
-    append("  when: ", std::to_string(item.timestamp()).c_str(), "\n");
+    yaml.string("cmd");
+    yaml.string(wcs2string(item.str()).c_str());
+
+    yaml.string("when");
+    yaml.string(std::to_string(item.timestamp()).c_str());
+
     const path_list_t &paths = item.get_required_paths();
     if (!paths.empty()) {
-        append("  paths:\n");
-
+        yaml.string("paths");
+        yaml.start_sequence();
         for (const auto &wpath : paths) {
             std::string path = wcs2string(wpath);
-            escape_yaml_fish_2_0(&path);
-            append("    - ", path.c_str(), "\n");
+            yaml.string(path.c_str());
         }
+        yaml.end_sequence();
     }
+
+    yaml.end_mapping();
+    yaml.end_sequence();
+    yaml.close();
 }
 
 /// Remove backslashes from all newlines. This makes a string from the history file better formated
