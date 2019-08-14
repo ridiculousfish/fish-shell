@@ -24,12 +24,6 @@ class history_file_contents_t {
     /// Decode an item at a given offset.
     history_item_t decode_item(size_t offset) const;
 
-    /// Support for iterating item offsets.
-    /// The cursor should initially be 0.
-    /// If cutoff is nonzero, skip items whose timestamp is newer than cutoff.
-    /// \return the offset of the next item, or none() on end.
-    maybe_t<size_t> offset_of_next_item(size_t *cursor, time_t cutoff);
-
     /// Get the file type.
     history_file_type_t type() const { return type_; }
 
@@ -63,8 +57,29 @@ class history_file_contents_t {
     // Private constructor; use the static create() function.
     history_file_contents_t(const char *mmap_start, size_t mmap_length, history_file_type_t type);
 
+    /// Support for iterating item offsets.
+    /// The cursor should initially be 0.
+    /// If cutoff is nonzero, skip items whose timestamp is newer than cutoff.
+    /// \return the offset of the next item, or none() on end.
+    maybe_t<size_t> offset_of_next_item(size_t *cursor, time_t cutoff) const;
+
     history_file_contents_t(history_file_contents_t &&) = delete;
     void operator=(history_file_contents_t &&) = delete;
+
+    friend class history_file_reader_t;
+};
+
+class history_file_reader_t {
+   public:
+    maybe_t<size_t> next(history_item_t *out);
+    history_file_reader_t(const history_file_contents_t &contents, time_t cutoff);
+    ~history_file_reader_t();
+
+   private:
+    struct impl_t;
+    const history_file_contents_t &contents_;
+    time_t cutoff_;
+    std::unique_ptr<impl_t> impl_;
 };
 
 /// Append a history item to a buffer, in preparation for outputting it to the history file.
