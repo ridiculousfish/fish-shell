@@ -53,6 +53,7 @@ static bool read_from_fd(int fd, void *address, size_t len) {
 static maybe_t<history_file_type_t> infer_file_type(const void *data, size_t len) {
     maybe_t<history_file_type_t> result{};
     if (len > 0) {  // old fish started with a #
+        return history_type_fish_3_1;
         if (static_cast<const char *>(data)[0] == '#') {
             result = history_type_fish_1_x;
         } else {  // assume new fish
@@ -60,21 +61,6 @@ static maybe_t<history_file_type_t> infer_file_type(const void *data, size_t len
         }
     }
     return result;
-}
-
-static void replace_all(std::string *str, const char *needle, const char *replacement) {
-    size_t needle_len = std::strlen(needle), replacement_len = std::strlen(replacement);
-    size_t offset = 0;
-    while ((offset = str->find(needle, offset)) != std::string::npos) {
-        str->replace(offset, needle_len, replacement);
-        offset += replacement_len;
-    }
-}
-
-// Support for escaping and unescaping the nonstandard "yaml" format introduced in fish 2.0.
-static void escape_yaml_fish_2_0(std::string *str) {
-    replace_all(str, "\\", "\\\\");  // replace one backslash with two
-    replace_all(str, "\n", "\\n");   // replace newline with backslash + literal n
 }
 
 /// This function is called frequently, so it ought to be fast.
@@ -111,18 +97,112 @@ static void unescape_yaml_fish_2_0(std::string *str) {
 
 struct history_file_reader_t::impl_t {
     size_t cursor = 0;
+
+    maybe_t<fish_yaml_reader_t> yaml{};
+    fish_yaml_read_event_t storage;
 };
 
 history_file_reader_t::history_file_reader_t(const history_file_contents_t &contents, time_t cutoff)
-    : contents_(contents), cutoff_(cutoff), impl_(new impl_t()) {}
+    : contents_(contents), cutoff_(cutoff), impl_(new impl_t()) {
+    if (contents_.type() == history_type_fish_3_1) {
+        impl_->yaml.emplace(contents.begin(), contents.length());
+    }
+}
+
 history_file_reader_t::~history_file_reader_t() = default;
 
 maybe_t<size_t> history_file_reader_t::next(history_item_t *out) {
-    auto ret = contents_.offset_of_next_item(&impl_->cursor, cutoff_);
-    if (out && ret) {
-        *out = contents_.decode_item(*ret);
+    switch (contents_.type()) {
+        case history_type_fish_3_1:
+            return decode_item_fish_3_1(out);
+
+        case history_type_fish_2_0: {
+            size_t offset = offset_of_next_item_fish_2_0(contents_, &impl_->cursor, cutoff_);
+            if (offset == size_t(-1)) {
+                return none();
+            }
+            return offset;
+        }
+
+        case history_type_fish_1_x: {
+            size_t offset =
+                offset_of_next_item_fish_1_x(contents_.begin(), contents_.length(), &impl_->cursor);
+            if (offset == size_t(-1)) {
+                return none();
+            }
+            return offset;
+        }
     }
-    return ret;
+    DIE("unreachable");
+}
+
+maybe_t<size_t> history_file_reader_t::decode_item_fish_3_1(history_item_t *out) {
+    fish_yaml_read_event_t evt{};
+    std::string key;
+    std::string storage;
+    std::vector<std::string> array;
+    // Read until we get mapping_start.
+    while (impl_->yaml->read_next(&evt) && evt.type != fish_yaml_read_event_t::mapping_start) {
+        continue;
+    }
+
+    // Read a key.
+    for (;;) {
+        read_1_yaml(&key, &array);
+        read_1_yaml(&storage, &array);
+
+        if (key == "cmd") {
+            out->contents = str2wcstring(storage);
+        } else if (evt.value == "when") {
+            out->creation_timestamp = strtol(storage.c_str(), nullptr, 0);
+        } else if (evt.value == "paths") {
+            for (const auto &path : array) {
+                out->required_paths.push_back(str2wcstring(path));
+            }
+        }
+    }
+}
+
+bool history_file_reader_t::read_1_yaml(std::string *out1, std::vector<std::string> *out2) {
+    out1->clear();
+    out2->clear();
+    size_t seq_depth = 0;
+    size_t map_depth = 0;
+    using event_t = fish_yaml_read_event_t;
+    auto &evt = impl_->storage;
+    do {
+        if (!impl_->yaml->read_next(&evt)) {
+            return false;
+        }
+        switch (evt.type) {
+            case event_t::stream_end:
+                return false;
+            case event_t::scalar:
+                // We use swap() here so evt can reuse storage.
+                if (seq_depth == 0 && map_depth == 0) {
+                    std::swap(*out1, evt.value);
+                } else if (seq_depth == 1 && map_depth == 0) {
+                    out2->push_back(evt.value);
+                }
+                break;
+
+            case event_t::mapping_start:
+                map_depth++;
+                break;
+            case event_t::mapping_end:
+                if (map_depth == 0) return false;
+                map_depth--;
+                break;
+            case event_t::sequence_start:
+                seq_depth++;
+                break;
+            case event_t::sequence_end:
+                if (seq_depth == 0) return false;
+                seq_depth--;
+                break;
+        }
+    } while (seq_depth > 0 || map_depth > 0);
+    return true;
 }
 
 history_file_contents_t::~history_file_contents_t() { munmap(const_cast<char *>(start_), length_); }
@@ -177,22 +257,6 @@ history_item_t history_file_contents_t::decode_item(size_t offset) const {
             return decode_item_fish_1_x(base, len);
     }
     return history_item_t{};
-}
-
-maybe_t<size_t> history_file_contents_t::offset_of_next_item(size_t *cursor, time_t cutoff) const {
-    size_t offset = size_t(-1);
-    switch (this->type()) {
-        case history_type_fish_2_0:
-            offset = offset_of_next_item_fish_2_0(*this, cursor, cutoff);
-            break;
-        case history_type_fish_1_x:
-            offset = offset_of_next_item_fish_1_x(this->begin(), this->length(), cursor);
-            break;
-    }
-    if (offset == size_t(-1)) {
-        return none();
-    }
-    return offset;
 }
 
 /// Read one line, stripping off any newline, and updating cursor. Note that our input string is NOT

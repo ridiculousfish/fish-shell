@@ -64,6 +64,7 @@ class history_item_t {
     friend struct history_impl_t;
     friend class history_lru_cache_t;
     friend class history_tests_t;
+    friend class history_file_reader_t;
 
    private:
     // Attempts to merge two compatible history items together.

@@ -85,10 +85,9 @@ struct fish_yaml_reader_t::impl_t {
     yaml_event_t event;
 };
 
-fish_yaml_reader_t::fish_yaml_reader_t(const unsigned char *data, size_t size)
-    : impl_(new impl_t()) {
+fish_yaml_reader_t::fish_yaml_reader_t(const char *data, size_t size) : impl_(new impl_t()) {
     success_ = yaml_parser_initialize(&impl_->parser);
-    if (success_) yaml_parser_set_input_string(&impl_->parser, data, size);
+    if (success_) yaml_parser_set_input_string(&impl_->parser, (const unsigned char *)data, size);
 }
 
 static bool populate_read_event(const yaml_event_t &evt, fish_yaml_read_event_t *out) {

@@ -79,7 +79,7 @@ struct fish_yaml_read_event_t {
 
 class fish_yaml_reader_t {
    public:
-    fish_yaml_reader_t(const unsigned char *data, size_t size);
+    fish_yaml_reader_t(const char *data, size_t size);
     ~fish_yaml_reader_t();
 
     bool read_next(fish_yaml_read_event_t *evt);

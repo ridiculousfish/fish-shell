@@ -13,7 +13,7 @@
 class history_item_t;
 
 // History file types.
-enum history_file_type_t { history_type_fish_2_0, history_type_fish_1_x };
+enum history_file_type_t { history_type_fish_3_1, history_type_fish_2_0, history_type_fish_1_x };
 
 /// history_file_contents_t holds the read-only contents of a file.
 class history_file_contents_t {
@@ -57,12 +57,6 @@ class history_file_contents_t {
     // Private constructor; use the static create() function.
     history_file_contents_t(const char *mmap_start, size_t mmap_length, history_file_type_t type);
 
-    /// Support for iterating item offsets.
-    /// The cursor should initially be 0.
-    /// If cutoff is nonzero, skip items whose timestamp is newer than cutoff.
-    /// \return the offset of the next item, or none() on end.
-    maybe_t<size_t> offset_of_next_item(size_t *cursor, time_t cutoff) const;
-
     history_file_contents_t(history_file_contents_t &&) = delete;
     void operator=(history_file_contents_t &&) = delete;
 
@@ -76,6 +70,9 @@ class history_file_reader_t {
     ~history_file_reader_t();
 
    private:
+    bool read_1_yaml(std::string *out1, std::vector<std::string> *out2);
+    maybe_t<size_t> decode_item_fish_3_1(history_item_t *out);
+
     struct impl_t;
     const history_file_contents_t &contents_;
     time_t cutoff_;
