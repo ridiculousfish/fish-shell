@@ -70,9 +70,6 @@ class history_file_reader_t {
     ~history_file_reader_t();
 
    private:
-    bool read_1_yaml(std::string *out1, std::vector<std::string> *out2);
-    maybe_t<size_t> decode_item_fish_3_1(history_item_t *out);
-
     struct impl_t;
     const history_file_contents_t &contents_;
     time_t cutoff_;

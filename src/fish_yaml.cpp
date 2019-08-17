@@ -92,6 +92,7 @@ fish_yaml_reader_t::fish_yaml_reader_t(const char *data, size_t size) : impl_(ne
 
 static bool populate_read_event(const yaml_event_t &evt, fish_yaml_read_event_t *out) {
     out->position = evt.start_mark.index;
+    out->end = evt.end_mark.index;
     out->value.clear();
     switch (evt.type) {
         case YAML_NO_EVENT:

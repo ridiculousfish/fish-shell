@@ -6,7 +6,12 @@
 
 #include <cstring>
 
-#include "history.h"
+// The list of keys we use.
+static const struct {
+    const char *const cmd = "cmd";
+    const char *const when = "when";
+    const char *const paths = "paths";
+} keys;
 
 // Some forward declarations.
 static history_item_t decode_item_fish_2_0(const char *base, size_t len);
@@ -95,17 +100,188 @@ static void unescape_yaml_fish_2_0(std::string *str) {
     }
 }
 
+__attribute__((unused)) static void dump_yaml(const char *s, size_t len) {
+    fish_yaml_reader_t r(s, len);
+    using event_t = fish_yaml_read_event_t;
+    event_t evt;
+    int indent = 0;
+    fprintf(stderr, "\n");
+    while (r.read_next(&evt)) {
+        int delta = 0;
+        const char *type = NULL;
+        switch (evt.type) {
+            case event_t::mapping_start:
+                delta = 1;
+                type = "mapping_start";
+                break;
+            case event_t::sequence_start:
+                delta = 1;
+                type = "sequence_start";
+                break;
+            case event_t::stream_end:
+                type = "stream_end";
+                break;
+            case event_t::mapping_end:
+                indent--;
+                type = "mapping_end";
+                break;
+            case event_t::sequence_end:
+                indent--;
+                type = "sequence_end";
+                break;
+            case event_t::scalar:
+                type = "scalar";
+                break;
+        }
+        for (int i = 0; i < indent; i++) {
+            fprintf(stderr, "  ");
+        }
+        fprintf(stderr, "%02lu-%02lu: %s\n", evt.position, evt.end, type);
+        indent += delta;
+    }
+}
+
+class history_yaml_file_reader_t {
+   public:
+    maybe_t<size_t> decode_item(history_item_t *out) {
+        do {
+            if (!yaml.read_next(&evt)) {
+                return none();
+            }
+        } while (evt.type != event_t::mapping_start);
+        size_t result = evt.position;
+        decode_top_mapping(out);
+        return result;
+    }
+
+    history_yaml_file_reader_t(const char *data, size_t size) : yaml(data, size) {}
+
+   public:
+    using event_t = fish_yaml_read_event_t;
+    fish_yaml_reader_t yaml;
+    fish_yaml_read_event_t evt{};
+
+    void discard_collection() {
+        while (yaml.read_next(&evt)) {
+            switch (evt.type) {
+                case event_t::stream_end:
+                case event_t::mapping_end:
+                case event_t::sequence_end:
+                    return;
+                case event_t::mapping_start:
+                case event_t::sequence_start:
+                    discard_collection();
+                    break;
+                case event_t::scalar:
+                    break;
+            }
+        }
+    }
+
+    void decode_sequence(wcstring_list_t *out) {
+        // Decode a sequence (of scalars only).
+        while (yaml.read_next(&evt)) {
+            switch (evt.type) {
+                case event_t::mapping_end:
+                    DIE("Unbalancing mapping_end");
+                    break;
+                case event_t::stream_end:
+                case event_t::sequence_end:
+                    return;
+                case event_t::mapping_start:
+                case event_t::sequence_start:
+                    discard_collection();
+                    break;
+                case event_t::scalar:
+                    out->push_back(str2wcstring(evt.value));
+                    break;
+            }
+        }
+    }
+
+    bool decode_top_key(std::string *key) {
+        key->clear();
+        if (!yaml.read_next(&evt)) {
+            return false;
+        }
+        switch (evt.type) {
+            case event_t::mapping_end:
+            case event_t::stream_end:
+                return false;
+
+            case event_t::mapping_start:
+            case event_t::sequence_start:
+                // Collections are valid keys but we ignore them.
+                // Leave key empty.
+                discard_collection();
+                return true;
+
+            case event_t::sequence_end:
+                DIE("Unexpected sequence_end in top level key");
+                return false;
+
+            case event_t::scalar:
+                // Use std::swap to preserve storage in the event.
+                std::swap(*key, evt.value);
+                return true;
+        }
+        DIE("unreachable");
+    }
+
+    void decode_top_value(const std::string &key, history_item_t *out) {
+        if (!yaml.read_next(&evt)) {
+            return;
+        }
+        switch (evt.type) {
+            case event_t::mapping_start:
+                discard_collection();
+                break;
+
+            case event_t::sequence_start:
+                if (out && key == keys.paths) {
+                    decode_sequence(&out->required_paths);
+                } else {
+                    discard_collection();
+                }
+                break;
+
+            case event_t::scalar:
+                if (out && key == keys.cmd) {
+                    out->contents = str2wcstring(evt.value);
+                } else if (out && key == keys.when) {
+                    out->creation_timestamp = strtol(evt.value.c_str(), nullptr, 0);
+                }
+                break;
+
+            case event_t::sequence_end:
+            case event_t::mapping_end:
+            case event_t::stream_end:
+                DIE("Key without value");
+                break;
+        }
+    }
+
+    void decode_top_mapping(history_item_t *out) {
+        std::string key;
+        for (;;) {
+            if (!decode_top_key(&key)) {
+                return;
+            }
+            decode_top_value(key, out);
+        }
+    }
+};
+
 struct history_file_reader_t::impl_t {
     size_t cursor = 0;
-
-    maybe_t<fish_yaml_reader_t> yaml{};
-    fish_yaml_read_event_t storage;
+    maybe_t<history_yaml_file_reader_t> yaml_reader{};
 };
 
 history_file_reader_t::history_file_reader_t(const history_file_contents_t &contents, time_t cutoff)
     : contents_(contents), cutoff_(cutoff), impl_(new impl_t()) {
     if (contents_.type() == history_type_fish_3_1) {
-        impl_->yaml.emplace(contents.begin(), contents.length());
+        impl_->yaml_reader.emplace(contents.begin(), contents.length());
+        // dump_yaml(contents.begin(), contents.length());
     }
 }
 
@@ -114,7 +290,7 @@ history_file_reader_t::~history_file_reader_t() = default;
 maybe_t<size_t> history_file_reader_t::next(history_item_t *out) {
     switch (contents_.type()) {
         case history_type_fish_3_1:
-            return decode_item_fish_3_1(out);
+            return impl_->yaml_reader->decode_item(out);
 
         case history_type_fish_2_0: {
             size_t offset = offset_of_next_item_fish_2_0(contents_, &impl_->cursor, cutoff_);
@@ -134,75 +310,6 @@ maybe_t<size_t> history_file_reader_t::next(history_item_t *out) {
         }
     }
     DIE("unreachable");
-}
-
-maybe_t<size_t> history_file_reader_t::decode_item_fish_3_1(history_item_t *out) {
-    fish_yaml_read_event_t evt{};
-    std::string key;
-    std::string storage;
-    std::vector<std::string> array;
-    // Read until we get mapping_start.
-    while (impl_->yaml->read_next(&evt) && evt.type != fish_yaml_read_event_t::mapping_start) {
-        continue;
-    }
-
-    // Read a key.
-    for (;;) {
-        read_1_yaml(&key, &array);
-        read_1_yaml(&storage, &array);
-
-        if (key == "cmd") {
-            out->contents = str2wcstring(storage);
-        } else if (evt.value == "when") {
-            out->creation_timestamp = strtol(storage.c_str(), nullptr, 0);
-        } else if (evt.value == "paths") {
-            for (const auto &path : array) {
-                out->required_paths.push_back(str2wcstring(path));
-            }
-        }
-    }
-}
-
-bool history_file_reader_t::read_1_yaml(std::string *out1, std::vector<std::string> *out2) {
-    out1->clear();
-    out2->clear();
-    size_t seq_depth = 0;
-    size_t map_depth = 0;
-    using event_t = fish_yaml_read_event_t;
-    auto &evt = impl_->storage;
-    do {
-        if (!impl_->yaml->read_next(&evt)) {
-            return false;
-        }
-        switch (evt.type) {
-            case event_t::stream_end:
-                return false;
-            case event_t::scalar:
-                // We use swap() here so evt can reuse storage.
-                if (seq_depth == 0 && map_depth == 0) {
-                    std::swap(*out1, evt.value);
-                } else if (seq_depth == 1 && map_depth == 0) {
-                    out2->push_back(evt.value);
-                }
-                break;
-
-            case event_t::mapping_start:
-                map_depth++;
-                break;
-            case event_t::mapping_end:
-                if (map_depth == 0) return false;
-                map_depth--;
-                break;
-            case event_t::sequence_start:
-                seq_depth++;
-                break;
-            case event_t::sequence_end:
-                if (seq_depth == 0) return false;
-                seq_depth--;
-                break;
-        }
-    } while (seq_depth > 0 || map_depth > 0);
-    return true;
 }
 
 history_file_contents_t::~history_file_contents_t() { munmap(const_cast<char *>(start_), length_); }
@@ -251,6 +358,14 @@ history_item_t history_file_contents_t::decode_item(size_t offset) const {
     const char *base = address_at(offset);
     size_t len = this->length() - offset;
     switch (this->type()) {
+        case history_type_fish_3_1: {
+            history_item_t out({});
+            history_yaml_file_reader_t reader(base, len);
+            reader.decode_item(&out);
+            return out;
+        }
+
+        break;
         case history_type_fish_2_0:
             return decode_item_fish_2_0(base, len);
         case history_type_fish_1_x:

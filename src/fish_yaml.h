@@ -73,6 +73,7 @@ struct fish_yaml_read_event_t {
 
     /// The position of the event.
     size_t position{size_t(-1)};
+    size_t end{size_t(-1)};
 
     fish_yaml_read_event_t() = default;
 };
