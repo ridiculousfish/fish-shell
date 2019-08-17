@@ -3,6 +3,7 @@
 #include "fish_yaml.h"
 #include "history.h"
 #include "history_file.h"
+#include "utf8.h"
 
 #include <cstring>
 
@@ -55,17 +56,19 @@ static bool read_from_fd(int fd, void *address, size_t len) {
 }
 
 /// Try to infer the history file type based on inspecting the data.
-static maybe_t<history_file_type_t> infer_file_type(const void *data, size_t len) {
-    maybe_t<history_file_type_t> result{};
-    if (len > 0) {  // old fish started with a #
-        return history_type_fish_3_1;
-        if (static_cast<const char *>(data)[0] == '#') {
-            result = history_type_fish_1_x;
-        } else {  // assume new fish
-            result = history_type_fish_2_0;
-        }
+static maybe_t<history_file_type_t> infer_file_type(const char *data, size_t len) {
+    if (len == 0) return none();
+
+    const char *header = history_get_file_header();
+    size_t header_len = strlen(header);
+    if (len >= header_len && std::equal(header, header + header_len, data)) {
+        return history_type_fish_3_2;
     }
-    return result;
+
+    if (data[0] == '#') {
+        return history_type_fish_1_x;
+    }
+    return history_type_fish_2_0;
 }
 
 /// This function is called frequently, so it ought to be fast.
@@ -139,6 +142,7 @@ __attribute__((unused)) static void dump_yaml(const char *s, size_t len) {
         fprintf(stderr, "%02lu-%02lu: %s\n", evt.position, evt.end, type);
         indent += delta;
     }
+    fprintf(stderr, "done\n");
 }
 
 class history_yaml_file_reader_t {
@@ -279,7 +283,7 @@ struct history_file_reader_t::impl_t {
 
 history_file_reader_t::history_file_reader_t(const history_file_contents_t &contents, time_t cutoff)
     : contents_(contents), cutoff_(cutoff), impl_(new impl_t()) {
-    if (contents_.type() == history_type_fish_3_1) {
+    if (contents_.type() == history_type_fish_3_2) {
         impl_->yaml_reader.emplace(contents.begin(), contents.length());
         // dump_yaml(contents.begin(), contents.length());
     }
@@ -289,7 +293,7 @@ history_file_reader_t::~history_file_reader_t() = default;
 
 maybe_t<size_t> history_file_reader_t::next(history_item_t *out) {
     switch (contents_.type()) {
-        case history_type_fish_3_1:
+        case history_type_fish_3_2:
             return impl_->yaml_reader->decode_item(out);
 
         case history_type_fish_2_0: {
@@ -347,25 +351,25 @@ std::unique_ptr<history_file_contents_t> history_file_contents_t::create(int fd)
     }
 
     // Check the file type.
-    auto mtype = infer_file_type(mmap_start, len);
+    const char *start = static_cast<const char *>(mmap_start);
+    auto mtype = infer_file_type(start, len);
     if (!mtype) return nullptr;
 
     return std::unique_ptr<history_file_contents_t>(
-        new history_file_contents_t(static_cast<const char *>(mmap_start), len, *mtype));
+        new history_file_contents_t(start, len, *mtype));
 }
 
 history_item_t history_file_contents_t::decode_item(size_t offset) const {
     const char *base = address_at(offset);
     size_t len = this->length() - offset;
     switch (this->type()) {
-        case history_type_fish_3_1: {
+        case history_type_fish_3_2: {
             history_item_t out({});
             history_yaml_file_reader_t reader(base, len);
             reader.decode_item(&out);
             return out;
         }
 
-        break;
         case history_type_fish_2_0:
             return decode_item_fish_2_0(base, len);
         case history_type_fish_1_x:
@@ -767,4 +771,10 @@ static size_t offset_of_next_item_fish_1_x(const char *begin, size_t mmap_length
 
     *inout_cursor = (pos - begin);
     return result;
+}
+
+const char *history_get_file_header() {
+    return "# fish history\n"
+           "# version 3.2\n"
+           "---\n";
 }

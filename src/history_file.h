@@ -13,7 +13,7 @@
 class history_item_t;
 
 // History file types.
-enum history_file_type_t { history_type_fish_3_1, history_type_fish_2_0, history_type_fish_1_x };
+enum history_file_type_t { history_type_fish_3_2, history_type_fish_2_0, history_type_fish_1_x };
 
 /// history_file_contents_t holds the read-only contents of a file.
 class history_file_contents_t {
@@ -78,5 +78,8 @@ class history_file_reader_t {
 
 /// Append a history item to a buffer, in preparation for outputting it to the history file.
 void append_history_item_to_buffer(const history_item_t &item, std::string *buffer);
+
+//// Get the prefix of each history file.
+const char *history_get_file_header();
 
 #endif
