@@ -14,6 +14,12 @@ static const struct {
     const char *const paths = "paths";
 } keys;
 
+// The YAML header for our history file.
+static const char *const history_file_header =
+    "# fish history\n"
+    "# version 3.2\n"
+    "---\n";
+
 // Some forward declarations.
 static history_item_t decode_item_fish_2_0(const char *base, size_t len);
 static history_item_t decode_item_fish_1_x(const char *begin, size_t length);
@@ -59,7 +65,7 @@ static bool read_from_fd(int fd, void *address, size_t len) {
 static maybe_t<history_file_type_t> infer_file_type(const char *data, size_t len) {
     if (len == 0) return none();
 
-    const char *header = history_get_file_header();
+    const char *header = history_file_header;
     size_t header_len = strlen(header);
     if (len >= header_len && std::equal(header, header + header_len, data)) {
         return history_type_fish_3_2;
@@ -160,10 +166,16 @@ class history_yaml_file_reader_t {
 
     history_yaml_file_reader_t(const char *data, size_t size) : yaml(data, size) {}
 
-   public:
+   private:
     using event_t = fish_yaml_read_event_t;
     fish_yaml_reader_t yaml;
     fish_yaml_read_event_t evt{};
+
+    static wcstring str_from_utf8(const std::string &s) {
+        wcstring result;
+        utf8_to_wchar(s.data(), s.size(), &result, UTF8_IGNORE_ERROR);
+        return result;
+    }
 
     void discard_collection() {
         while (yaml.read_next(&evt)) {
@@ -196,9 +208,11 @@ class history_yaml_file_reader_t {
                 case event_t::sequence_start:
                     discard_collection();
                     break;
-                case event_t::scalar:
-                    out->push_back(str2wcstring(evt.value));
+                case event_t::scalar: {
+                    wcstring s;
+                    out->push_back(str_from_utf8(evt.value));
                     break;
+                }
             }
         }
     }
@@ -251,7 +265,7 @@ class history_yaml_file_reader_t {
 
             case event_t::scalar:
                 if (out && key == keys.cmd) {
-                    out->contents = str2wcstring(evt.value);
+                    out->contents = str_from_utf8(evt.value);
                 } else if (out && key == keys.when) {
                     out->creation_timestamp = strtol(evt.value.c_str(), nullptr, 0);
                 }
@@ -301,6 +315,7 @@ maybe_t<size_t> history_file_reader_t::next(history_item_t *out) {
             if (offset == size_t(-1)) {
                 return none();
             }
+            if (out) *out = contents_.decode_item(offset);
             return offset;
         }
 
@@ -310,6 +325,7 @@ maybe_t<size_t> history_file_reader_t::next(history_item_t *out) {
             if (offset == size_t(-1)) {
                 return none();
             }
+            if (out) *out = contents_.decode_item(offset);
             return offset;
         }
     }
@@ -631,13 +647,28 @@ static size_t offset_of_next_item_fish_2_0(const history_file_contents_t &conten
     return result;
 }
 
-void append_history_item_to_buffer(const history_item_t &item, std::string *buffer) {
-    fish_yaml_generator_t yaml(*buffer);
-    yaml.start_sequence();
-    yaml.start_mapping();
+struct history_file_writer_t::impl_t {
+    fish_yaml_generator_t yaml;
+    explicit impl_t(std::string &out) : yaml(out) {}
+};
 
+history_file_writer_t::history_file_writer_t(std::string &out)
+    : impl_(new impl_t(out)), out_(out) {}
+
+history_file_writer_t::~history_file_writer_t() = default;
+
+void history_file_writer_t::write_header() { out_.append(history_file_header); }
+
+void history_file_writer_t::write_item(const history_item_t &item) {
+    auto &yaml = impl_->yaml;
+    if (!opened_) {
+        yaml.start_sequence();
+        yaml.start_mapping();
+        opened_ = true;
+    }
+    wchar_to_utf8_string(item.str(), &storage_);
     yaml.string("cmd");
-    yaml.string(wcs2string(item.str()).c_str());
+    yaml.string(storage_);
 
     yaml.string("when");
     yaml.string(std::to_string(item.timestamp()).c_str());
@@ -647,15 +678,19 @@ void append_history_item_to_buffer(const history_item_t &item, std::string *buff
         yaml.string("paths");
         yaml.start_sequence();
         for (const auto &wpath : paths) {
-            std::string path = wcs2string(wpath);
-            yaml.string(path.c_str());
+            wchar_to_utf8_string(wpath, &storage_);
+            yaml.string(storage_);
         }
         yaml.end_sequence();
     }
+}
 
-    yaml.end_mapping();
-    yaml.end_sequence();
-    yaml.close();
+void history_file_writer_t::close() {
+    if (opened_) {
+        impl_->yaml.end_mapping();
+        impl_->yaml.end_sequence();
+    }
+    impl_->yaml.close();
 }
 
 /// Remove backslashes from all newlines. This makes a string from the history file better formated
@@ -771,10 +806,4 @@ static size_t offset_of_next_item_fish_1_x(const char *begin, size_t mmap_length
 
     *inout_cursor = (pos - begin);
     return result;
-}
-
-const char *history_get_file_header() {
-    return "# fish history\n"
-           "# version 3.2\n"
-           "---\n";
 }

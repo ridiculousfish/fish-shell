@@ -7,6 +7,7 @@
 
 #include <cassert>
 #include <memory>
+#include <string>
 
 #include "maybe.h"
 
@@ -76,10 +77,21 @@ class history_file_reader_t {
     std::unique_ptr<impl_t> impl_;
 };
 
-/// Append a history item to a buffer, in preparation for outputting it to the history file.
-void append_history_item_to_buffer(const history_item_t &item, std::string *buffer);
+class history_file_writer_t {
+   public:
+    void write_header();
+    void write_item(const history_item_t &item);
+    void close();
 
-//// Get the prefix of each history file.
-const char *history_get_file_header();
+    explicit history_file_writer_t(std::string &);
+    ~history_file_writer_t();
+
+   private:
+    struct impl_t;
+    std::unique_ptr<impl_t> impl_;
+    std::string &out_;
+    std::string storage_{};
+    bool opened_{false};
+};
 
 #endif

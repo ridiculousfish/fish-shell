@@ -180,6 +180,11 @@ class history_t {
     // Irreversibly clears history.
     void clear();
 
+    // Populates from older locations and formats as necessary.
+    // Return true if an import was successful, or was elided because it was not necessary.
+    // Return false if nothing could be imported.
+    bool import_as_needed();
+
     // Populates from older location (in config path, rather than data path).
     void populate_from_config_path();
 

@@ -2158,24 +2158,24 @@ void reader_set_silent_status(bool flag) { current_data()->silent = flag; }
 void reader_import_history_if_necessary() {
     // Import history from older location (config path) if our current history is empty.
     reader_data_t *data = current_data();
-    if (data->history && data->history->is_empty()) {
-        data->history->populate_from_config_path();
+    if (data->history == nullptr) return;
+    if (!data->history->is_default() || !data->history->is_empty()) return;
+
+    if (data->history->import_as_needed()) {
+        return;
     }
 
-    // Import history from bash, etc. if our current history is still empty and is the default
-    // history.
-    if (data->history && data->history->is_empty() && data->history->is_default()) {
-        // Try opening a bash file. We make an effort to respect $HISTFILE; this isn't very complete
-        // (AFAIK it doesn't have to be exported), and to really get this right we ought to ask bash
-        // itself. But this is better than nothing.
-        const auto var = data->vars().get(L"HISTFILE");
-        wcstring path = (var ? var->as_string() : L"~/.bash_history");
-        expand_tilde(path, data->vars());
-        FILE *f = wfopen(path, "r");
-        if (f) {
-            data->history->populate_from_bash(f);
-            fclose(f);
-        }
+    // Import history from bash.
+    // Try opening a bash file. We make an effort to respect $HISTFILE; this isn't very complete
+    // (AFAIK it doesn't have to be exported), and to really get this right we ought to ask bash
+    // itself. But this is better than nothing.
+    const auto var = data->vars().get(L"HISTFILE");
+    wcstring path = (var ? var->as_string() : L"~/.bash_history");
+    expand_tilde(path, data->vars());
+    FILE *f = wfopen(path, "r");
+    if (f) {
+        data->history->populate_from_bash(f);
+        fclose(f);
     }
 }
 

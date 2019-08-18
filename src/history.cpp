@@ -260,6 +260,11 @@ struct history_impl_t {
     // List of old items, as offsets into out mmap data.
     std::deque<size_t> old_item_offsets{};
 
+    // Populates from older locations and formats as necessary.
+    // Return true if an import was successful, or was elided because it was not necessary.
+    bool import_as_needed();
+    bool import_as_needed_from(const wcstring &path);
+
     // Figure out the offsets of our file contents.
     void populate_from_file_contents();
 
@@ -711,13 +716,16 @@ bool history_impl_t::rewrite_to_temporary_file(int existing_fd, int dst_fd) cons
 
     // Write them out.
     int err = 0;
-    std::string buffer = history_get_file_header();
+    std::string buffer;
+    history_file_writer_t writer(buffer);
+    writer.write_header();
     for (const auto &key_item : lru) {
-        append_history_item_to_buffer(key_item.second, &buffer);
+        writer.write_item(key_item.second);
         err = flush_to_fd(&buffer, dst_fd, HISTORY_OUTPUT_BUFFER_SIZE);
         if (err) break;
     }
     if (!err) {
+        writer.close();
         err = flush_to_fd(&buffer, dst_fd, 0);
     }
     if (err) {
@@ -929,9 +937,10 @@ bool history_impl_t::save_internal_via_appending() {
         int err = 0;
         // Use a small buffer size for appending, we usually only have 1 item
         std::string buffer;
+        history_file_writer_t writer(buffer);
         while (first_unwritten_new_item_index < new_items.size()) {
             const history_item_t &item = new_items.at(first_unwritten_new_item_index);
-            append_history_item_to_buffer(item, &buffer);
+            writer.write_item(item);
             err = flush_to_fd(&buffer, history_fd, HISTORY_OUTPUT_BUFFER_SIZE);
             if (err) break;
             // We wrote this item, hooray.
@@ -1069,6 +1078,63 @@ bool history_impl_t::is_empty() {
         }
     }
     return empty;
+}
+
+bool history_impl_t::import_as_needed_from(const wcstring &path) {
+    autoclose_fd_t file(wopen_cloexec(path, O_RDONLY));
+    // Do nothing if in "incognito" mode.
+    if (!file.valid()) return false;
+
+    auto contents = history_file_contents_t::create(file.fd());
+    if (!contents) return false;
+
+    switch (contents->type()) {
+        case history_file_type_t::history_type_fish_3_2: {
+            // No import needed.
+            return true;
+        }
+
+        case history_file_type_t::history_type_fish_1_x:
+        case history_file_type_t::history_type_fish_2_0: {
+            // Import by reading all the new items in and saving via rewrite.
+            history_file_reader_t reader(*contents, time_t{0});
+            history_item_t item;
+            while (reader.next(&item)) {
+                new_items.push_back(std::move(item));
+            }
+            bool saved = save_internal_via_rewrite();
+            // Don't keep around our new items forever.
+            this->new_items.clear();
+            this->first_unwritten_new_item_index = 0;
+            return saved;
+        }
+    }
+    DIE("unreachable");
+}
+
+bool history_impl_t::import_as_needed() {
+    time_profiler_t profiler("import_as_needed");
+
+    // Try importing.
+    // Do nothing if in "incognito" mode.
+    wcstring filename = history_filename(name, L"");
+    if (filename.empty()) return true;
+    if (import_as_needed_from(filename)) return true;
+
+    // time_profiler_t p("import");
+    if (import_as_needed_from(L"/Users/peter/.local/share/fish/fish_history")) return true;
+
+    // Check the config path.
+    wcstring old_file;
+    if (path_get_config(old_file)) {
+        old_file.append(L"/");
+        old_file.append(name);
+        old_file.append(L"_history");
+        if (import_as_needed_from(old_file)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// Populates from older location (in config path, rather than data path) This is accomplished by
@@ -1299,12 +1365,12 @@ void history_t::add_pending_with_file_detection(const wcstring &str,
                 potential_paths.push_back(potential_path);
             }
         } else if (node.type == symbol_plain_statement) {
-            // Hack hack hack - if the command is likely to trigger an exit, then don't do
-            // background file detection, because we won't be able to write it to our history file
-            // before we exit.
-            // Also skip it for 'echo'. This is because echo doesn't take file paths, but also
-            // because the history file test wants to find the commands in the history file
-            // immediately after running them, so it can't tolerate the asynchronous file detection.
+            // Hack hack hack - if the command is likely to trigger an exit, then don't
+            // do background file detection, because we won't be able to write it to our
+            // history file before we exit. Also skip it for 'echo'. This is because
+            // echo doesn't take file paths, but also because the history file test
+            // wants to find the commands in the history file immediately after running
+            // them, so it can't tolerate the asynchronous file detection.
             if (get_decoration({&tree, &node}) == parse_statement_decoration_exec) {
                 needs_sync_write = true;
             }
@@ -1342,8 +1408,9 @@ void history_t::add_pending_with_file_detection(const wcstring &str,
         });
     } else {
         // Add the item.
-        // If we think we're about to exit, save immediately, regardless of any disabling. This may
-        // cause us to lose file hinting for some commands, but it beats losing history items.
+        // If we think we're about to exit, save immediately, regardless of any
+        // disabling. This may cause us to lose file hinting for some commands, but it
+        // beats losing history items.
         imp->add(str, identifier, true /* pending */);
         if (needs_sync_write) {
             imp->save();
@@ -1359,8 +1426,8 @@ bool history_t::search(history_search_type_t search_type, const wcstring_list_t 
                        const wchar_t *show_time_format, size_t max_items, bool case_sensitive,
                        bool null_terminate, bool reverse, io_streams_t &streams) {
     if (!search_args.empty()) {
-        // User wants the results filtered. This is not the common case so we do it separate
-        // from the code below for unfiltered output which is much cheaper.
+        // User wants the results filtered. This is not the common case so we do it
+        // separate from the code below for unfiltered output which is much cheaper.
         return search_with_args(search_type, search_args, show_time_format, max_items,
                                 case_sensitive, null_terminate, reverse, streams);
     }
@@ -1429,6 +1496,8 @@ bool history_t::search_with_args(history_search_type_t search_type,
 
 void history_t::clear() { impl()->clear(); }
 
+bool history_t::import_as_needed() { return impl()->import_as_needed(); }
+
 void history_t::populate_from_config_path() { impl()->populate_from_config_path(); }
 
 void history_t::populate_from_bash(FILE *f) { impl()->populate_from_bash(f); }
@@ -1457,8 +1526,8 @@ void history_save_all() {
 
 history_t &history_t::history_with_name(const wcstring &name) {
     // Return a history for the given name, creating it if necessary
-    // Note that histories are currently never deleted, so we can return a reference to them without
-    // using something like shared_ptr
+    // Note that histories are currently never deleted, so we can return a reference to
+    // them without using something like shared_ptr
     auto hs = s_histories.acquire();
     std::unique_ptr<history_t> &hist = (*hs)[name];
     if (!hist) {
