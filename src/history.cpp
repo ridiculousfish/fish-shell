@@ -117,7 +117,7 @@ maybe_t<wcstring> history_filename(const wcstring &session_id, const wcstring &s
 
     result.append(L"/");
     result.append(session_id);
-    result.append(L"_history");
+    result.append(L"_history.json");
     result.append(suffix);
     return result;
 }
