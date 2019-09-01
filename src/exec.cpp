@@ -789,7 +789,8 @@ static proc_status_t exec_concurrent_func_process_impl(
     function_prepare_environment(parser.vars(), func_name, std::move(argv), inherit_vars);
     parser.forbid_function(func_name);
 
-    internal_exec_helper(parser, props->parsed_source, props->body_node, io_chain, none());
+    parent_job_info_t parent_info{};
+    internal_exec_helper(parser, props->parsed_source, props->body_node, io_chain, parent_info);
 
     parser.allow_function();
     parser.pop_block(fb);
@@ -945,6 +946,11 @@ static bool use_concurrent_internal_procs(const std::shared_ptr<job_t> &j) {
 /// Determine which pgid selector to use for a job.
 static pgid_selector_ref_t determine_pgid_selector_for_job(const parser_t &parser,
                                                            const std::shared_ptr<job_t> &j) {
+    if (const auto &info = j->get_parent_info()) {
+        if (info->pgid_selector) {
+            return info->pgid_selector;
+        }
+    }
     if (j->wants_job_control() && use_concurrent_internal_procs(j)) {
         return pgid_selector_t::create();
     }
@@ -1017,9 +1023,6 @@ static bool exec_process_in_job(parser_t &parser, process_t *p, std::shared_ptr<
         // An simple `begin ... end` should not be considered an execution of a command.
         parser.libdata().exec_count++;
     }
-
-    // Figure out what pgid selector to use for this job.
-    j->pgid_selector = determine_pgid_selector_for_job(parser, j);
 
     // Execute the process.
     p->check_generations_before_launch();
@@ -1169,6 +1172,13 @@ bool exec_job(parser_t &parser, shared_ptr<job_t> j) {
 
     if (j->pgid == INVALID_PID && should_claim_process_group_for_job(j)) {
         j->pgid = getpgrp();
+    }
+
+    // Figure out what pgid selector to use for this job.
+    j->pgid_selector = determine_pgid_selector_for_job(parser, j);
+
+    if (j->is_foreground()) {
+        parser.get_pgid_selector().transfer_focus(j->pgid_selector);
     }
 
     size_t stdout_read_limit = 0;

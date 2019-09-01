@@ -77,6 +77,8 @@ class category_list_t {
     category_t history{L"history", L"Command history events"};
 
     category_t profile_history{L"profile-history", L"History performance measurements"};
+
+    category_t pgid_selector{L"pgid-selector", L"PGID selectors"};
 };
 
 /// The class responsible for logging.

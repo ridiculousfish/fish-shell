@@ -115,7 +115,7 @@ parser_t::parser_t(std::shared_ptr<env_stack_t> vars, pgid_selector_ref_t pgid_s
 
 std::shared_ptr<parser_t> parser_t::create_principal() {
     std::shared_ptr<parser_t> result{
-        new parser_t(env_stack_t::principal_ref(), pgid_selector_t::create())};
+        new parser_t(env_stack_t::principal_ref(), pgid_selector_t::principal())};
     return result;
 }
 

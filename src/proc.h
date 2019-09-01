@@ -159,12 +159,16 @@ class pgid_selector_t {
     /// Selector IDs are used to identify selectors.
     using selector_id_t = uint64_t;
 
+    /// Selector id for the principal.
+    static constexpr selector_id_t k_principal_id = 1;
+
     struct data_t {
         /// The next selector ID to allocate.
-        selector_id_t next_sid{0};
+        /// 1 is preallocated as the principal.
+        selector_id_t next_sid{k_principal_id + 1};
 
         /// The focused selector ID.
-        selector_id_t focused{0};
+        selector_id_t focused{k_principal_id};
     };
     static acquired_lock<data_t> get_locked_data();
 
@@ -195,6 +199,10 @@ class pgid_selector_t {
     /// Create a new process group selector.
     static pgid_selector_ref_t create();
 
+    /// \return the pgid selector associated with the principal parser.
+    /// This is the moral equivalent of fish's own pgroup.
+    static pgid_selector_ref_t principal();
+
     /// Called from a signal handler to report a SIGINT or similar.
     static void received_cancel_signal();
 
@@ -206,6 +214,12 @@ class pgid_selector_t {
 
     /// Become focused.
     void acquire_focus();
+
+    /// Release focus.
+    void release_focus();
+
+    /// Transfer focus to another pgid selector.
+    void transfer_focus(const pgid_selector_ref_t &pgsel);
 
     /// \return if this is focused. Note this may change at any time. This is mainly of use for
     /// debugging, and for inherently racey situations such as the call to tcsetpgrp after fork.
@@ -336,6 +350,9 @@ struct parent_job_info_t {
     /// The traditional parent job.
     std::shared_ptr<job_t> parent{nullptr};
 
+    /// The pgid selector.
+    pgid_selector_ref_t pgid_selector{nullptr};
+
     parent_job_info_t() = default;
     parent_job_info_t(pid_t pgrp, std::shared_ptr<job_t> parent)
         : pgrp(pgrp), parent(std::move(parent)) {}
@@ -357,6 +374,9 @@ class job_t {
 
         /// Whether this job was created as part of an event handler.
         bool from_event_handler{};
+
+        /// Whether this job is a subjob of another job (for example, inside a function).
+        bool subjob{};
     };
 
    private:

@@ -239,6 +239,11 @@ pgid_selector_ref_t pgid_selector_t::create() {
     return pgid_selector_ref_t(new pgid_selector_t(sid));
 }
 
+pgid_selector_ref_t pgid_selector_t::principal() {
+    static pgid_selector_ref_t ref{new pgid_selector_t(k_principal_id)};
+    return ref;
+}
+
 int pgid_selector_t::set_foreground_job(const job_t *job, bool continuing_from_stopped) {
     int ret = 0;
     pid_t pgrp = job->pgid;
@@ -253,6 +258,28 @@ int pgid_selector_t::set_foreground_job(const job_t *job, bool continuing_from_s
 }
 
 bool pgid_selector_t::is_focused() const { return this_is_focused(get_locked_data()); }
+
+void pgid_selector_t::transfer_focus(const pgid_selector_ref_t &pgsel) {
+    assert(pgsel && "Null pgid selector");
+    if (this == pgsel.get()) {
+        return;
+    }
+    auto data = get_locked_data();
+    if (data->focused == this->selector_id_) {
+        FLOG(pgid_selector, "Transferring from", this->selector_id_, "to", pgsel->selector_id_);
+        data->focused = pgsel->selector_id_;
+        // TODO: need to call tcsetpgrp here?
+    }
+}
+
+void pgid_selector_t::release_focus() {
+    auto data = get_locked_data();
+    if (data->focused == this->selector_id_) {
+        FLOG(pgid_selector, "Releasing from", this->selector_id_);
+        data->focused = k_principal_id;
+        // TODO: need to call tcsetpgrp here?
+    }
+}
 
 volatile sig_atomic_t pgid_selector_t::pending_cancel_signal_{false};
 
@@ -941,6 +968,9 @@ void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp, bool se
     bool term_transferred = false;
     cleanup_t take_term_back([&]() {
         if (term_transferred && reclaim_foreground_pgrp) {
+            if (this->pgid_selector && !properties.subjob) {
+                this->pgid_selector->release_focus();
+            }
             // Only restore terminal attrs if we're continuing a job. See:
             // https://github.com/fish-shell/fish-shell/issues/121
             // https://github.com/fish-shell/fish-shell/issues/2114
