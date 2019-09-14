@@ -1260,7 +1260,7 @@ parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> jo
     props.skip_notification =
         ld.is_subshell || ld.is_block || ld.is_event || !parser->is_interactive();
     props.from_event_handler = ld.is_event;
-    props.subjob = parent_info.has_value();
+    props.unfocus_pgid_sel = !parent_info.has_value();
 
     shared_ptr<job_t> job = std::make_shared<job_t>(acquire_job_id(), props, block_io, parent_info);
     job->tmodes = tmodes;

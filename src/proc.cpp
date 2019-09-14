@@ -239,8 +239,8 @@ pgid_selector_ref_t pgid_selector_t::create() {
     return pgid_selector_ref_t(new pgid_selector_t(sid));
 }
 
-pgid_selector_ref_t pgid_selector_t::principal() {
-    static pgid_selector_ref_t ref{new pgid_selector_t(k_principal_id)};
+const pgid_selector_ref_t &pgid_selector_t::principal() {
+    static pgid_selector_ref_t ref{new pgid_selector_t(1)};
     return ref;
 }
 
@@ -268,17 +268,12 @@ void pgid_selector_t::transfer_focus(const pgid_selector_ref_t &pgsel) {
     if (data->focused == this->selector_id_) {
         FLOG(pgid_selector, "Transferring from", this->selector_id_, "to", pgsel->selector_id_);
         data->focused = pgsel->selector_id_;
-        // TODO: need to call tcsetpgrp here?
+        // TODO: need to call tcsetpgrp here? Have to rationalize this.
     }
 }
 
 void pgid_selector_t::release_focus() {
-    auto data = get_locked_data();
-    if (data->focused == this->selector_id_) {
-        FLOG(pgid_selector, "Releasing from", this->selector_id_);
-        data->focused = k_principal_id;
-        // TODO: need to call tcsetpgrp here?
-    }
+    if (this->selector_id_ != k_principal_id) this->transfer_focus(principal());
 }
 
 volatile sig_atomic_t pgid_selector_t::pending_cancel_signal_{false};
@@ -967,8 +962,14 @@ void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp, bool se
     // Make sure we retake control of the terminal before leaving this function.
     bool term_transferred = false;
     cleanup_t take_term_back([&]() {
+        // TODO: this is incorrect if we are continue'd from builtin_fg. We need to know which pgid
+        // selector to return to.
+        if (properties.unfocus_pgid_sel && this->pgid_selector) {
+            FLOG(debug, "releasing focus", command());
+            this->pgid_selector->release_focus();
+        }
         if (term_transferred && reclaim_foreground_pgrp) {
-            if (this->pgid_selector && !properties.subjob) {
+            if (this->pgid_selector && properties.unfocus_pgid_sel) {
                 this->pgid_selector->release_focus();
             }
             // Only restore terminal attrs if we're continuing a job. See:

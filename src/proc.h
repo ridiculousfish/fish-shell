@@ -201,7 +201,7 @@ class pgid_selector_t {
 
     /// \return the pgid selector associated with the principal parser.
     /// This is the moral equivalent of fish's own pgroup.
-    static pgid_selector_ref_t principal();
+    static const pgid_selector_ref_t &principal();
 
     /// Called from a signal handler to report a SIGINT or similar.
     static void received_cancel_signal();
@@ -375,8 +375,8 @@ class job_t {
         /// Whether this job was created as part of an event handler.
         bool from_event_handler{};
 
-        /// Whether this job is a subjob of another job (for example, inside a function).
-        bool subjob{};
+        /// Whether we should unfocus the pgid selector.
+        bool unfocus_pgid_sel{};
     };
 
    private:

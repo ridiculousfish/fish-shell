@@ -789,8 +789,9 @@ static proc_status_t exec_concurrent_func_process_impl(
     function_prepare_environment(parser.vars(), func_name, std::move(argv), inherit_vars);
     parser.forbid_function(func_name);
 
-    parent_job_info_t parent_info{};
-    internal_exec_helper(parser, props->parsed_source, props->body_node, io_chain, parent_info);
+    parent_job_info_t info;
+    info.pgid_selector = parser.get_pgid_selector_ref();
+    internal_exec_helper(parser, props->parsed_source, props->body_node, io_chain, info);
 
     parser.allow_function();
     parser.pop_block(fb);
