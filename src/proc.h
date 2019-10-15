@@ -374,9 +374,6 @@ class job_t {
 
         /// Whether this job was created as part of an event handler.
         bool from_event_handler{};
-
-        /// Whether we should unfocus the pgid selector.
-        bool unfocus_pgid_sel{};
     };
 
    private:
@@ -489,6 +486,9 @@ class job_t {
 
         /// This job is disowned, and should be removed from the active jobs list.
         bool disown_requested{false};
+
+        /// Whether we should unfocus the pgid selector.
+        bool unfocus_pgid_sel{false};
     } job_flags{};
 
     /// Access the job flags.

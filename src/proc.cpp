@@ -964,14 +964,12 @@ void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp, bool se
     cleanup_t take_term_back([&]() {
         // TODO: this is incorrect if we are continue'd from builtin_fg. We need to know which pgid
         // selector to return to.
-        if (properties.unfocus_pgid_sel && this->pgid_selector) {
+        if (flags().unfocus_pgid_sel) {
+            assert(this->pgid_selector && "No selector");
             FLOG(debug, "releasing focus", command());
             this->pgid_selector->release_focus();
         }
         if (term_transferred && reclaim_foreground_pgrp) {
-            if (this->pgid_selector && properties.unfocus_pgid_sel) {
-                this->pgid_selector->release_focus();
-            }
             // Only restore terminal attrs if we're continuing a job. See:
             // https://github.com/fish-shell/fish-shell/issues/121
             // https://github.com/fish-shell/fish-shell/issues/2114

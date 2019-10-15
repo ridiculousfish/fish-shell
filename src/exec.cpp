@@ -1178,6 +1178,9 @@ bool exec_job(parser_t &parser, shared_ptr<job_t> j) {
     // Figure out what pgid selector to use for this job.
     j->pgid_selector = determine_pgid_selector_for_job(parser, j);
 
+    // Unfocus if we created a new selector (TODO: express this properly).
+    j->mut_flags().unfocus_pgid_sel = (j->pgid_selector != parser.get_pgid_selector_ref());
+
     if (j->is_foreground()) {
         parser.get_pgid_selector().transfer_focus(j->pgid_selector);
     }
