@@ -966,7 +966,6 @@ void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp, bool se
         // selector to return to.
         if (flags().unfocus_pgid_sel) {
             assert(this->pgid_selector && "No selector");
-            FLOG(debug, "releasing focus", command());
             this->pgid_selector->release_focus();
         }
         if (term_transferred && reclaim_foreground_pgrp) {

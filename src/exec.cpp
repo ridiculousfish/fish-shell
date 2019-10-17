@@ -941,7 +941,10 @@ static bool exec_block_or_func_process(parser_t &parser, std::shared_ptr<job_t> 
 }
 
 static bool use_concurrent_internal_procs(const std::shared_ptr<job_t> &j) {
-    return feature_test(features_t::concurrent) && j->processes.size() > 1;
+    // Use concurrent internal proc if the feature is enabled, and we either have a pipeline or a
+    // background proc.
+    return feature_test(features_t::concurrent) &&
+           (j->processes.size() > 1 || !j->flags().foreground);
 }
 
 /// Determine which pgid selector to use for a job.

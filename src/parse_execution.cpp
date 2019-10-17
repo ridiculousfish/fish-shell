@@ -211,6 +211,11 @@ bool parse_execution_context_t::job_is_simple_block(tnode_t<g::job> job_node) co
         return false;
     }
 
+    // Must not be background.
+    if (job_node_is_background(job_node)) {
+        return false;
+    }
+
     // Helper to check if an argument or redirection list has no redirections.
     auto is_empty = [](tnode_t<g::arguments_or_redirections_list> lst) -> bool {
         return !lst.next_in_list<g::redirection>();
