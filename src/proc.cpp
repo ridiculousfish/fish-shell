@@ -277,10 +277,16 @@ void pgid_selector_t::release_focus() {
 }
 
 volatile sig_atomic_t pgid_selector_t::pending_cancel_signal_{false};
+volatile sig_atomic_t pgid_selector_t::pending_stop_signal_{false};
 
 void pgid_selector_t::received_cancel_signal() {
     // Beware, we are in a signal handler.
     pending_cancel_signal_ = true;
+}
+
+void pgid_selector_t::received_stop_signal() {
+    // Beware, we are in a signal handler.
+    pending_stop_signal_ = true;
 }
 
 bool pgid_selector_t::is_cancel_signalled() const {
@@ -289,15 +295,71 @@ bool pgid_selector_t::is_cancel_signalled() const {
     // There's a pending signal.
     // See if it's for us. If so, grab it.
     auto data = get_locked_data();
-    if (this_is_focused(data)) {
-        // It's possible that we were previously not focused but not we are. Check that there's
-        // still a pending sigint. This is inherently somewhat racey.
-        if (pending_cancel_signal_) {
-            pending_cancel_signal_ = false;
-            cancel_signalled_ = true;
-        }
+    // It's possible that we were previously not focused but not we are. Check that there's
+    // still a pending sigint. This is inherently somewhat racey.
+    if (this_is_focused(data) && pending_cancel_signal_) {
+        pending_cancel_signal_ = false;
+        cancel_signalled_ = true;
     }
     return cancel_signalled_;
+}
+
+bool pgid_selector_t::is_stop_signalled() const {
+    // Never allow the principal selector to be stopped.
+    if (is_principal()) {
+        assert(!stop_signalled_ && "Principal selector should never be stopped");
+        return false;
+    }
+    if (stop_signalled_) return true;
+    if (!pending_stop_signal_) return false;
+    // There's a pending signal.
+    // See if it's for us. If so, grab it.
+    // It's possible that we were previously not focused but not we are. Check that there's
+    // still a pending signal. This is inherently somewhat racey.
+    auto data = get_locked_data();
+    if (this_is_focused(data) && pending_stop_signal_) {
+        // It's possible that we were previously not focused but not we are. Check that there's
+        // still a pending sigint. This is inherently somewhat racey.
+        pending_stop_signal_ = false;
+        stop_signalled_ = true;
+    }
+    return stop_signalled_;
+}
+
+// Thready bits to allow stopped threads to wait.
+// We wrap this up in a lazy static because it's only needed if an internal proc is stopped.
+struct pgid_selector_awaiter_t {
+    std::mutex lock;
+    std::condition_variable notifier;
+};
+
+static pgid_selector_awaiter_t &get_stop_awaiter() {
+    static pgid_selector_awaiter_t s_awaiter;
+    return s_awaiter;
+}
+
+void pgid_selector_t::continue_if_stopped() {
+    // "Consume" any pending stop signal.
+    (void)is_stop_signalled();
+    if (stop_signalled_) {
+        stop_signalled_ = false;
+        // We just became unstopped. Notify our thread.
+        auto &awaiter = get_stop_awaiter();
+        scoped_lock lock(awaiter.lock);
+        awaiter.notifier.notify_all();
+    }
+}
+
+void pgid_selector_t::await_continue_if_stopped() const {
+    // If we are stopped, wait until we get started again.
+    if (!is_stop_signalled()) {
+        return;
+    }
+    auto &awaiter = get_stop_awaiter();
+    std::unique_lock<std::mutex> lock(awaiter.lock);
+    while (is_stop_signalled()) {
+        awaiter.notifier.wait(lock);
+    }
 }
 
 void job_mark_process_as_failed(const std::shared_ptr<job_t> &job, const process_t *failed_proc) {

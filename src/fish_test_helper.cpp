@@ -32,11 +32,19 @@ static void report_foreground() {
 }
 
 static void sigint_parent() {
-    // SIGINT the parent after 1 second, then exit
+    // SIGINT the parent after .25 seconds, then exit
     int parent = getppid();
     usleep(1000000 / 4);  //.25 secs
     kill(parent, SIGINT);
     fprintf(stderr, "Sent SIGINT to %d\n", parent);
+}
+
+static void sigtstp_parent() {
+    // SIGSTOP the parent after .25 seconds, then exit
+    int parent = getppid();
+    usleep(1000000 / 4);  //.25 secs
+    kill(parent, SIGTSTP);
+    fprintf(stderr, "Sent SIGTSTP to %d\n", parent);
 }
 
 static void print_stdout_stderr() {
@@ -57,6 +65,8 @@ int main(int argc, char *argv[]) {
             report_foreground();
         } else if (!strcmp(argv[i], "sigint_parent")) {
             sigint_parent();
+        } else if (!strcmp(argv[i], "sigtstp_parent")) {
+            sigtstp_parent();
         } else if (!strcmp(argv[i], "print_stdout_stderr")) {
             print_stdout_stderr();
         } else {

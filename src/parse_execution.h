@@ -42,8 +42,9 @@ class parse_execution_context_t {
     parse_execution_context_t(const parse_execution_context_t &) = delete;
     parse_execution_context_t &operator=(const parse_execution_context_t &) = delete;
 
-    // Should I cancel?
-    bool should_cancel_execution(const block_t *block) const;
+    // If this thread is stopped, wait until we can continue.
+    // Then return true if we should cancel, false if not.
+    bool continue_checking_cancellation(const block_t *block) const;
 
     // Ways that we can stop executing a block. These are in a sort of ascending order of
     // importance, e.g. `exit` should trump `break`.

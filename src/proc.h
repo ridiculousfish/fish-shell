@@ -176,6 +176,9 @@ class pgid_selector_t {
     /// The signal is directed at the focused selector.
     static volatile sig_atomic_t pending_cancel_signal_;
 
+    /// Same as cancel, but for stops.
+    static volatile sig_atomic_t pending_stop_signal_;
+
     /// The internal ID for this selector.
     /// These are never recycled.
     const uint64_t selector_id_;
@@ -183,13 +186,16 @@ class pgid_selector_t {
     /// The current (real) process group ID which is foreground in this selector.
     pid_t fg_pgrp_{INVALID_PID};
 
-    /// Whether we have received a cancellation-inducing signal.
-    /// This is mutable because it may be computed lazily.
+    /// Whether we have received a cancellation or stop inducing signal.
+    /// These are mutable because they may be computed lazily.
     mutable relaxed_atomic_bool_t cancel_signalled_{false};
+    mutable relaxed_atomic_bool_t stop_signalled_{false};
 
     bool this_is_focused(const acquired_lock<data_t> &data) const {
         return data->focused == this->selector_id_;
     }
+
+    bool is_stop_signalled() const;
 
     static int terminal_maybe_give_to_job(const job_t *j, bool continuing_from_stopped);
 
@@ -203,8 +209,14 @@ class pgid_selector_t {
     /// This is the moral equivalent of fish's own pgroup.
     static const pgid_selector_ref_t &principal();
 
+    /// \return if we are the principal selector.
+    bool is_principal() const { return selector_id_ == k_principal_id; }
+
     /// Called from a signal handler to report a SIGINT or similar.
     static void received_cancel_signal();
+
+    /// Called from a signal handler to report a SIGTSTP.
+    static void received_stop_signal();
 
     /// Make the given job foreground in this selector. If \p continuing_from_stopped is set, we are
     /// giving back control to a job that was previously stopped. In that case, we need to set the
@@ -228,8 +240,14 @@ class pgid_selector_t {
     /// \return if this process group should exit due to a signal.
     bool is_cancel_signalled() const;
 
+    /// If we are stopped, wait until we can continue.
+    void await_continue_if_stopped() const;
+
     /// Set whether we are cancel-signalled.
     void set_cancel_signalled(bool flag) { cancel_signalled_ = flag; }
+
+    /// Continue the job if it is stopped.
+    void continue_if_stopped();
 };
 
 /// A structure representing a single fish process. Contains variables for tracking process state

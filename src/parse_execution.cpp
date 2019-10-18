@@ -179,7 +179,8 @@ process_type_t parse_execution_context_t::process_type_for_command(
     return process_type;
 }
 
-bool parse_execution_context_t::should_cancel_execution(const block_t *block) const {
+bool parse_execution_context_t::continue_checking_cancellation(const block_t *block) const {
+    parser->get_pgid_selector().await_continue_if_stopped();
     return cancellation_reason(block) != execution_cancellation_none;
 }
 
@@ -251,7 +252,7 @@ parse_execution_result_t parse_execution_context_t::run_if_statement(
     tnode_t<g::if_clause> if_clause = statement.child<0>();
     tnode_t<g::else_clause> else_clause = statement.child<1>();
     for (;;) {
-        if (should_cancel_execution(associated_block)) {
+        if (continue_checking_cancellation(associated_block)) {
             result = parse_execution_cancelled;
             break;
         }
@@ -299,7 +300,7 @@ parse_execution_result_t parse_execution_context_t::run_if_statement(
     if (job_list_to_execute) {
         block_t *ib = parser->push_block(block_t::if_block());
         run_job_list(job_list_to_execute, ib);
-        if (should_cancel_execution(ib)) {
+        if (continue_checking_cancellation(ib)) {
             result = parse_execution_cancelled;
         }
         parser->pop_block(ib);
@@ -309,7 +310,7 @@ parse_execution_result_t parse_execution_context_t::run_if_statement(
     }
 
     // It's possible there's a last-minute cancellation (issue #1297).
-    if (should_cancel_execution(associated_block)) {
+    if (continue_checking_cancellation(associated_block)) {
         result = parse_execution_cancelled;
     }
 
@@ -422,7 +423,7 @@ parse_execution_result_t parse_execution_context_t::run_for_statement(
 
     // Now drive the for loop.
     for (const wcstring &val : arguments) {
-        if (should_cancel_execution(fb)) {
+        if (continue_checking_cancellation(fb)) {
             ret = parse_execution_cancelled;
             break;
         }
@@ -503,7 +504,7 @@ parse_execution_result_t parse_execution_context_t::run_switch_statement(
     tnode_t<g::case_item_list> case_item_list = statement.child<3>();
     tnode_t<g::case_item> matching_case_item{};
     while (auto case_item = case_item_list.next_in_list<g::case_item>()) {
-        if (should_cancel_execution(sb)) {
+        if (continue_checking_cancellation(sb)) {
             result = parse_execution_cancelled;
             break;
         }
@@ -588,7 +589,7 @@ parse_execution_result_t parse_execution_context_t::run_while_statement(
         }
 
         // Check cancellation.
-        if (this->should_cancel_execution(associated_block)) {
+        if (this->continue_checking_cancellation(associated_block)) {
             ret = parse_execution_cancelled;
             break;
         }
@@ -1181,7 +1182,7 @@ static bool remove_job(parser_t &parser, job_t *job) {
 
 parse_execution_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> job_node,
                                                               const block_t *associated_block) {
-    if (should_cancel_execution(associated_block)) {
+    if (continue_checking_cancellation(associated_block)) {
         return parse_execution_cancelled;
     }
 
@@ -1339,7 +1340,7 @@ parse_execution_result_t parse_execution_context_t::run_job_conjunction(
     // continuation is the parent of the cursor
     tnode_t<g::job_conjunction_continuation> continuation;
     while (cursor) {
-        if (should_cancel_execution(associated_block)) break;
+        if (continue_checking_cancellation(associated_block)) break;
         bool skip = false;
         if (continuation) {
             // Check the conjunction type.
@@ -1378,7 +1379,7 @@ parse_execution_result_t parse_execution_context_t::run_job_list(tnode_t<Type> j
 
     parse_execution_result_t result = parse_execution_success;
     while (auto job_conj = job_list.template next_in_list<g::job_conjunction>()) {
-        if (should_cancel_execution(associated_block)) break;
+        if (continue_checking_cancellation(associated_block)) break;
 
         // Maybe skip the job if it has a leading and/or.
         // Skipping is treated as success.

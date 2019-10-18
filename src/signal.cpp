@@ -247,6 +247,11 @@ static void fish_signal_handler(int sig, siginfo_t *info, void *context) {
             topic_monitor_t::principal().post(topic_t::sighupint);
             break;
 
+        case SIGTSTP:
+            /// Interactive mode ^Z handler.
+            pgid_selector_t::received_stop_signal();
+            break;
+
         case SIGCHLD:
             // A child process stopped or exited.
             topic_monitor_t::principal().post(topic_t::sigchld);
@@ -284,8 +289,12 @@ static void set_interactive_handlers() {
     // Interactive mode. Ignore interactive signals.  We are a shell, we know what is best for
     // the user.
     act.sa_handler = SIG_IGN;
-    sigaction(SIGTSTP, &act, NULL);
     sigaction(SIGTTOU, &act, NULL);
+
+    // We need to handle SIGTSTP to stop internal processes.
+    act.sa_sigaction = &fish_signal_handler;
+    act.sa_flags = SA_SIGINFO;
+    sigaction(SIGTSTP, &act, NULL);
 
     // We don't ignore SIGTTIN because we might send it to ourself.
     act.sa_sigaction = &fish_signal_handler;
