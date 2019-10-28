@@ -914,7 +914,7 @@ static bool node_is_potential_path(const wcstring &src, const parse_node_t &node
     if (unescape_string_in_place(&token, UNESCAPE_SPECIAL)) {
         // Big hack: is_potential_path expects a tilde, but unescape_string gives us HOME_DIRECTORY.
         // Put it back.
-        if (!token.empty() && token.at(0) == HOME_DIRECTORY) token.at(0) = L'~';
+        if (!token.empty() && token.at(0) == HOME_DIRECTORY) token.mutate()[0] = L'~';
 
         const wcstring_list_t working_directory_list(1, working_directory);
         result = is_potential_path(token, working_directory_list, vars, PATH_EXPAND_TILDE);

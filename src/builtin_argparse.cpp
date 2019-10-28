@@ -671,8 +671,8 @@ static void set_argparse_result_vars(env_stack_t &vars, const argparse_cmd_opts_
             // We do a simple replacement of all non alphanum chars rather than calling
             // escape_string(long_flag, 0, STRING_STYLE_VAR).
             wcstring long_flag = opt_spec->long_flag;
-            for (auto &pos : long_flag.mutate()) {
-                if (!iswalnum(pos)) pos = L'_';
+            for (wchar_t &c : long_flag.mutate()) {
+                if (!iswalnum(c)) c = L'_';
             }
             vars.set(var_name_prefix + long_flag, ENV_LOCAL, opt_spec->vals);
         }

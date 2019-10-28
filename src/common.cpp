@@ -1570,10 +1570,10 @@ static bool unescape_string_internal(const wchar_t *const input, const size_t in
                             // If we didn't have a var or separator since the last '{',
                             // put the literal back.
                             if (vars_or_seps.empty() || vars_or_seps.back() < braces.back()) {
-                                result[braces.back()] = L'{';
+                                result.mutate()[braces.back()] = L'{';
                                 // We also need to turn all spaces back.
                                 for (size_t i = braces.back() + 1; i < result.size(); i++) {
-                                    if (result[i] == BRACE_SPACE) result[i] = L' ';
+                                    if (result[i] == BRACE_SPACE) result.mutate()[i] = L' ';
                                 }
                                 to_append_or_none = L'}';
                             }

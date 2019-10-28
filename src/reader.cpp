@@ -3009,7 +3009,8 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
             // moving the cursor forward as well.
             if (el->position > 0) {
                 wcstring local_cmd = el->text;
-                std::swap(local_cmd.at(el->position), local_cmd.at(el->position - 1));
+                std::swap(local_cmd.mutate().at(el->position),
+                          local_cmd.mutate().at(el->position - 1));
                 set_command_line_and_position(el, local_cmd, el->position + 1);
             }
             break;
@@ -3081,7 +3082,7 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
                 else
                     chr = towlower(chr);
 
-                command_line.text.at(pos) = chr;
+                command_line.text.mutate().at(pos) = chr;
                 capitalized_first = capitalized_first || make_uppercase;
             }
             command_line_changed(el);

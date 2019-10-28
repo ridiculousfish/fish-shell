@@ -241,33 +241,34 @@ void pager_t::completion_print(size_t cols, const size_t *width_by_column, size_
 }
 
 /// Trim leading and trailing whitespace, and compress other whitespace runs into a single space.
-static void mangle_1_completion_description(wcstring *str) {
-    size_t leading = 0, trailing = 0, len = str->size();
+static void mangle_1_completion_description(wcstring *wcstr) {
+    std::wstring &str = wcstr->mutate();
+    size_t leading = 0, trailing = 0, len = str.size();
 
     // Skip leading spaces.
     for (; leading < len; leading++) {
-        if (!iswspace(str->at(leading))) break;
+        if (!iswspace(str.at(leading))) break;
     }
 
     // Compress runs of spaces to a single space.
     bool was_space = false;
     for (; leading < len; leading++) {
-        wchar_t wc = str->at(leading);
+        wchar_t wc = str.at(leading);
         bool is_space = iswspace(wc);
         if (!is_space) {  // normal character
-            str->at(trailing++) = wc;
+            str.at(trailing++) = wc;
         } else if (!was_space) {  // initial space in a run
-            str->at(trailing++) = L' ';
+            str.at(trailing++) = L' ';
         }  // else non-initial space in a run, do nothing
         was_space = is_space;
     }
 
     // leading is now at len, trailing is the new length of the string. Delete trailing spaces.
-    while (trailing > 0 && iswspace(str->at(trailing - 1))) {
+    while (trailing > 0 && iswspace(str.at(trailing - 1))) {
         trailing--;
     }
 
-    str->resize(trailing);
+    str.resize(trailing);
 }
 
 static void join_completions(comp_info_list_t *comps) {

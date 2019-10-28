@@ -726,7 +726,7 @@ static void expand_home_directory(wcstring &input, const environment_t &vars) {
         if (realhome) {
             input.replace(input.begin(), input.begin() + tail_idx, *realhome);
         } else {
-            input[0] = L'~';
+            input.mutate().front() = L'~';
         }
     }
 }
@@ -742,7 +742,7 @@ void expand_tilde(wcstring &input, const environment_t &vars) {
     // Avoid needless COW behavior by ensuring we use const at.
     const wcstring &tmp = input;
     if (!tmp.empty() && tmp.at(0) == L'~') {
-        input.at(0) = HOME_DIRECTORY;
+        input.mutate().front() = HOME_DIRECTORY;
         expand_home_directory(input, vars);
     }
 }

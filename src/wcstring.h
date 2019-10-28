@@ -49,10 +49,8 @@ class wcstring {
     bool operator>=(const wcstring &rhs) const { return s() >= rhs.s(); }
     bool operator>=(const CharT *rhs) const { return s() >= rhs; }
 
-    const value_type &at(size_type idx) const { return s().at(idx); }
-    value_type &at(size_type idx) { return s().at(idx); }
+    value_type at(size_type idx) const { return s().at(idx); }
     value_type operator[](size_type idx) const { return s()[idx]; }
-    value_type &operator[](size_type idx) { return s()[idx]; }
 
     size_type hash() const { return std::hash<contents_t>{}(s()); }
 
@@ -65,14 +63,11 @@ class wcstring {
     const_iterator cbegin() const { return s().begin(); }
     const_iterator cend() const { return s().end(); }
 
-    reverse_iterator rbegin() { return s().rbegin(); }
-    reverse_iterator rend() { return s().rend(); }
-
     const_reverse_iterator rbegin() const { return s().rbegin(); }
     const_reverse_iterator rend() const { return s().rend(); }
 
-    const_reverse_iterator crbegin() { return s().crbegin(); }
-    const_reverse_iterator crend() { return s().crend(); }
+    const_reverse_iterator crbegin() const { return s().crbegin(); }
+    const_reverse_iterator crend() const { return s().crend(); }
 
     wcstring() : s_(get_shared_empty()) {}
 

@@ -632,7 +632,7 @@ void completer_t::complete_cmd_desc(const wcstring &str) {
 
             // And once again I make sure the first character is uppercased because I like it that
             // way, and I get to decide these things.
-            if (!val.empty()) val[0] = towupper(val[0]);
+            if (!val.empty()) val.mutate().front() = towupper(val.mutate().front());
             lookup[key] = val;
         }
 

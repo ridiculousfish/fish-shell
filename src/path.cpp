@@ -373,7 +373,7 @@ void path_make_canonical(wcstring &path) {
         bool is_slash = (c == '/');
         if (!prev_was_slash || !is_slash) {
             // This is either the first slash in a run, or not a slash at all.
-            path.at(trailing++) = c;
+            path.mutate().at(trailing++) = c;
         }
         prev_was_slash = is_slash;
     }

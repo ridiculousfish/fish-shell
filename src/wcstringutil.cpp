@@ -31,7 +31,7 @@ wcstring_range wcstring_tok(wcstring &str, const wcstring &needle, wcstring_rang
         return std::make_pair(pos, wcstring::npos);
     }
 
-    str[next_pos] = L'\0';
+    str.mutate()[next_pos] = L'\0';
     return std::make_pair(pos, next_pos - pos);
 }
 
