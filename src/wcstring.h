@@ -22,7 +22,7 @@ class wcstring {
    public:
     using size_type = contents_t::size_type;
     using value_type = contents_t::value_type;
-    using iterator = contents_t::iterator;
+    using iterator = contents_t::const_iterator;
     using const_iterator = contents_t::const_iterator;
     using reverse_iterator = contents_t::reverse_iterator;
     using const_reverse_iterator = contents_t::const_reverse_iterator;
@@ -405,7 +405,12 @@ class wcstring {
 
     iterator erase(const_iterator first, const_iterator last) { return s().erase(first, last); }
 
-    std::wstring as_wstring() const { return s(); }
+    /// Efficient support for mutating a string in place.
+    /// Do not allow 'this' string to be copied while mutating, as the copy may see the mutations as
+    /// well.
+    std::wstring &mutate() { return s(); }
+
+    std::wstring to_wstring() const { return s(); }
 };
 
 inline wcstring operator+(const wcstring &lhs, const wcstring &rhs) {

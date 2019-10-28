@@ -2097,7 +2097,8 @@ struct pager_layout_testcase_t {
             // hack: handle the case where ellipsis is not L'\x2026'
             wchar_t ellipsis_char = get_ellipsis_char();
             if (ellipsis_char != L'\x2026') {
-                std::replace(expected.begin(), expected.end(), L'\x2026', ellipsis_char);
+                std::replace(expected.mutate().begin(), expected.mutate().end(), L'\x2026',
+                             ellipsis_char);
             }
 
             wcstring text = sd.line(0).to_string();
@@ -4723,6 +4724,24 @@ static void test_wcstring_tok() {
     }
 }
 
+static void test_wcstring() {
+    say(L"Testing wcstring");
+    wcstring s1 = L"some sort of long string";
+    wcstring s2 = s1;
+    std::wstring *p1 = &s1.mutate();
+    std::wstring *p2 = &s2.mutate();
+    do_test(*p1 == L"some sort of long string");
+    do_test(*p2 == L"some sort of long string");
+    do_test(p1 != p2);
+    do_test(p1 == &s1.mutate());
+    do_test(p1 == &s1.mutate());
+    do_test(p2 == &s2.mutate());
+    do_test(p2 == &s2.mutate());
+    p1->at(0) = L'S';
+    do_test(s1 == L"Some sort of long string");
+    do_test(s2 == L"some sort of long string");
+}
+
 static void test_pcre2_escape() {
     say(L"Testing escaping strings as pcre2 literals");
     // plain text should not be needlessly escaped
@@ -5467,6 +5486,7 @@ int main(int argc, char **argv) {
 
     if (should_test_function("utility_functions")) test_utility_functions();
     if (should_test_function("wcstring_tok")) test_wcstring_tok();
+    if (should_test_function("wcstring")) test_wcstring();
     if (should_test_function("env_vars")) test_env_vars();
     if (should_test_function("env")) test_env_snapshot();
     if (should_test_function("str_to_num")) test_str_to_num();

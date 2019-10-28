@@ -1101,7 +1101,7 @@ static int string_split_maybe0(parser_t &parser, io_streams_t &streams, int argc
     // If we are from the right, split_about gave us reversed strings, in reversed order!
     if (opts.right) {
         for (auto &split : splits) {
-            std::reverse(split.begin(), split.end());
+            std::reverse(split.mutate().begin(), split.mutate().end());
         }
         std::reverse(splits.begin(), splits.end());
     }
@@ -1305,7 +1305,8 @@ static int string_transform(parser_t &parser, io_streams_t &streams, int argc, w
     arg_iterator_t aiter(argv, optind, streams);
     while (const wcstring *arg = aiter.nextstr()) {
         wcstring transformed(*arg);
-        std::transform(transformed.begin(), transformed.end(), transformed.begin(), func);
+        std::transform(transformed.mutate().begin(), transformed.mutate().end(),
+                       transformed.mutate().begin(), func);
         if (transformed != *arg) n_transformed++;
         if (!opts.quiet) {
             streams.out.append(transformed);

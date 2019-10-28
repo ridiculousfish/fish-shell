@@ -532,8 +532,8 @@ static expand_result_t expand_braces(const wcstring &instr, expand_flags_t flags
             assert(pos >= item_begin);
             size_t item_len = pos - item_begin;
             wcstring item = wcstring(item_begin, item_len);
-            item = trim(item, (const wchar_t[]){BRACE_SPACE, L'\0'});
-            for (auto &c : item) {
+            item = trim(std::move(item), (const wchar_t[]){BRACE_SPACE, L'\0'});
+            for (wchar_t &c : item.mutate()) {
                 if (c == BRACE_SPACE) {
                     c = ' ';
                 }
@@ -809,13 +809,13 @@ wcstring replace_home_directory_with_tilde(const wcstring &str, const environmen
 /// equivalents. This is done to support skip_wildcards.
 static void remove_internal_separator(wcstring *str, bool conv) {
     // Remove all instances of INTERNAL_SEPARATOR.
-    str->erase(std::remove(str->begin(), str->end(), static_cast<wchar_t>(INTERNAL_SEPARATOR)),
-               str->end());
+    auto &s = str->mutate();
+    s.erase(std::remove(s.begin(), s.end(), static_cast<wchar_t>(INTERNAL_SEPARATOR)), str->end());
 
     // If conv is true, replace all instances of ANY_STRING with '*',
     // ANY_STRING_RECURSIVE with '*'.
     if (conv) {
-        for (auto &idx : *str) {
+        for (auto &idx : str->mutate()) {
             switch (idx) {
                 case ANY_CHAR: {
                     idx = L'?';
@@ -901,7 +901,7 @@ expand_result_t expander_t::stage_variables(wcstring input, std::vector<completi
     unescape_string(input, &next, UNESCAPE_SPECIAL | UNESCAPE_INCOMPLETE);
 
     if (flags & expand_flag::skip_variables) {
-        for (auto &i : next) {
+        for (auto &i : next.mutate()) {
             if (i == VARIABLE_EXPAND) {
                 i = L'$';
             }

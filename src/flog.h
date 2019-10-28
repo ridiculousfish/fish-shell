@@ -4,14 +4,14 @@
 
 #include "config.h"  // IWYU pragma: keep
 
-#include "global_safety.h"
-#include "wcstring.h"
-
 #include <stdio.h>
 
 #include <string>
 #include <type_traits>
 #include <utility>
+
+#include "global_safety.h"
+#include "wcstring.h"
 
 template <typename T>
 class owning_lock;
@@ -135,7 +135,7 @@ extern owning_lock<logger_t> g_logger;
 }  // namespace flog_details
 
 /// Set the active flog categories according to the given wildcard \p wc.
-void activate_flog_categories_by_pattern(const wcstring &wc);
+void activate_flog_categories_by_pattern(wcstring wc);
 
 /// Set the file that flog should output to.
 /// flog does not close this file.

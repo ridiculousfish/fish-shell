@@ -70,7 +70,8 @@ wcstring trim(wcstring input, const wchar_t *any_of) {
 
 wcstring wcstolower(wcstring input) {
     wcstring result = std::move(input);
-    std::transform(result.begin(), result.end(), result.begin(), towlower);
+    std::transform(result.mutate().begin(), result.mutate().end(), result.mutate().begin(),
+                   towlower);
     return result;
 }
 

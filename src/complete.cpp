@@ -663,7 +663,7 @@ static wcstring complete_function_desc(const wcstring &fn) {
         // would be suggested as completion.
         // Replace newlines by spaces to avoid these excess lines.
         // The completion description will be shown in one line regardless.
-        for (wchar_t &c : result) {
+        for (wchar_t &c : result.mutate()) {
             if (c == L'\n') c = L' ';
         }
     }
