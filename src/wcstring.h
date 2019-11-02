@@ -136,7 +136,11 @@ class wcstring {
     }
 
     wcstring &append(const wcstring &str) {
-        s().append(str.s());
+        if (empty()) {
+            s_ = str.s_;
+        } else {
+            s().append(str.s());
+        }
         return *this;
     }
 
@@ -225,10 +229,7 @@ class wcstring {
         return *this;
     }
 
-    wcstring &operator+=(const wcstring &rhs) {
-        s() += rhs.s();
-        return *this;
-    }
+    wcstring &operator+=(const wcstring &rhs) { return append(rhs); }
 
     wcstring &operator+=(CharT c) {
         s() += c;
