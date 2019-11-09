@@ -310,6 +310,12 @@ void assert_is_main_thread(const char *who);
 #define ASSERT_IS_MAIN_THREAD_TRAMPOLINE(x) assert_is_main_thread(x)
 #define ASSERT_IS_MAIN_THREAD() ASSERT_IS_MAIN_THREAD_TRAMPOLINE(__FUNCTION__)
 
+// Assert that either we are the main thread, or the concurrent feature flag is set.
+void assert_is_main_thread_or_concurrent(const char *who);
+#define ASSERT_IS_MAIN_THREAD_OR_CONCURRENT_TRAMPOLINE(x) assert_is_main_thread_or_concurrent(x)
+#define ASSERT_IS_MAIN_THREAD_OR_CONCURRENT() \
+    ASSERT_IS_MAIN_THREAD_OR_CONCURRENT_TRAMPOLINE(__FUNCTION__)
+
 void assert_is_background_thread(const char *who);
 #define ASSERT_IS_BACKGROUND_THREAD_TRAMPOLINE(x) assert_is_background_thread(x)
 #define ASSERT_IS_BACKGROUND_THREAD() ASSERT_IS_BACKGROUND_THREAD_TRAMPOLINE(__FUNCTION__)
