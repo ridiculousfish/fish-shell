@@ -2120,6 +2120,12 @@ void restore_term_foreground_process_group() {
 
 bool is_main_thread() { return thread_id() == 1; }
 
+void assert_is_main_thread_or_concurrent(const char *who) {
+    if (!feature_test(features_t::concurrent)) {
+        assert_is_main_thread(who);
+    }
+}
+
 void assert_is_main_thread(const char *who) {
     if (!is_main_thread() && !thread_asserts_cfg_for_testing) {
         FLOGF(error, L"%s called off of main thread.", who);
