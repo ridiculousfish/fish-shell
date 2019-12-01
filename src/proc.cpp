@@ -40,6 +40,7 @@
 #include "event.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "flog.h"
+#include "future_feature_flags.h"
 #include "global_safety.h"
 #include "io.h"
 #include "iothread.h"
@@ -255,6 +256,20 @@ int job_tree_t::set_foreground_job(const job_t *job, bool continuing_from_stoppe
 
 bool job_tree_t::is_focused() const { return get_locked_data()->is_focused(this); }
 
+void job_tree_t::transfer_focus(const job_tree_ref_t &new_focus) {
+    assert(new_focus && "Null tree");
+    if (this == new_focus.get()) {
+        // Common case.
+        return;
+    }
+    auto data = get_locked_data();
+    if (data->focused.get() == this) {
+        data->focused = new_focus;
+    }
+}
+
+void job_tree_t::release_focus() { transfer_focus(principal()); }
+
 volatile sig_atomic_t job_tree_t::pending_cancel_signal_{false};
 
 void job_tree_t::received_cancel_signal() {
@@ -337,6 +352,10 @@ job_t::~job_t() { release_job_id(job_id); }
 void job_t::mark_constructed() {
     assert(!is_constructed() && "Job was already constructed");
     *constructed = true;
+}
+
+bool job_t::use_concurrent_internal_procs() const {
+    return feature_test(features_t::concurrent) && this->processes.size() > 1;
 }
 
 using process_generation_count_t = unsigned int;
@@ -938,6 +957,11 @@ void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp, bool se
     // Make sure we retake control of the terminal before leaving this function.
     bool term_transferred = false;
     cleanup_t take_term_back([&]() {
+        // TODO: this is sketchy if we are continue'd from builtin_fg. We need to know which pgid
+        // selector to return to.
+        if (flags().unfocus_tree_after_continue) {
+            this->job_tree->release_focus();
+        }
         if (term_transferred && reclaim_foreground_pgrp) {
             // Only restore terminal attrs if we're continuing a job. See:
             // https://github.com/fish-shell/fish-shell/issues/121

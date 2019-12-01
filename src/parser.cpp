@@ -107,7 +107,9 @@ parser_t &parser_t::principal_parser() {
     return *principal;
 }
 
-// Given a new-allocated block, push it onto our block list, acquiring ownership
+bool parser_t::is_principal() const { return this == principal.get(); }
+
+// Given a new-allocated block, push it onto our block list, acquiring ownership.
 block_t *parser_t::push_block(block_t &&block) {
     block_t new_current{std::move(block)};
     const enum block_type_t type = new_current.type();

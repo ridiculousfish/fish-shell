@@ -1304,6 +1304,20 @@ eval_result_t parse_execution_context_t::run_1_job(tnode_t<g::job> job_node,
 
     // Clean up the job on failure or cancellation.
     if (pop_result == eval_result_t::ok) {
+        // Success.
+        // Determine the job tree for the job.
+        // If we are using the principal parser and the job wants concurrent execution, give it a
+        // new tree.
+        if (parser->is_principal() && job->use_concurrent_internal_procs()) {
+            // We need a new job tree for this job. Mark that we need to unfocus when this job is
+            // done executing.
+            job->job_tree = job_tree_t::create();
+            job->mut_flags().unfocus_tree_after_continue = true;
+        } else {
+            // We can use the existing tree (perhaps the principal one).
+            job->job_tree = parser->get_job_tree_ref();
+        }
+
         // Success. Give the job to the parser - it will clean it up.
         parser->job_add(job);
 

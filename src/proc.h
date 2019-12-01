@@ -186,6 +186,12 @@ class job_tree_t {
     /// \return 1 if successfully transferred, 0 if no transfer was necessary, -1 on error.
     int set_foreground_job(const job_t *job, bool continuing_from_stopped);
 
+    /// If this tree is focused, return focus back to the principal tree.
+    void release_focus();
+
+    /// If this tree is focused, transfer it to \p new_focus.
+    void transfer_focus(const job_tree_ref_t &new_focus);
+
     /// \return if this is focused, that is, jobs in this tree may own the terminal.
     /// Note this may change at any time.
     bool is_focused() const;
@@ -475,6 +481,9 @@ class job_t {
 
         /// This job is disowned, and should be removed from the active jobs list.
         bool disown_requested{false};
+
+        /// Whether we should unfocus the job tree after the job continues.
+        bool unfocus_tree_after_continue{false};
     } job_flags{};
 
     /// Access the job flags.
@@ -491,6 +500,9 @@ class job_t {
 
     /// Mark this job as constructed. The job must not have previously been marked as constructed.
     void mark_constructed();
+
+    /// \return whether this job, when executed, should use concurrent internal fish processes.
+    bool use_concurrent_internal_procs() const;
 
     // Helper functions to check presence of flags on instances of jobs
     /// The job has been fully constructed, i.e. all its member processes have been launched
