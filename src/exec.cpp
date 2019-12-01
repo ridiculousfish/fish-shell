@@ -782,19 +782,6 @@ static bool exec_concurrent_block_or_func_process(parser_t &parser, std::shared_
     return success;
 }
 
-static bool use_concurrent_internal_procs(const std::shared_ptr<job_t> &j) {
-    return feature_test(features_t::concurrent) && j->processes.size() > 1;
-}
-
-/// Determine which job tree to use for a job.
-static job_tree_ref_t determine_job_tree_for_job(const parser_t &parser,
-                                                 const std::shared_ptr<job_t> &j) {
-    if (j->wants_job_control() && use_concurrent_internal_procs(j)) {
-        return job_tree_t::create();
-    }
-    return parser.get_job_tree_ref();
-}
-
 /// Executes a process \p in job \j, using the pipes \p pipes (which may have invalid fds if this is
 /// the first or last process).
 /// \p deferred_pipes represents the pipes from our deferred process; if set ensure they get closed
@@ -892,7 +879,7 @@ static bool exec_process_in_job(parser_t &parser, process_t *p, const std::share
         case process_type_t::block_node: {
             // Execute background functions concurrently if enabled.
             if ((p->type == process_type_t::function || p->type == process_type_t::block_node) &&
-                use_concurrent_internal_procs(j)) {
+                j->use_concurrent_internal_procs()) {
                 if (!exec_concurrent_block_or_func_process(parser, j, p, process_net_io_chain)) {
                     return false;
                 }
@@ -1004,8 +991,11 @@ bool exec_job(parser_t &parser, const shared_ptr<job_t> &j, const job_lineage_t 
             break;
     }
 
-    // Figure out what tree to use for this job.
-    j->job_tree = determine_job_tree_for_job(parser, j);
+    // If this is a foreground job, allow it to own the terminal.
+    if (j->is_foreground()) {
+        parser.get_job_tree().transfer_focus(j->job_tree);
+    }
+
     const size_t stdout_read_limit = parser.libdata().read_limit;
 
     // Get the list of all FDs so we can ensure our pipes do not conflict.

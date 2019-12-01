@@ -1305,6 +1305,19 @@ end_execution_reason_t parse_execution_context_t::run_1_job(tnode_t<g::job> job_
         // Set the pgroup assignment mode, now that the job is populated.
         job->pgroup_provenance = get_pgroup_provenance(job, lineage);
 
+        // Determine the job tree for the job.
+        // If we are using the principal parser and the job wants concurrent execution, give it a
+        // new tree.
+        if (parser->is_principal() && job->use_concurrent_internal_procs()) {
+            // We need a new job tree for this job. Mark that we need to unfocus when this job is
+            // done executing.
+            job->job_tree = job_tree_t::create();
+            job->mut_flags().unfocus_tree_after_continue = true;
+        } else {
+            // We can use the existing tree (perhaps the principal one).
+            job->job_tree = parser->get_job_tree_ref();
+        }
+
         // Success. Give the job to the parser - it will clean it up.
         parser->job_add(job);
 
