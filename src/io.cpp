@@ -27,24 +27,101 @@
 /// Base open mode to pass to calls to open.
 #define OPEN_MASK 0666
 
+io_data_t::io_data_t(io_mode_t m, int fd, int old_fd, autoclose_fd_t old_fd_owner,
+                     std::shared_ptr<io_buffer_t> buffer)
+    : io_mode(m),
+      fd(fd),
+      old_fd(old_fd),
+      old_fd_owner_(std::move(old_fd_owner)),
+      buffer_(std::move(buffer)) {
+    assert(fd >= 0 && "Invalid fd");
+    assert((m == io_mode_t::fd || m == io_mode_t::close) && "Invalid mode for this constructor");
+    assert((m == io_mode_t::close ? old_fd == -1 : old_fd >= 0) &&
+           "old_fd should be -1 iff it is close type");
+    assert(!old_fd_owner.valid() ||
+           old_fd_owner.fd() == old_fd && "old_fd_owner must be invalid or own old_fd");
+}
+
+io_data_ref_t io_data_t::make_close(int fd) {
+    return std::make_shared<io_data_t>(io_mode_t::close, fd, -1);
+}
+
+io_data_ref_t io_data_t::make_fd(int fd, int old) {
+    return std::make_shared<io_data_t>(io_mode_t::fd, fd, old);
+}
+
+io_data_ref_t io_data_t::make_file(int fd, autoclose_fd_t file) {
+    int old_fd = file.fd();
+    return std::make_shared<io_data_t>(io_mode_t::file, fd, old_fd, std::move(file));
+}
+
+io_data_ref_t io_data_t::make_pipe(int fd, autoclose_fd_t pipe) {
+    int old_fd = pipe.fd();
+    return std::make_shared<io_data_t>(io_mode_t::file, fd, old_fd, std::move(pipe));
+}
+
+shared_ptr<io_data_t> io_data_t::make_bufferfill(const fd_set_t &conflicts, size_t buffer_limit) {
+    // Construct our pipes.
+    auto pipes = make_autoclose_pipes(conflicts);
+    if (!pipes) {
+        return nullptr;
+    }
+
+    // Our buffer will read from the read end of the pipe. This end must be non-blocking. This is
+    // because our fillthread needs to poll to decide if it should shut down, and also accept input
+    // from direct buffer transfers.
+    if (make_fd_nonblocking(pipes->read.fd())) {
+        debug(1, PIPE_ERROR);
+        wperror(L"fcntl");
+        return nullptr;
+    }
+    // Our fillthread gets the read end of the pipe; out_pipe gets the write end.
+    auto buffer = std::make_shared<io_buffer_t>(buffer_limit);
+    buffer->begin_background_fillthread(std::move(pipes->read));
+
+    int write_fd = pipes->write.fd();
+    return std::make_shared<io_data_t>(io_mode_t::bufferfill, STDOUT_FILENO, write_fd,
+                                       std::move(pipes->write), buffer);
+}
+
+std::shared_ptr<io_buffer_t> io_data_t::finish_bufferfill(std::shared_ptr<io_data_t> &&filler) {
+    // The io filler is passed in. This typically holds the only instance of the write side of the
+    // pipe used by the buffer's fillthread (except for that side held by other processes). Get the
+    // buffer out of the bufferfill and clear the shared_ptr; this will typically widow the pipe.
+    // Then allow the buffer to finish.
+    assert(filler && filler->io_mode == io_mode_t::bufferfill && "Invalid filler");
+    auto buffer = filler->buffer();
+    filler.reset();
+    buffer->complete_background_fillthread();
+    return buffer;
+}
+
+const std::shared_ptr<io_buffer_t> &io_data_t::buffer() const {
+    assert(io_mode == io_mode_t::bufferfill && "Not a bufferfill");
+    return buffer_;
+}
+
+static const char *mode_name(io_mode_t mode) {
+    switch (mode) {
+        case io_mode_t::file:
+            return "file";
+        case io_mode_t::pipe:
+            return "pipe";
+        case io_mode_t::fd:
+            return "fd";
+        case io_mode_t::close:
+            return "close";
+        case io_mode_t::bufferfill:
+            return "bufferfill";
+    }
+    return "unknown";
+}
+
+void io_data_t::print() const {
+    std::fwprintf(stderr, L"%s %d > %d\n", mode_name(io_mode), fd, old_fd);
+}
+
 io_data_t::~io_data_t() = default;
-
-io_file_t::io_file_t(int f, autoclose_fd_t file)
-    : io_data_t(io_mode_t::file, f), file_fd_(std::move(file)) {
-    assert(file_fd_.valid() && "File is not valid");
-}
-
-void io_close_t::print() const { std::fwprintf(stderr, L"close %d\n", fd); }
-
-void io_fd_t::print() const { std::fwprintf(stderr, L"FD map %d -> %d\n", old_fd, fd); }
-
-void io_file_t::print() const { std::fwprintf(stderr, L"file (%d)\n", file_fd_.fd()); }
-
-void io_pipe_t::print() const {
-    std::fwprintf(stderr, L"pipe {%d} (input: %s)\n", pipe_fd(), is_input_ ? "yes" : "no");
-}
-
-void io_bufferfill_t::print() const { std::fwprintf(stderr, L"bufferfill {%d}\n", write_fd_.fd()); }
 
 void io_buffer_t::append_from_stream(const output_stream_t &stream) {
     const separated_buffer_t<wcstring> &input = stream.buffer();
@@ -174,50 +251,11 @@ void io_buffer_t::complete_background_fillthread() {
     fillthread_waiter_ = {};
 }
 
-shared_ptr<io_bufferfill_t> io_bufferfill_t::create(const fd_set_t &conflicts,
-                                                    size_t buffer_limit) {
-    // Construct our pipes.
-    auto pipes = make_autoclose_pipes(conflicts);
-    if (!pipes) {
-        return nullptr;
-    }
-    // Our buffer will read from the read end of the pipe. This end must be non-blocking. This is
-    // because our fillthread needs to poll to decide if it should shut down, and also accept input
-    // from direct buffer transfers.
-    if (make_fd_nonblocking(pipes->read.fd())) {
-        debug(1, PIPE_ERROR);
-        wperror(L"fcntl");
-        return nullptr;
-    }
-    // Our fillthread gets the read end of the pipe; out_pipe gets the write end.
-    auto buffer = std::make_shared<io_buffer_t>(buffer_limit);
-    buffer->begin_background_fillthread(std::move(pipes->read));
-    return std::make_shared<io_bufferfill_t>(std::move(pipes->write), buffer);
-}
-
-std::shared_ptr<io_buffer_t> io_bufferfill_t::finish(std::shared_ptr<io_bufferfill_t> &&filler) {
-    // The io filler is passed in. This typically holds the only instance of the write side of the
-    // pipe used by the buffer's fillthread (except for that side held by other processes). Get the
-    // buffer out of the bufferfill and clear the shared_ptr; this will typically widow the pipe.
-    // Then allow the buffer to finish.
-    assert(filler && "Null pointer in finish");
-    auto buffer = filler->buffer();
-    filler.reset();
-    buffer->complete_background_fillthread();
-    return buffer;
-}
-
-io_pipe_t::~io_pipe_t() = default;
-io_fd_t::~io_fd_t() = default;
-io_close_t::~io_close_t() = default;
-io_file_t::~io_file_t() = default;
-io_bufferfill_t::~io_bufferfill_t() = default;
-
 io_buffer_t::~io_buffer_t() {
     assert(!fillthread_running() && "io_buffer_t destroyed with outstanding fillthread");
 }
 
-void io_chain_t::remove(const shared_ptr<const io_data_t> &element) {
+void io_chain_t::remove(const io_data_ref_t &element) {
     // See if you can guess why std::find doesn't work here.
     for (io_chain_t::iterator iter = this->begin(); iter != this->end(); ++iter) {
         if (*iter == element) {
@@ -243,12 +281,12 @@ bool io_chain_t::append_from_specs(const redirection_spec_list_t &specs, const w
         switch (spec.mode) {
             case redirection_mode_t::fd: {
                 if (spec.is_close()) {
-                    this->push_back(make_unique<io_close_t>(spec.fd));
+                    this->push_back(io_data_t::make_close(spec.fd));
                 } else {
                     auto target_fd = spec.get_target_as_fd();
                     assert(target_fd.has_value() &&
                            "fd redirection should have been validated already");
-                    this->push_back(make_unique<io_fd_t>(spec.fd, *target_fd));
+                    this->push_back(io_data_t::make_fd(spec.fd, *target_fd));
                 }
                 break;
             }
@@ -267,7 +305,7 @@ bool io_chain_t::append_from_specs(const redirection_spec_list_t &specs, const w
                     }
                     return false;
                 }
-                this->push_back(std::make_shared<io_file_t>(spec.fd, std::move(file)));
+                this->push_back(io_data_t::make_file(spec.fd, std::move(file)));
                 break;
             }
         }

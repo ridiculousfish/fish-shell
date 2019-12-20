@@ -376,52 +376,43 @@ static bool fork_child_for_process(const std::shared_ptr<job_t> &job, process_t 
 /// assign stdin to it; otherwise infer stdin from the IO chain.
 /// \return true on success, false if there is an exec error.
 static bool exec_internal_builtin_proc(parser_t &parser, const std::shared_ptr<job_t> &j,
-                                       process_t *p, const io_pipe_t *pipe_read,
+                                       process_t *p, const io_data_t *pipe_read,
                                        const io_chain_t &proc_io_chain, io_streams_t &streams) {
     assert(p->type == process_type_t::builtin && "Process must be a builtin");
     int local_builtin_stdin = STDIN_FILENO;
-    autoclose_fd_t locally_opened_stdin{};
 
     // If this is the first process, check the io redirections and see where we should
     // be reading from.
     if (pipe_read) {
-        local_builtin_stdin = pipe_read->pipe_fd();
+        local_builtin_stdin = pipe_read->old_fd;
     } else if (const auto in = proc_io_chain.io_for_fd(STDIN_FILENO)) {
         switch (in->io_mode) {
             case io_mode_t::fd: {
-                const io_fd_t *in_fd = static_cast<const io_fd_t *>(in.get());
                 // Ignore fd redirections from an fd other than the
                 // standard ones. e.g. in source <&3 don't actually read from fd 3,
                 // which is internal to fish. We still respect this redirection in
                 // that we pass it on as a block IO to the code that source runs,
                 // and therefore this is not an error.
-                if (in_fd->old_fd >= 0 && in_fd->old_fd < 3) {
-                    local_builtin_stdin = in_fd->old_fd;
+                if (in->old_fd >= 0 && in->old_fd < 3) {
+                    local_builtin_stdin = in->old_fd;
                 }
                 break;
             }
+
+            case io_mode_t::file:
             case io_mode_t::pipe: {
-                const io_pipe_t *in_pipe = static_cast<const io_pipe_t *>(in.get());
-                if (in_pipe->fd == STDIN_FILENO) {
-                    local_builtin_stdin = in_pipe->pipe_fd();
-                }
+                local_builtin_stdin = in->old_fd;
                 break;
             }
-            case io_mode_t::file: {
-                const io_file_t *in_file = static_cast<const io_file_t *>(in.get());
-                local_builtin_stdin = in_file->file_fd();
-                break;
-            }
+
             case io_mode_t::close: {
                 // FIXME: When requesting that stdin be closed, we really don't do
                 // anything. How should this be handled?
                 local_builtin_stdin = -1;
-
                 break;
             }
-            default: {
-                local_builtin_stdin = -1;
-                debug(1, _(L"Unknown input redirection type %d"), in->io_mode);
+            case io_mode_t::bufferfill: {
+                DIE("Should never have bufferfill as stdin");
                 break;
             }
         }
@@ -500,8 +491,7 @@ static bool handle_builtin_output(parser_t &parser, const std::shared_ptr<job_t>
     // need for a similar check for stderr.
     bool stdout_done = false;
     if (stdout_io && stdout_io->io_mode == io_mode_t::bufferfill) {
-        auto stdout_buffer = static_cast<const io_bufferfill_t *>(stdout_io.get())->buffer();
-        stdout_buffer->append_from_stream(stdout_stream);
+        stdout_io->buffer()->append_from_stream(stdout_stream);
         stdout_done = true;
     }
 
@@ -789,10 +779,10 @@ static bool exec_block_or_func_process(parser_t &parser, std::shared_ptr<job_t> 
                                        const fd_set_t &conflicts, io_chain_t io_chain,
                                        bool allow_buffering) {
     // Create an output buffer if we're piping to another process.
-    shared_ptr<io_bufferfill_t> block_output_bufferfill{};
+    shared_ptr<io_data_t> block_output_bufferfill{};
     if (!p->is_last_in_job && allow_buffering) {
         // Be careful to handle failure, e.g. too many open fds.
-        block_output_bufferfill = io_bufferfill_t::create(conflicts);
+        block_output_bufferfill = io_data_t::make_bufferfill(conflicts);
         if (!block_output_bufferfill) {
             job_mark_process_as_failed(j, p);
             return false;
@@ -825,7 +815,7 @@ static bool exec_block_or_func_process(parser_t &parser, std::shared_ptr<job_t> 
     // Remove our write pipe and forget it. This may close the pipe, unless another thread has
     // claimed it (background write) or another process has inherited it.
     io_chain.remove(block_output_bufferfill);
-    auto block_output_buffer = io_bufferfill_t::finish(std::move(block_output_bufferfill));
+    auto block_output_buffer = io_data_t::finish_bufferfill(std::move(block_output_bufferfill));
 
     std::string buffer_contents = block_output_buffer->buffer().newline_serialized();
     if (!buffer_contents.empty()) {
@@ -886,8 +876,8 @@ static bool exec_process_in_job(parser_t &parser, process_t *p, std::shared_ptr<
     io_chain_t process_net_io_chain = block_io;
 
     if (pipes.write.valid()) {
-        process_net_io_chain.push_back(std::make_shared<io_pipe_t>(
-            p->pipe_write_fd, false /* not input */, std::move(pipes.write)));
+        process_net_io_chain.push_back(
+            io_data_t::make_pipe(p->pipe_write_fd, std::move(pipes.write)));
     }
 
     // Append IOs from the process's redirection specs.

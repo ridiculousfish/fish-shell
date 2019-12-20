@@ -165,16 +165,31 @@ class separated_buffer_t {
 };
 
 /// Describes what type of IO operation an io_data_t represents.
-enum class io_mode_t { file, pipe, fd, close, bufferfill };
+enum class io_mode_t {
+    /// A redirection to a file, like '> /tmp/file.txt'
+    file,
+
+    /// A pipe redirection. Note these come in pairs.
+    pipe,
+
+    /// An fd redirection like '1>&2'.
+    fd,
+
+    /// A close redirection like '1>&-'.
+    close,
+
+    /// A special "bufferfill" redirection. This is a write end of a pipe such that, when written
+    /// to, it fills an io_buffer_t.
+    bufferfill
+};
 
 class io_buffer_t;
-class io_data_t;
+struct io_data_t;
 
 using io_data_ref_t = std::shared_ptr<const io_data_t>;
 
 /// io_data_t represents a redirection or pipe.
-class io_data_t {
-   public:
+struct io_data_t final {
     /// The type of redirection.
     const io_mode_t io_mode;
 
@@ -182,149 +197,58 @@ class io_data_t {
     /// For example in a | b, fd would be 1 (STDOUT_FILENO).
     const int fd;
 
-    /// The fd which gets dup2'd to 'fd', or invalid if this is a 'close' mode.
-    const autoclose_fd_t old_fd;
+    /// /// The fd which gets dup2'd to 'fd', or -1 if this is a 'close' mode.
+    const int old_fd;
+
+    /// Create a close redirection, for example 1>&-
+    static io_data_ref_t make_close(int fd);
+
+    /// Create an fd redirection. For example 1>&2 would pass 1, 2.
+    static io_data_ref_t make_fd(int fd, int old);
+
+    /// Create a redirection to an opened file or a pipe, which must not be invalid.
+    /// The result takes ownership of the file.
+    static io_data_ref_t make_file(int fd, autoclose_fd_t file);
+
+    /// Make a pipe. This is the same as make_file except it's clear it's for a pipe.
+    /// The result takes ownership of the file.
+    static io_data_ref_t make_pipe(int fd, autoclose_fd_t pipe);
+
+    /// Create a bufferfill which, when written to, fills the buffer with its contents.
+    /// \conflicts is used to ensure that none of the pipes we create overlap with a pipe that the
+    /// user has requested. Bufferfills always target STDOUT_FILENO. \returns nullptr on failure,
+    /// e.g. too many open fds.
+    /// Note bufferfills alone are "mutable" so this does not return a const pointer.
+    static std::shared_ptr<io_data_t> make_bufferfill(const fd_set_t &conflicts,
+                                                      size_t buffer_limit = 0);
+
+    /// Finish a bufferfill. Reset the receiver (possibly closing the write end of the pipe) and
+    /// complete the fillthread. \return the filled buffer.
+    static std::shared_ptr<io_buffer_t> finish_bufferfill(std::shared_ptr<io_data_t> &&filler);
+
+    /// Return the buffer for a bufferfill.
+    const std::shared_ptr<io_buffer_t> &buffer() const;
+
+    /// No assignment or copying allowed.
+    io_data_t(const io_data_t &rhs) = delete;
+    void operator=(const io_data_t &rhs) = delete;
+
+    /// Exposed only for make_shared; do not use directly.
+    io_data_t(io_mode_t m, int fd, int old_fd, autoclose_fd_t old_fd_owner = autoclose_fd_t{},
+              std::shared_ptr<io_buffer_t> buffer = {});
+
+    ~io_data_t();
+
+   private:
+    friend io_chain_t;
+
+    // If we own old_fd, then we ensure it gets closed here.
+    const autoclose_fd_t old_fd_owner_{};
 
     /// If we are filling a buffer, that buffer.
     const std::shared_ptr<io_buffer_t> buffer_;
 
-    /// Create a close redirection, for example 1>&-
-    io_data_ref_t make_close(int fd);
-
-    /// Create an fd redirection. For example 1>&2 would pass 1, 2.
-    io_data_ref_t make_fd(int fd, int old);
-
-    /// Create a redirection to an opened file or a pipe, which must not be invalid.
-    /// The result takes ownership of the file.
-    io_data_ref_t make_file(int fd, autoclose_fd_t old);
-
-    /// Create a bufferfill which, when written to, fills the buffer with its contents.
-    /// \returns nullptr on failure, e.g. too many open fds.
-    io_data_ref_t make_bufferfill(const fd_set_t &conflicts, size_t buffer_limit = 0);
-
-    /// Finish a bufferfill. Reset the receiver (possibly closing the write end of the pipe) and
-    /// complete the fillthread. \return the filled buffer.
-    static std::shared_ptr<io_buffer_t> finish_bufferfill(io_data_ref_t &&filler);
-
-   private:
-    io_data_t(io_mode_t m, int fd) : io_mode(m), fd(fd) {}
     void print() const;
-};
-
-/// Represents an FD redirection.
-class io_data_t {
-   private:
-    // No assignment or copying allowed.
-    io_data_t(const io_data_t &rhs);
-    void operator=(const io_data_t &rhs);
-
-   protected:
-    io_data_t(io_mode_t m, int f) : io_mode(m), fd(f) {}
-
-   public:
-    /// Type of redirect.
-    const io_mode_t io_mode;
-    /// FD to redirect.
-    const int fd;
-
-    virtual void print() const = 0;
-    virtual ~io_data_t() = 0;
-};
-
-class io_close_t : public io_data_t {
-   public:
-    explicit io_close_t(int f) : io_data_t(io_mode_t::close, f) {}
-
-    void print() const override;
-    ~io_close_t() override;
-};
-
-class io_fd_t : public io_data_t {
-   public:
-    /// fd to redirect specified fd to. For example, in 2>&1, old_fd is 1, and io_data_t::fd is 2.
-    const int old_fd;
-
-    void print() const override;
-
-    ~io_fd_t() override;
-
-    io_fd_t(int f, int old) : io_data_t(io_mode_t::fd, f), old_fd(old) {}
-};
-
-/// Represents a redirection to or from an opened file.
-class io_file_t : public io_data_t {
-   public:
-    void print() const override;
-
-    io_file_t(int f, autoclose_fd_t file);
-
-    ~io_file_t() override;
-
-    int file_fd() const { return file_fd_.fd(); }
-
-   private:
-    // The fd for the file which we are writing to or reading from.
-    autoclose_fd_t file_fd_;
-};
-
-/// Represents (one end) of a pipe.
-class io_pipe_t : public io_data_t {
-    // The pipe's fd. Conceptually this is dup2'd to io_data_t::fd.
-    autoclose_fd_t pipe_fd_;
-
-    /// Whether this is an input pipe. This is used only for informational purposes.
-    const bool is_input_;
-
-   public:
-    void print() const override;
-
-    io_pipe_t(int fd, bool is_input, autoclose_fd_t pipe_fd)
-        : io_data_t(io_mode_t::pipe, fd), pipe_fd_(std::move(pipe_fd)), is_input_(is_input) {}
-
-    ~io_pipe_t() override;
-
-    int pipe_fd() const { return pipe_fd_.fd(); }
-};
-
-class io_buffer_t;
-class io_chain_t;
-
-/// Represents filling an io_buffer_t. Very similar to io_pipe_t.
-/// Bufferfills always target stdout.
-class io_bufferfill_t : public io_data_t {
-    /// Write end. The other end is connected to an io_buffer_t.
-    const autoclose_fd_t write_fd_;
-
-    /// The receiving buffer.
-    const std::shared_ptr<io_buffer_t> buffer_;
-
-   public:
-    void print() const override;
-
-    // The ctor is public to support make_shared() in the static create function below.
-    // Do not invoke this directly.
-    io_bufferfill_t(autoclose_fd_t write_fd, std::shared_ptr<io_buffer_t> buffer)
-        : io_data_t(io_mode_t::bufferfill, STDOUT_FILENO),
-          write_fd_(std::move(write_fd)),
-          buffer_(std::move(buffer)) {}
-
-    ~io_bufferfill_t() override;
-
-    std::shared_ptr<io_buffer_t> buffer() const { return buffer_; }
-
-    /// \return the fd that, when written to, fills the buffer.
-    int write_fd() const { return write_fd_.fd(); }
-
-    /// Create an io_bufferfill_t which, when written from, fills a buffer with the contents.
-    /// \returns nullptr on failure, e.g. too many open fds.
-    ///
-    /// \param conflicts A set of fds. The function ensures that any pipe it makes does
-    /// not conflict with an fd redirection in this list.
-    static shared_ptr<io_bufferfill_t> create(const fd_set_t &conflicts, size_t buffer_limit = 0);
-
-    /// Reset the receiver (possibly closing the write end of the pipe), and complete the fillthread
-    /// of the buffer. \return the buffer.
-    static std::shared_ptr<io_buffer_t> finish(std::shared_ptr<io_bufferfill_t> &&filler);
 };
 
 class output_stream_t;
@@ -333,7 +257,7 @@ class output_stream_t;
 /// It is not an io_data_t.
 class io_buffer_t {
    private:
-    friend io_bufferfill_t;
+    friend io_data_t;
 
     /// Buffer storing what we have read.
     separated_buffer_t<std::string> buffer_;
