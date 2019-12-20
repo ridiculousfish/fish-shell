@@ -167,6 +167,50 @@ class separated_buffer_t {
 /// Describes what type of IO operation an io_data_t represents.
 enum class io_mode_t { file, pipe, fd, close, bufferfill };
 
+class io_buffer_t;
+class io_data_t;
+
+using io_data_ref_t = std::shared_ptr<const io_data_t>;
+
+/// io_data_t represents a redirection or pipe.
+class io_data_t {
+   public:
+    /// The type of redirection.
+    const io_mode_t io_mode;
+
+    /// Which fd is being redirected.
+    /// For example in a | b, fd would be 1 (STDOUT_FILENO).
+    const int fd;
+
+    /// The fd which gets dup2'd to 'fd', or invalid if this is a 'close' mode.
+    const autoclose_fd_t old_fd;
+
+    /// If we are filling a buffer, that buffer.
+    const std::shared_ptr<io_buffer_t> buffer_;
+
+    /// Create a close redirection, for example 1>&-
+    io_data_ref_t make_close(int fd);
+
+    /// Create an fd redirection. For example 1>&2 would pass 1, 2.
+    io_data_ref_t make_fd(int fd, int old);
+
+    /// Create a redirection to an opened file or a pipe, which must not be invalid.
+    /// The result takes ownership of the file.
+    io_data_ref_t make_file(int fd, autoclose_fd_t old);
+
+    /// Create a bufferfill which, when written to, fills the buffer with its contents.
+    /// \returns nullptr on failure, e.g. too many open fds.
+    io_data_ref_t make_bufferfill(const fd_set_t &conflicts, size_t buffer_limit = 0);
+
+    /// Finish a bufferfill. Reset the receiver (possibly closing the write end of the pipe) and
+    /// complete the fillthread. \return the filled buffer.
+    static std::shared_ptr<io_buffer_t> finish_bufferfill(io_data_ref_t &&filler);
+
+   private:
+    io_data_t(io_mode_t m, int fd) : io_mode(m), fd(fd) {}
+    void print() const;
+};
+
 /// Represents an FD redirection.
 class io_data_t {
    private:
