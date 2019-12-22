@@ -9,8 +9,15 @@ ENDIF()
 
 PROJECT(fish)
 
-# We are C++11.
-SET(CMAKE_CXX_STANDARD 11)
+# We are C++11, but can use C++14.
+LIST(FIND CMAKE_CXX_COMPILE_FEATURES "cxx_std_14" CXX_14_FLAG_IDX)
+IF (${CXX_14_FLAG_IDX} GREATER -1)
+  SET(CMAKE_CXX_STANDARD 14)
+ELSE()
+  SET(CMAKE_CXX_STANDARD 11)
+ENDIF()
+UNSET(CXX_14_FLAG_IDX)
+
 SET(DEFAULT_BUILD_TYPE "RelWithDebInfo")
 
 # Use the default flags (#6296) but remove -DNDEBUG so that asserts remain enabled.
