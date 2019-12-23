@@ -5,7 +5,10 @@
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "flog.h"
+#include "future_feature_flags.h"
+#include "postfork.h"
 #include "proc.h"
+#include "wutil.h"
 
 // Basic thread safe sorted vector of job IDs in use.
 // This is deliberately leaked to avoid dtor ordering issues - see #6539.
@@ -32,6 +35,13 @@ static void release_job_id(job_id_t jid) {
 }
 
 job_group_t::~job_group_t() {
+    if (owns_pgid_) {
+        // We own the pgid; waitpid() on it.
+        int stat = -1;
+        if (waitpid(*pgid_, &stat, 0) < 0) {
+            wperror(L"waitpid");
+        }
+    }
     if (props_.job_id > 0) {
         release_job_id(props_.job_id);
     }
@@ -46,6 +56,23 @@ void job_group_t::set_pgid(pid_t pgid) {
 }
 
 maybe_t<pid_t> job_group_t::get_pgid() const { return pgid_; }
+
+/// \return a new pid which can serve as a pgroup owner.
+/// The child process exits immediately.
+static pid_t create_owned_pgid(const wcstring &cmd) {
+    pid_t pid = execute_fork();
+    assert(pid >= 0 && "execute_fork should never return an invalid pid");
+    if (pid == 0) {
+        // The child can just exit directly; all we need is a pid which we can defer reaping.
+        exit_without_destructors(0);
+        DIE("exit_without_destructors should not return");
+    }
+    if (setpgid(pid, pid)) {
+        wperror(L"setpgid");
+    }
+    FLOG(exec_fork, "Fork", pid, "to act as pgroup owner for", cmd);
+    return pid;
+}
 
 void job_group_t::populate_group_for_job(job_t *job, const job_group_ref_t &proposed) {
     assert(!job->group && "Job already has a group");
@@ -83,17 +110,31 @@ void job_group_t::populate_group_for_job(job_t *job, const job_group_ref_t &prop
         props.wants_terminal = job->wants_job_control() && !job->from_event_handler();
         props.is_internal = can_use_internal;
         props.job_id = can_use_internal ? -1 : acquire_job_id();
-        job->group.reset(new job_group_t(props, job->command()));
+        job_group_ref_t group = job_group_ref_t(new job_group_t(props, job->command()));
 
         // Mark if it's foreground.
-        job->group->set_is_foreground(!initial_bg);
+        group->set_is_foreground(!initial_bg);
 
         // Perhaps this job should immediately live in fish's pgroup.
         // There's two reasons why it may be so:
         //  1. The job doesn't need job control.
         //  2. The first process in the job is internal to fish; this needs to own the tty.
         if (!can_use_internal && (!props.job_control || first_proc_internal)) {
-            job->group->set_pgid(getpgrp());
+            group->set_pgid(getpgrp());
         }
+
+        // Perhaps we should fork a process for this job immediately.
+        // This happens if concurrent execution is enabled, and our job contains at least one
+        // internal process. It's important that all processes end up in the same process group
+        // so that signal delivery works.
+        // TODO: in principle this could be deferred until it is needed. Certain pipelines may never
+        // even need a pgroup.
+        if (feature_test(features_t::concurrent) && !group->get_pgid() &&
+            job->processes.size() > 1 && job->has_internal_proc()) {
+            group->set_pgid(create_owned_pgid(job->command()));
+            group->owns_pgid_ = true;
+        }
+
+        job->group = std::move(group);
     }
 }
