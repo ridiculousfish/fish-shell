@@ -896,7 +896,8 @@ static launch_result_t exec_concurrent_builtin_process(parser_t &parser,
 }
 
 static bool use_concurrent_internal_procs(const std::shared_ptr<job_t> &j) {
-    return feature_test(features_t::concurrent) && j->processes.size() > 1;
+    return feature_test(features_t::concurrent) && j->has_internal_proc() &&
+           (j->processes.size() > 1 || j->is_initially_background());
 }
 
 /// Executes a process \p \p in \p job, using the pipes \p pipes (which may have invalid fds if this
