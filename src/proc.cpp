@@ -47,6 +47,7 @@
 #include "output.h"
 #include "parse_tree.h"
 #include "parser.h"
+#include "postfork.h"
 #include "proc.h"
 #include "reader.h"
 #include "sanity.h"
@@ -280,6 +281,31 @@ int job_tree_t::get_cancel_signal() const {
     return cancel_signal_;
 }
 
+pid_t job_tree_t::pgroup_owner() {
+    assert(this != principal().get() && "Principal job tree should never make a pgroup owner");
+    std::call_once(owned_pgroup_flag_, [this] {
+        assert(!owned_pgroup_ && "Should not already have an owned pgroup");
+        pid_t pid = execute_fork();
+        assert(pid >= 0 && "execute_fork should never return an invalid pid");
+        if (pid == 0) {
+            // The child can just exit directly; all we need is a pid which we can defer reaping.
+            exit_without_destructors(0);
+            DIE("exit_without_destructors should not return");
+        }
+        this->owned_pgroup_ = pid;
+    });
+    return *owned_pgroup_;
+}
+
+job_tree_t::~job_tree_t() {
+    if (owned_pgroup_) {
+        int stat = -1;
+        if (waitpid(*owned_pgroup_, &stat, 0) < 0) {
+            wperror(L"waitpid");
+        }
+    }
+}
+
 void job_mark_process_as_failed(const std::shared_ptr<job_t> &job, const process_t *failed_proc) {
     // The given process failed to even lift off (e.g. posix_spawn failed) and so doesn't have a
     // valid pid. Mark it and everything after it as dead.
@@ -376,6 +402,20 @@ bool job_t::has_external_proc() const {
 bool job_t::use_concurrent_internal_procs() const {
     return feature_test(features_t::concurrent) && this->has_internal_proc() &&
            (this->processes.size() > 1 || !is_foreground());
+}
+
+bool job_t::needs_external_pgroup_owner() const {
+    // We need an external pgroup owner if we don't have a pgroup already and if we are going to
+    // execute at least one external process.
+    // Note this should only be called if we are going to be executed concurrently with some other
+    // function.
+    if (this->pgid != INVALID_PID) return false;
+    for (const auto &p : this->processes) {
+        if (p->type == process_type_t::external) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// A list of pids/pgids that have been disowned. They are kept around until either they exit or

@@ -202,13 +202,25 @@ class job_tree_t {
     /// Set whether we are cancel-signalled.
     void set_cancel_signal(int sig) { cancel_signal_ = sig; }
 
+    /// Return a pid to own the pgroup for this job, creating it if necessary.
+    /// The child process exits immediately, but is not reaped until the job tree is deallocated.
+    pid_t pgroup_owner();
+
+    ~job_tree_t();
+
    private:
     /// A note that we have received a cancellation-inducing signal.
     /// The signal is directed at the focused tree.
     static volatile sig_atomic_t pending_cancel_signal_;
 
     /// The current (real) process group ID which is foreground in this tree.
-    pid_t fg_pgrp_{INVALID_PID};
+    relaxed_atomic_t<pid_t> fg_pgrp_{INVALID_PID};
+
+    /// Once flag for construction of the owned pgroup.
+    std::once_flag owned_pgroup_flag_{};
+
+    /// A pid which, if not none(), we will waitpid in the destructor.
+    maybe_t<pid_t> owned_pgroup_;
 
     /// Whether we have received a cancellation-inducing signal.
     /// This is mutable because it may be computed lazily.
@@ -551,6 +563,12 @@ class job_t {
 
     /// \return whether this job, when executed, should use concurrent internal fish processes.
     bool use_concurrent_internal_procs() const;
+
+    /// \return whether this job, when executed, will (directly) spawn a new process and doesn't
+    /// know what pgroup to give it. This happens when multiple functions or blocks are executing
+    /// concurrently in the same job; it's important that all the external processes spawned in
+    /// those jobs get the same process group so that signals are delivered to all of them.
+    bool needs_external_pgroup_owner() const;
 
     // Helper functions to check presence of flags on instances of jobs
     /// The job has been fully constructed, i.e. all its member processes have been launched
