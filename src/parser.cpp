@@ -344,7 +344,9 @@ operation_context_t parser_t::context() {
 std::shared_ptr<parser_t> parser_t::branch(const job_tree_ref_t &pg) const {
     std::shared_ptr<parser_t> clone{new parser_t(variables->branch(), pg)};
     // Hackish way to propagate signalling.
-    pg->set_cancel_signal(get_cancel_signal());
+    if (int sig = get_cancel_signal()) {
+        pg->set_cancel_signal(sig);
+    }
     clone->block_list = this->block_list;
     clone->eval_level = this->eval_level;
     clone->library_data = this->library_data;
@@ -675,6 +677,9 @@ eval_res_t parser_t::eval_node(const parsed_source_ref_t &ps, tnode_t<T> node,
     // successfully cancel (or there was nothing to cancel); clear the flag. If our block stack is
     // not empty, we are still in the process of cancelling; refuse to evaluate anything.
     if (int sig = this->get_cancel_signal()) {
+        // If we are the principal parser, we want to clear cancellation so the user can do
+        // something new. If we are not principal, then we are part of running some concurrent job
+        // and we want our entire job tree to end.
         if (block_list.empty() && is_principal()) {
             get_job_tree().set_cancel_signal(0);
         } else

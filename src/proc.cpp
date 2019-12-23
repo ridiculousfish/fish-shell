@@ -306,7 +306,8 @@ static void handle_child_status(parser_t &parser, process_t *proc, proc_status_t
         int sig = status.signal_code();
         if (sig == SIGINT || sig == SIGQUIT) {
             if (session_interactivity() != session_interactivity_t::not_interactive) {
-                // In an interactive session, inform the parser that it has been cancel-signalled.
+                // In an interactive session, mark the job tree as cancelled so control-C
+                // returns control to the user.
                 parser.get_job_tree().set_cancel_signal(sig);
             } else {
                 // Deliver the SIGINT or SIGQUIT signal to ourself since we're not interactive.
