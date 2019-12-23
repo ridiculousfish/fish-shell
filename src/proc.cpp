@@ -373,8 +373,8 @@ bool job_t::has_external_proc() const {
 }
 
 bool job_t::use_concurrent_internal_procs() const {
-    return feature_test(features_t::concurrent) && this->processes.size() > 1 &&
-           this->has_internal_proc();
+    return feature_test(features_t::concurrent) && this->has_internal_proc() &&
+           (this->processes.size() > 1 || !is_foreground());
 }
 
 /// A list of pids/pgids that have been disowned. They are kept around until either they exit or
