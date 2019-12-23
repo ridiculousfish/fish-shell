@@ -29,6 +29,7 @@
 #include "expand.h"
 #include "flog.h"
 #include "function.h"
+#include "future_feature_flags.h"
 #include "io.h"
 #include "job_group.h"
 #include "maybe.h"
@@ -1549,7 +1550,8 @@ void parse_execution_context_t::setup_group(job_t *j) {
         return;
     }
 
-    if (j->processes.front()->is_internal() || !this->use_job_control()) {
+    if (j->processes.front()->is_internal() || !this->use_job_control() ||
+        (feature_test(features_t::concurrent) && j->has_internal_proc())) {
         // This job either doesn't have a pgroup (e.g. a simple block), or lives in fish's pgroup.
         j->group = job_group_t::create(j->command(), j->wants_job_id());
     } else {
