@@ -5,7 +5,9 @@
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "flog.h"
+#include "future_feature_flags.h"
 #include "proc.h"
+#include "wutil.h"
 
 // Basic thread safe sorted vector of job IDs in use.
 // This is deliberately leaked to avoid dtor ordering issues - see #6539.
@@ -97,11 +99,19 @@ job_group_ref_t job_group_t::resolve_group_for_job(const job_t &job,
     result->set_is_foreground(!initial_bg);
 
     // Perhaps this job should immediately live in fish's pgroup.
-    // There's two reasons why it may be so:
+    // There's three reasons why it may be so:
     //  1. The job doesn't need job control.
     //  2. The first process in the job is internal to fish; this needs to own the tty.
-    if (!can_use_internal && (!props.job_control || first_proc_internal)) {
-        result->set_pgid(getpgrp());
+    //  3. The job has at least one concurrent internal process.
+    if (!can_use_internal) {
+        if (!props.job_control || first_proc_internal) {
+            result->set_pgid(getpgrp());
+        } else if (feature_test(features_t::concurrent) && job.has_internal_proc()) {
+            // The job has at least one concurrent process.
+            // Concurrent mode doesn't yet support job control; we place everything in fish's
+            // pgroup.
+            result->set_pgid(getpgrp());
+        }
     }
     return result;
 }
