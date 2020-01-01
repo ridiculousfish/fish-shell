@@ -2486,7 +2486,7 @@ void reader_pop() {
 void reader_data_t::import_history_if_necessary() {
     // Import history from older location (config path) if our current history is empty.
     if (history && history->is_empty()) {
-        history->populate_from_config_path();
+        history->populate_from_legacy_paths();
     }
 
     // Import history from bash, etc. if our current history is still empty and is the default
