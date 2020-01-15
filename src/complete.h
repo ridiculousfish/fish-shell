@@ -173,7 +173,7 @@ void complete_remove_all(const wcstring &cmd, bool cmd_is_path);
 class parser_t;
 void complete(const wcstring &cmd, std::vector<completion_t> *out_comps,
               completion_request_flags_t flags, const environment_t &vars,
-              const std::shared_ptr<parser_t> &parser, const cancel_poller_t &check_cancel);
+              const std::shared_ptr<parser_t> &parser, const cancel_checker_t &check_cancel);
 
 /// Return a list of all current completions.
 wcstring complete_print();

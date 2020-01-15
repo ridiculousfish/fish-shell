@@ -1646,7 +1646,7 @@ static bool expand_test(const wchar_t *in, expand_flags_t flags, ...) {
     parse_error_list_t errors;
     auto parser = parser_t::principal_parser().shared();
 
-    if (expand_string(in, &output, flags, pwd_environment_t{}, parser, &errors) ==
+    if (expand_string(in, &output, flags, pwd_environment_t{}, parser, no_cancel, &errors) ==
         expand_result_t::error) {
         if (errors.empty()) {
             err(L"Bug: Parse error reported but no error text found.");
@@ -2590,8 +2590,6 @@ static void test_autoload() {
     autoload_tester_t::run_test();
 }
 
-static bool just_no() { return false; }
-
 static void test_complete() {
     say(L"Testing complete");
 
@@ -2616,7 +2614,7 @@ static void test_complete() {
 
     auto do_complete = [&](const wcstring &cmd, completion_request_flags_t flags) {
         completion_list_t comps;
-        complete(cmd, &comps, flags, vars, parser, just_no);
+        complete(cmd, &comps, flags, vars, parser, no_cancel);
         return comps;
     };
 
@@ -2791,7 +2789,7 @@ static void test_complete() {
     auto &pvars = parser_t::principal_parser().vars();
     function_add(L"testabbrsonetwothreefour", {}, nullptr, {});
     int ret = pvars.set_one(L"_fish_abbr_testabbrsonetwothreezero", ENV_LOCAL, L"expansion");
-    complete(L"testabbrsonetwothree", &completions, {}, pvars, parser, just_no);
+    complete(L"testabbrsonetwothree", &completions, {}, pvars, parser, no_cancel);
     do_test(ret == 0);
     do_test(completions.size() == 2);
     do_test(completions.at(0).completion == L"four");
@@ -2876,7 +2874,7 @@ static void test_completion_insertions() {
 static void perform_one_autosuggestion_cd_test(const wcstring &command, const wcstring &expected,
                                                const environment_t &vars, long line) {
     std::vector<completion_t> comps;
-    complete(command, &comps, completion_request_t::autosuggestion, vars, nullptr, just_no);
+    complete(command, &comps, completion_request_t::autosuggestion, vars, nullptr, no_cancel);
 
     bool expects_error = (expected == L"<error>");
 
@@ -2912,7 +2910,7 @@ static void perform_one_autosuggestion_cd_test(const wcstring &command, const wc
 static void perform_one_completion_cd_test(const wcstring &command, const wcstring &expected,
                                            const environment_t &vars, long line) {
     std::vector<completion_t> comps;
-    complete(command, &comps, {}, vars, nullptr, just_no);
+    complete(command, &comps, {}, vars, nullptr, no_cancel);
 
     bool expects_error = (expected == L"<error>");
 
@@ -3053,7 +3051,7 @@ static void test_autosuggest_suggest_special() {
 static void perform_one_autosuggestion_should_ignore_test(const wcstring &command, long line) {
     completion_list_t comps;
     complete(command, &comps, completion_request_t::autosuggestion, null_environment_t{}, nullptr,
-             just_no);
+             no_cancel);
     do_test(comps.empty());
     if (!comps.empty()) {
         const wcstring &suggestion = comps.front().completion;
@@ -4653,7 +4651,7 @@ static void test_highlighting() {
         do_test(expected_colors.size() == text.size());
 
         std::vector<highlight_spec_t> colors(text.size());
-        highlight_shell(text, colors, 20, NULL, vars);
+        highlight_shell(text, colors, 20, NULL, vars, no_cancel);
 
         if (expected_colors.size() != colors.size()) {
             err(L"Color vector has wrong size! Expected %lu, actual %lu", expected_colors.size(),

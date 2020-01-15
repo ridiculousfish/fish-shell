@@ -115,11 +115,6 @@ size_t reader_get_cursor_pos();
 /// selection, true otherwise.
 bool reader_get_selection(size_t *start, size_t *len);
 
-/// Return whether we have been interrupted and should cancel the current operation.
-/// This may be because we received a sigint, or because we are in a background thread
-/// and the job is now stale.
-bool reader_test_should_cancel();
-
 /// Return the value of the interrupted flag, which is set by the sigint handler, and clear it if it
 /// was set. In practice this will return 0 or SIGINT.
 int reader_test_and_clear_interrupted();
@@ -150,12 +145,13 @@ void reader_pop();
 typedef void (*complete_function_t)(const wcstring &, std::vector<completion_t> *,
                                     completion_request_flags_t, const environment_t &,
                                     const std::shared_ptr<parser_t> &parser,
-                                    const cancel_poller_t &cancel_poller);
+                                    const cancel_checker_t &cancel_checker);
 void reader_set_complete_function(complete_function_t);
 
 /// The type of a highlight function.
 using highlight_function_t = void (*)(const wcstring &, std::vector<highlight_spec_t> &, size_t,
-                                      wcstring_list_t *, const environment_t &vars);
+                                      wcstring_list_t *, const environment_t &vars,
+                                      const cancel_checker_t &cancel_checker);
 
 /// Function type for testing if a string is valid for the reader to return.
 using test_function_t = parser_test_error_bits_t (*)(parser_t &, const wcstring &);

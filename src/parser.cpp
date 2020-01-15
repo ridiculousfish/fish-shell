@@ -323,8 +323,8 @@ std::vector<completion_t> parser_t::expand_argument_list(const wcstring &arg_lis
     tnode_t<grammar::freestanding_argument_list> arg_list(&tree, &tree.at(0));
     while (auto arg = arg_list.next_in_list<grammar::argument>()) {
         const wcstring arg_src = arg.get_source(arg_list_src);
-        if (expand_string(arg_src, &result, eflags, vars, parser, nullptr /* errors */) ==
-            expand_result_t::error) {
+        if (expand_string(arg_src, &result, eflags, vars, parser, parser->cancel_checker(),
+                          nullptr /* errors */) == expand_result_t::error) {
             break;  // failed to expand a string
         }
     }
@@ -333,7 +333,7 @@ std::vector<completion_t> parser_t::expand_argument_list(const wcstring &arg_lis
 
 std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
-cancel_poller_t parser_t::cancel_poller() const {
+cancel_checker_t parser_t::cancel_checker() const {
     return [this]() { return this->cancellation_signal != 0; };
 }
 

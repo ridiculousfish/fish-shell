@@ -268,7 +268,23 @@ std::shared_ptr<T> move_to_sharedptr(T &&v) {
 
 /// A function type to check for cancellation.
 /// \return true if execution should cancel.
-using cancel_poller_t = std::function<bool()>;
+using cancel_checker_t = std::function<bool()>;
+inline bool no_cancel() { return false; }
+
+/// A type which knows how to hold onto a cancel checker.
+struct cancel_checkable_t {
+    bool check_cancel() {
+        cancelled = cancelled || cancel_checker();
+        return cancelled;
+    }
+
+    explicit cancel_checkable_t(const cancel_checker_t &func) : cancel_checker(func) {
+        assert(func != nullptr && "Empty function for cancel checker, use no_cancel instead");
+    }
+
+    const cancel_checker_t &cancel_checker;
+    bool cancelled{false};
+};
 
 /// Print a stack trace to stderr.
 void show_stackframe(const wchar_t msg_level, int frame_count = 100, int skip_levels = 0);

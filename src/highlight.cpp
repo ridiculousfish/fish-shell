@@ -439,7 +439,7 @@ bool autosuggest_validate_from_history(const history_item_t &item,
 
     if (parsed_command == L"cd" && !cd_dir.empty()) {
         // We can possibly handle this specially.
-        if (expand_one(cd_dir, expand_flag::skip_cmdsubst, vars, nullptr)) {
+        if (expand_one(cd_dir, expand_flag::skip_cmdsubst, vars, nullptr, no_cancel)) {
             handled = true;
             bool is_help =
                 string_prefixes_string(cd_dir, L"--help") || string_prefixes_string(cd_dir, L"-h");
@@ -762,7 +762,7 @@ static void color_string_internal(const wcstring &buffstr, highlight_spec_t base
 }
 
 /// Syntax highlighter helper.
-class highlighter_t {
+class highlighter_t : private cancel_checkable_t {
     // The string we're highlighting. Note this is a reference memmber variable (to avoid copying)!
     // We must not outlive this!
     const wcstring &buff;
@@ -801,8 +801,9 @@ class highlighter_t {
    public:
     // Constructor
     highlighter_t(const wcstring &str, size_t pos, const environment_t &ev, wcstring wd,
-                  bool can_do_io)
-        : buff(str),
+                  bool can_do_io, const cancel_checker_t &cancel_check)
+        : cancel_checkable_t(cancel_check),
+          buff(str),
           cursor_pos(pos),
           vars(ev),
           io_ok(can_do_io),
@@ -892,7 +893,8 @@ void highlighter_t::color_argument(tnode_t<g::tok_string> node) {
 
         // Highlight it recursively.
         highlighter_t cmdsub_highlighter(cmdsub_contents, cursor_subpos, this->vars,
-                                         this->working_directory, this->io_ok);
+                                         this->working_directory, this->io_ok,
+                                         this->cancel_checker);
         const color_array_t &subcolors = cmdsub_highlighter.highlight();
 
         // Copy out the subcolors back into our array.
@@ -944,7 +946,7 @@ void highlighter_t::color_arguments(const std::vector<tnode_t<g::argument>> &arg
         if (cmd_is_cd) {
             // Mark this as an error if it's not 'help' and not a valid cd path.
             wcstring param = arg.get_source(this->buff);
-            if (expand_one(param, expand_flag::skip_cmdsubst, vars, nullptr)) {
+            if (expand_one(param, expand_flag::skip_cmdsubst, vars, nullptr, cancel_checker)) {
                 bool is_help = string_prefixes_string(param, L"--help") ||
                                string_prefixes_string(param, L"-h");
                 if (!is_help && this->io_ok &&
@@ -988,7 +990,8 @@ void highlighter_t::color_redirection(tnode_t<g::redirection> redirection_node) 
                 // I/O is disallowed, so we don't have much hope of catching anything but gross
                 // errors. Assume it's valid.
                 target_is_valid = true;
-            } else if (!expand_one(target, expand_flag::skip_cmdsubst, vars, nullptr)) {
+            } else if (!expand_one(target, expand_flag::skip_cmdsubst, vars, nullptr,
+                                   cancel_checker)) {
                 // Could not be expanded.
                 target_is_valid = false;
             } else {
@@ -1333,26 +1336,30 @@ std::string colorize(const wcstring &text, const std::vector<highlight_spec_t> &
 }
 
 void highlight_shell(const wcstring &buff, std::vector<highlight_spec_t> &color, size_t pos,
-                     wcstring_list_t *error, const environment_t &vars) {
+                     wcstring_list_t *error, const environment_t &vars,
+                     const cancel_checker_t &cancel_check) {
     UNUSED(error);
     // Do something sucky and get the current working directory on this background thread. This
     // should really be passed in.
     const wcstring working_directory = vars.get_pwd_slash();
 
     // Highlight it!
-    highlighter_t highlighter(buff, pos, vars, working_directory, true /* can do IO */);
+    highlighter_t highlighter(buff, pos, vars, working_directory, true /* can do IO */,
+                              cancel_check);
     color = highlighter.highlight();
 }
 
 void highlight_shell_no_io(const wcstring &buff, std::vector<highlight_spec_t> &color, size_t pos,
-                           wcstring_list_t *error, const environment_t &vars) {
+                           wcstring_list_t *error, const environment_t &vars,
+                           const cancel_checker_t &cancel_checker) {
     UNUSED(error);
     // Do something sucky and get the current working directory on this background thread. This
     // should really be passed in.
     const wcstring working_directory = vars.get_pwd_slash();
 
     // Highlight it!
-    highlighter_t highlighter(buff, pos, vars, working_directory, false /* no IO allowed */);
+    highlighter_t highlighter(buff, pos, vars, working_directory, false /* no IO allowed */,
+                              cancel_checker);
     color = highlighter.highlight();
 }
 
@@ -1442,9 +1449,11 @@ static void highlight_universal_internal(const wcstring &buffstr,
 }
 
 void highlight_universal(const wcstring &buff, std::vector<highlight_spec_t> &color, size_t pos,
-                         wcstring_list_t *error, const environment_t &vars) {
+                         wcstring_list_t *error, const environment_t &vars,
+                         const cancel_checker_t &cancel_checker) {
     UNUSED(error);
     UNUSED(vars);
+    UNUSED(cancel_checker);
     assert(buff.size() == color.size());
     std::fill(color.begin(), color.end(), highlight_spec_t{});
     highlight_universal_internal(buff, color, pos);

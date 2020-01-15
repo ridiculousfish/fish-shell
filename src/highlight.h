@@ -84,12 +84,14 @@ std::string colorize(const wcstring &text, const std::vector<highlight_spec_t> &
 /// \param error a list in which a description of each error will be inserted. May be 0, in whcich
 /// case no error descriptions will be generated.
 void highlight_shell(const wcstring &buffstr, std::vector<highlight_spec_t> &color, size_t pos,
-                     wcstring_list_t *error, const environment_t &vars);
+                     wcstring_list_t *error, const environment_t &vars,
+                     const cancel_checker_t &cancel_check);
 
 /// Perform a non-blocking shell highlighting. The function will not do any I/O that may block. As a
 /// result, invalid commands may not be detected, etc.
 void highlight_shell_no_io(const wcstring &buffstr, std::vector<highlight_spec_t> &color,
-                           size_t pos, wcstring_list_t *error, const environment_t &vars);
+                           size_t pos, wcstring_list_t *error, const environment_t &vars,
+                           const cancel_checker_t &cancel_checker = no_cancel);
 
 /// Perform syntax highlighting for the text in buff. Matching quotes and parenthesis are
 /// highlighted. The result is stored in the color array as a color_code from the HIGHLIGHT_ enum
@@ -102,7 +104,8 @@ void highlight_shell_no_io(const wcstring &buffstr, std::vector<highlight_spec_t
 /// \param error a list in which a description of each error will be inserted. May be 0, in whcich
 /// case no error descriptions will be generated.
 void highlight_universal(const wcstring &buffstr, std::vector<highlight_spec_t> &color, size_t pos,
-                         wcstring_list_t *error, const environment_t &vars);
+                         wcstring_list_t *error, const environment_t &vars,
+                         const cancel_checker_t &cancel_checker);
 
 /// \return an RGB color for a given highlight spec.
 rgb_color_t highlight_get_color(const highlight_spec_t &highlight, bool is_background);

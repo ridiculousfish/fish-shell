@@ -127,10 +127,6 @@ enum class jump_precision_t { till, to };
 /// background threads to notice it and skip doing work that they would otherwise have to do.
 static std::atomic<unsigned> s_generation;
 
-/// This pthreads generation count is set when an autosuggestion background thread starts up, so it
-/// can easily check if the work it is doing is no longer useful.
-static thread_local unsigned s_thread_generation;
-
 /// Helper to get the generation count
 static inline unsigned read_generation_count() {
     return s_generation.load(std::memory_order_relaxed);
@@ -145,6 +141,8 @@ void editable_line_t::insert_string(const wcstring &str, size_t start, size_t le
     this->text.insert(this->position, str, start, len);
     this->position += len;
 }
+
+static bool reader_test_interrupted();
 
 namespace {
 
@@ -839,15 +837,9 @@ void reader_data_t::repaint_if_needed() {
     }
 }
 
-void reader_reset_interrupted() { interrupted = 0; }
+static bool reader_test_interrupted() { return interrupted != 0; }
 
-bool reader_test_should_cancel() {
-    if (is_main_thread()) {
-        return interrupted;
-    } else {
-        return read_generation_count() != s_thread_generation;
-    }
-}
+void reader_reset_interrupted() { interrupted = 0; }
 
 int reader_test_and_clear_interrupted() {
     int res = interrupted;
@@ -1284,10 +1276,9 @@ static std::function<autosuggestion_result_t(void)> get_autosuggestion_performer
     return [=]() -> autosuggestion_result_t {
         ASSERT_IS_BACKGROUND_THREAD();
         const autosuggestion_result_t nothing = {};
-        s_thread_generation = generation_count;
 
         // A lambda to decide if we should cancel.
-        auto check_cancel = [generation_count] {
+        cancel_checker_t check_cancel = [generation_count] {
             return generation_count != read_generation_count();
         };
         if (check_cancel()) {
@@ -1299,8 +1290,9 @@ static std::function<autosuggestion_result_t(void)> get_autosuggestion_performer
             return nothing;
         }
 
-        history_search_t searcher(*history, search_string, history_search_type_t::prefix);
-        while (!reader_test_should_cancel() && searcher.go_backwards()) {
+        history_search_t searcher(*history, search_string, history_search_type_t::prefix,
+                                  history_search_flags_t{});
+        while (!check_cancel() && searcher.go_backwards()) {
             const history_item_t &item = searcher.current_item();
 
             // Skip items with newlines because they make terrible autosuggestions.
@@ -1313,7 +1305,7 @@ static std::function<autosuggestion_result_t(void)> get_autosuggestion_performer
         }
 
         // Maybe cancel here.
-        if (reader_test_should_cancel()) return nothing;
+        if (check_cancel()) return nothing;
 
         // Here we do something a little funny. If the line ends with a space, and the cursor is not
         // at the end, don't use completion autosuggestions. It ends up being pretty weird seeing
@@ -2041,13 +2033,12 @@ static std::function<highlight_result_t(void)> get_highlight_performer(
     unsigned int generation_count = read_generation_count();
     return [=]() -> highlight_result_t {
         if (text.empty()) return {};
-        if (generation_count != read_generation_count()) {
-            // The gen count has changed, so don't do anything.
-            return {};
-        }
-        s_thread_generation = generation_count;
+        cancel_checker_t check_cancel = [generation_count] {
+            // Cancel if the generation count changed.
+            return generation_count != read_generation_count();
+        };
         std::vector<highlight_spec_t> colors(text.size(), highlight_spec_t{});
-        highlight_func(text, colors, match_highlight_pos, nullptr /* error */, *vars);
+        highlight_func(text, colors, match_highlight_pos, nullptr /* error */, *vars, check_cancel);
         return {std::move(colors), text};
     };
 }
@@ -2568,8 +2559,8 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
                 // std::fwprintf(stderr, L"Complete (%ls)\n", buffcpy.c_str());
                 completion_request_flags_t complete_flags = {completion_request_t::descriptions,
                                                              completion_request_t::fuzzy_match};
-                auto check_cancel = [] { return interrupted != 0; };
-                complete_func(buffcpy, &rls.comp, complete_flags, vars, parser_ref, check_cancel);
+                complete_func(buffcpy, &rls.comp, complete_flags, vars, parser_ref,
+                              reader_test_interrupted);
 
                 // User-supplied completions may have changed the commandline - prevent buffer
                 // overflow.
