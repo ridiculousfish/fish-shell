@@ -333,6 +333,10 @@ std::vector<completion_t> parser_t::expand_argument_list(const wcstring &arg_lis
 
 std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
+cancel_poller_t parser_t::cancel_poller() const {
+    return [this]() { return this->cancellation_signal != 0; };
+}
+
 /// Append stack trace info for the block \p b to \p trace.
 static void append_block_description_to_stack_trace(const block_t &b, wcstring &trace,
                                                     const environment_t &vars) {

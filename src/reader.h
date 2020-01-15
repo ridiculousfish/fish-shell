@@ -149,7 +149,8 @@ void reader_pop();
 /// Specify function to use for finding possible tab completions.
 typedef void (*complete_function_t)(const wcstring &, std::vector<completion_t> *,
                                     completion_request_flags_t, const environment_t &,
-                                    const std::shared_ptr<parser_t> &parser);
+                                    const std::shared_ptr<parser_t> &parser,
+                                    const cancel_poller_t &cancel_poller);
 void reader_set_complete_function(complete_function_t);
 
 /// The type of a highlight function.

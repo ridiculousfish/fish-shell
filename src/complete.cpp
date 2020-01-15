@@ -44,7 +44,6 @@
 #include "parser_keywords.h"
 #include "path.h"
 #include "proc.h"
-#include "reader.h"
 #include "tnode.h"
 #include "util.h"
 #include "wcstringutil.h"
@@ -329,6 +328,9 @@ class completer_t {
     /// The output completions.
     std::vector<completion_t> completions;
 
+    /// Reference to function for cancel checking.
+    const cancel_poller_t &cancel_poller;
+
     /// Table of completions conditions that have already been tested and the corresponding test
     /// results.
     typedef std::unordered_map<wcstring, bool> condition_cache_t;
@@ -393,13 +395,20 @@ class completer_t {
 
     void escape_opening_brackets(const wcstring &argument);
 
+    /// \return if we should stop completing.
+    bool check_cancel() const { return cancel_poller(); }
+
     void mark_completions_duplicating_arguments(const wcstring &prefix,
                                                 const std::vector<tok_t> &args);
 
    public:
     completer_t(const environment_t &vars, std::shared_ptr<parser_t> parser, wcstring c,
-                completion_request_flags_t f)
-        : vars(vars), parser(std::move(parser)), cmd(std::move(c)), flags(f) {}
+                completion_request_flags_t f, const cancel_poller_t &cancel_poller)
+        : vars(vars),
+          parser(std::move(parser)),
+          cmd(std::move(c)),
+          flags(f),
+          cancel_poller(cancel_poller) {}
 
     void perform();
 
@@ -1107,7 +1116,7 @@ bool completer_t::complete_param(const wcstring &cmd_orig, const wcstring &popt,
 /// Perform generic (not command-specific) expansions on the specified string.
 void completer_t::complete_param_expand(const wcstring &str, bool do_file,
                                         bool handle_as_special_cd) {
-    if (reader_test_should_cancel()) return;
+    if (check_cancel()) return;
     expand_flags_t flags =
         this->expand_flags() | expand_flag::skip_cmdsubst | expand_flag::for_completions;
 
@@ -1315,7 +1324,7 @@ bool completer_t::try_complete_user(const wcstring &str) {
     setpwent();
     // cppcheck-suppress getpwentCalled
     while (struct passwd *pw = getpwent()) {
-        if (reader_test_should_cancel()) {
+        if (check_cancel()) {
             break;
         }
         const wcstring pw_name_str = str2wcstring(pw->pw_name);
@@ -1353,10 +1362,11 @@ using wrap_chain_visited_set_t = std::set<std::pair<wcstring, wcstring>>;
 // Recursive implementation of walk_wrap_chain().
 static void walk_wrap_chain_recursive(const wcstring &command_line, source_range_t command_range,
                                       const wrap_chain_visitor_t &visitor,
-                                      wrap_chain_visited_set_t *visited, size_t depth) {
+                                      wrap_chain_visited_set_t *visited, size_t depth,
+                                      const cancel_poller_t &check_cancel) {
     // Limit our recursion depth. This prevents cycles in the wrap chain graph from overflowing.
     if (depth > 24) return;
-    if (reader_test_should_cancel()) return;
+    if (check_cancel()) return;
 
     // Extract command from the command line and invoke the receiver with it.
     wcstring command(command_line, command_range.start, command_range.length);
@@ -1382,7 +1392,7 @@ static void walk_wrap_chain_recursive(const wcstring &command_line, source_range
                     source_range_t faux_source_range{uint32_t(where),
                                                      uint32_t(wrapped_command.size())};
                     walk_wrap_chain_recursive(faux_commandline, faux_source_range, visitor, visited,
-                                              depth + 1);
+                                              depth + 1, check_cancel);
                 }
             }
         }
@@ -1395,9 +1405,10 @@ static void walk_wrap_chain_recursive(const wcstring &command_line, source_range
 // target wrapped by the given command, update the command line with that target and invoke this
 // recursively.
 static void walk_wrap_chain(const wcstring &command_line, source_range_t command_range,
-                            const wrap_chain_visitor_t &visitor) {
+                            const wrap_chain_visitor_t &visitor,
+                            const cancel_poller_t &check_cancel) {
     wrap_chain_visited_set_t visited;
-    walk_wrap_chain_recursive(command_line, command_range, visitor, &visited, 0);
+    walk_wrap_chain_recursive(command_line, command_range, visitor, &visited, 0, check_cancel);
 }
 
 /// If the argument contains a '[' typed by the user, completion by appending to the argument might
@@ -1601,7 +1612,7 @@ void completer_t::perform() {
                         [&] { parser->libdata().transient_commandlines.pop_back(); });
                     std::vector<completion_t> comp;
                     complete(unaliased_cmd, &comp, completion_request_t::fuzzy_match,
-                             parser->vars(), parser->shared());
+                             parser->vars(), parser->shared(), this->cancel_poller);
                     this->completions.insert(completions.end(), comp.begin(), comp.end());
                     do_file = false;
                 } else if (!complete_param(
@@ -1617,7 +1628,7 @@ void completer_t::perform() {
             assert(cmd_tok.length < std::numeric_limits<uint32_t>::max());
             source_range_t range = {static_cast<uint32_t>(cmd_tok.offset),
                                     static_cast<uint32_t>(cmd_tok.length)};
-            walk_wrap_chain(cmd, range, receiver);
+            walk_wrap_chain(cmd, range, receiver, cancel_poller);
         }
 
         // Hack. If we're cd, handle it specially (issue #1059, others).
@@ -1641,14 +1652,14 @@ void completer_t::perform() {
 
 void complete(const wcstring &cmd_with_subcmds, std::vector<completion_t> *out_comps,
               completion_request_flags_t flags, const environment_t &vars,
-              const std::shared_ptr<parser_t> &parser) {
+              const std::shared_ptr<parser_t> &parser, const cancel_poller_t &check_cancel) {
     // Determine the innermost subcommand.
     const wchar_t *cmdsubst_begin, *cmdsubst_end;
     parse_util_cmdsubst_extent(cmd_with_subcmds.c_str(), cmd_with_subcmds.size(), &cmdsubst_begin,
                                &cmdsubst_end);
     assert(cmdsubst_begin != nullptr && cmdsubst_end != nullptr && cmdsubst_end >= cmdsubst_begin);
     wcstring cmd = wcstring(cmdsubst_begin, cmdsubst_end - cmdsubst_begin);
-    completer_t completer(vars, parser, std::move(cmd), flags);
+    completer_t completer(vars, parser, std::move(cmd), flags, check_cancel);
     completer.perform();
     *out_comps = completer.acquire_completions();
 }

@@ -1283,14 +1283,16 @@ static std::function<autosuggestion_result_t(void)> get_autosuggestion_performer
     // this should use shared_ptr
     return [=]() -> autosuggestion_result_t {
         ASSERT_IS_BACKGROUND_THREAD();
-
         const autosuggestion_result_t nothing = {};
-        // If the main thread has moved on, skip all the work.
-        // Otherwise record the generation.
-        if (generation_count != read_generation_count()) {
+        s_thread_generation = generation_count;
+
+        // A lambda to decide if we should cancel.
+        auto check_cancel = [generation_count] {
+            return generation_count != read_generation_count();
+        };
+        if (check_cancel()) {
             return nothing;
         }
-        s_thread_generation = generation_count;
 
         // Let's make sure we aren't using the empty string.
         if (search_string.empty()) {
@@ -1326,7 +1328,7 @@ static std::function<autosuggestion_result_t(void)> get_autosuggestion_performer
         // Try normal completions.
         completion_request_flags_t complete_flags = completion_request_t::autosuggestion;
         std::vector<completion_t> completions;
-        complete(search_string, &completions, complete_flags, *vars, nullptr);
+        complete(search_string, &completions, complete_flags, *vars, nullptr, check_cancel);
         completions_sort_and_prioritize(&completions, complete_flags);
         if (!completions.empty()) {
             const completion_t &comp = completions.at(0);
@@ -2566,7 +2568,8 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
                 // std::fwprintf(stderr, L"Complete (%ls)\n", buffcpy.c_str());
                 completion_request_flags_t complete_flags = {completion_request_t::descriptions,
                                                              completion_request_t::fuzzy_match};
-                complete_func(buffcpy, &rls.comp, complete_flags, vars, parser_ref);
+                auto check_cancel = [] { return interrupted != 0; };
+                complete_func(buffcpy, &rls.comp, complete_flags, vars, parser_ref, check_cancel);
 
                 // User-supplied completions may have changed the commandline - prevent buffer
                 // overflow.

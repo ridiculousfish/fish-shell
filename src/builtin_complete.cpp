@@ -349,7 +349,7 @@ int builtin_complete(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
             std::vector<completion_t> comp;
             complete(do_complete_param, &comp, completion_request_t::fuzzy_match, parser.vars(),
-                     parser.shared());
+                     parser.shared(), parser.cancel_poller());
 
             for (const auto &next : comp) {
                 // Make a fake commandline, and then apply the completion to it.

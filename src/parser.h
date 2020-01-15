@@ -371,6 +371,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// \return a shared pointer reference to this parser.
     std::shared_ptr<parser_t> shared();
 
+    /// \return a cancel poller for checking if this parser has been signalled.
+    cancel_poller_t cancel_poller() const;
+
     ~parser_t();
 };
 
