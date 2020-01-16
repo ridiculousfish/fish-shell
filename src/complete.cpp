@@ -387,13 +387,15 @@ class completer_t : public cancel_checkable_t {
         return result;
     }
 
+    /// \return an expander for expanding strings.
+    expand_t expander() const { return expand_t{vars, parser.get(), cancel_checker}; }
+
     bool empty() const { return completions.empty(); }
 
     void escape_opening_brackets(const wcstring &argument);
 
     void mark_completions_duplicating_arguments(const wcstring &prefix,
                                                 const std::vector<tok_t> &args);
-
    public:
     completer_t(const environment_t &vars, std::shared_ptr<parser_t> parser, wcstring c,
                 completion_request_flags_t f, const cancel_checker_t &cancel_checker)
@@ -560,9 +562,8 @@ static void parse_cmd_string(const wcstring &str, wcstring *path, wcstring *cmd,
 void completer_t::complete_strings(const wcstring &wc_escaped, const description_func_t &desc_func,
                                    const completion_list_t &possible_comp, complete_flags_t flags) {
     wcstring tmp = wc_escaped;
-    if (!expand_one(tmp,
-                    this->expand_flags() | expand_flag::skip_cmdsubst | expand_flag::skip_wildcards,
-                    vars, parser, cancel_checker))
+    if (!expander().expand_one(
+            tmp, this->expand_flags() | expand_flag::skip_cmdsubst | expand_flag::skip_wildcards))
         return;
 
     const wcstring wc = parse_util_unescape_wildcards(tmp);
@@ -684,10 +685,10 @@ void completer_t::complete_cmd(const wcstring &str_cmd) {
 
     // Append all possible executables
     expand_result_t result =
-        expand_string(str_cmd, &this->completions,
-                      this->expand_flags() | expand_flag::special_for_command |
-                          expand_flag::for_completions | expand_flag::executables_only,
-                      vars, parser, cancel_checker, nullptr);
+        expander().expand_string(str_cmd, &this->completions,
+                                 this->expand_flags() | expand_flag::special_for_command |
+                                     expand_flag::for_completions | expand_flag::executables_only,
+                                 nullptr);
     if (result != expand_result_t::error && this->wants_descriptions()) {
         this->complete_cmd_desc(str_cmd);
     }
@@ -696,10 +697,10 @@ void completer_t::complete_cmd(const wcstring &str_cmd) {
     // updated with choices for the user.
     expand_result_t ignore =
         // Append all matching directories
-        expand_string(
+        expander().expand_string(
             str_cmd, &this->completions,
             this->expand_flags() | expand_flag::for_completions | expand_flag::directories_only,
-            vars, parser, cancel_checker, nullptr);
+            nullptr);
     UNUSED(ignore);
 
     if (str_cmd.empty() || (str_cmd.find(L'/') == wcstring::npos && str_cmd.at(0) != L'~')) {
@@ -1141,8 +1142,8 @@ void completer_t::complete_param_expand(const wcstring &str, bool do_file,
         // See #4954.
         const wcstring sep_string = wcstring(str, sep_index + 1);
         completion_list_t local_completions;
-        if (expand_string(sep_string, &local_completions, flags, vars, parser, cancel_checker,
-                          nullptr) == expand_result_t::error) {
+        if (expander().expand_string(sep_string, &local_completions, flags, nullptr) ==
+            expand_result_t::error) {
             debug(3, L"Error while expanding string '%ls'", sep_string.c_str());
         }
 
@@ -1161,7 +1162,7 @@ void completer_t::complete_param_expand(const wcstring &str, bool do_file,
         // consider relaxing this if there was a preceding double-dash argument.
         if (string_prefixes_string(L"-", str)) flags.clear(expand_flag::fuzzy_match);
 
-        if (expand_string(str, &this->completions, flags, vars, parser, cancel_checker, nullptr) ==
+        if (expander().expand_string(str, &this->completions, flags, nullptr) ==
             expand_result_t::error) {
             debug(3, L"Error while expanding string '%ls'", str.c_str());
         }

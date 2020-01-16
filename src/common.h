@@ -278,11 +278,12 @@ struct cancel_checkable_t {
         return cancelled;
     }
 
-    explicit cancel_checkable_t(const cancel_checker_t &func) : cancel_checker(func) {
-        assert(func != nullptr && "Empty function for cancel checker, use no_cancel instead");
+    explicit cancel_checkable_t(cancel_checker_t func) : cancel_checker(std::move(func)) {
+        assert(cancel_checker != nullptr &&
+               "Empty function for cancel checker, use no_cancel instead");
     }
 
-    const cancel_checker_t &cancel_checker;
+    const cancel_checker_t cancel_checker;
     bool cancelled{false};
 };
 

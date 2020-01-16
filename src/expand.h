@@ -114,54 +114,73 @@ enum class expand_result_t {
 #define PROCESS_EXPAND_SELF_STR L"%self"
 #define PROCESS_EXPAND_SELF_STR_LEN 5
 
-/// Perform various forms of expansion on in, such as tilde expansion (\~USER becomes the users home
-/// directory), variable expansion (\$VAR_NAME becomes the value of the environment variable
-/// VAR_NAME), cmdsubst expansion and wildcard expansion. The results are inserted into the list
-/// out.
-///
-/// If the parameter does not need expansion, it is copied into the list out.
-///
-/// \param input The parameter to expand
-/// \param output The list to which the result will be appended.
-/// \param flags Specifies if any expansion pass should be skipped. Legal values are any combination
-/// of skip_cmdsubst skip_variables and skip_wildcards
-/// \param vars variables used during expansion.
-/// \param parser the parser to use for command substitutions, or nullptr to disable.
-/// \param errors Resulting errors, or NULL to ignore
-///
-/// \return An expand_result_t.
-/// wildcard_no_match and wildcard_match are normal exit conditions used only on
-/// strings containing wildcards to tell if the wildcard produced any matches.
+/// A stateless bag-o-params object for string expansion, which includes tildes, variables, etc.
+/// Note this holds objects by reference and is therefore transient.
 class parser_t;
-__warn_unused expand_result_t expand_string(wcstring input, completion_list_t *output,
-                                            expand_flags_t flags, const environment_t &vars,
-                                            const std::shared_ptr<parser_t> &parser,
-                                            const cancel_checker_t &cancel_check,
-                                            parse_error_list_t *errors);
+class expand_t : private cancel_checkable_t {
+   public:
+    /// Construct an expander from a parser only.
+    explicit expand_t(parser_t &parser);
 
-/// expand_one is identical to expand_string, except it will fail if in expands to more than one
-/// string. This is used for expanding command names.
-///
-/// \param inout_str The parameter to expand in-place
-/// \param flags Specifies if any expansion pass should be skipped. Legal values are any combination
-/// of skip_cmdsubst skip_variables and skip_wildcards
-/// \param parser the parser to use for command substitutions, or nullptr to disable.
-/// \param errors Resulting errors, or NULL to ignore
-///
-/// \return Whether expansion succeeded.
-bool expand_one(wcstring &string, expand_flags_t flags, const environment_t &vars,
-                const std::shared_ptr<parser_t> &parser, const cancel_checker_t &cancel_check,
-                parse_error_list_t *errors = nullptr);
+    /// Construct an expander without a parser. This is useful for expansions in background threads.
+    explicit expand_t(const environment_t &vars, cancel_checker_t cancel_check = no_cancel)
+        : expand_t(vars, nullptr, std::move(cancel_check)) {}
 
-/// Expand a command string like $HOME/bin/cmd into a command and list of arguments.
-/// Return the command and arguments by reference.
-/// If the expansion resulted in no or an empty command, the command will be an empty string. Note
-/// that API does not distinguish between expansion resulting in an empty command (''), and
-/// expansion resulting in no command (e.g. unset variable).
-// \return an expand error.
-expand_result_t expand_to_command_and_args(const wcstring &instr, const environment_t &vars,
-                                           wcstring *out_cmd, wcstring_list_t *out_args,
-                                           parse_error_list_t *errors = nullptr);
+    /// Construct an expander from a parser, variable set, and cancel checker.
+    /// The parser may be null.
+    expand_t(const environment_t &vars, parser_t *parser, cancel_checker_t cancel_check);
+
+    /// \return a null-env expander. This is an expander that does not have any variables.
+    static expand_t nullenv();
+
+    /// Perform various forms of expansion on in, such as tilde expansion (\~USER becomes the users
+    /// home directory), variable expansion (\$VAR_NAME becomes the value of the environment
+    /// variable VAR_NAME), cmdsubst expansion and wildcard expansion. The results are inserted into
+    /// the list out.
+    ///
+    /// If the parameter does not need expansion, it is copied into the list out.
+    ///
+    /// \param input The parameter to expand
+    /// \param output The list to which the result will be appended.
+    /// \param flags Specifies if any expansion pass should be skipped. Legal values are any
+    /// combination of skip_cmdsubst skip_variables and skip_wildcards \param errors Resulting
+    /// errors, or NULL to ignore
+    ///
+    /// \return An expand_result_t.
+    /// wildcard_no_match and wildcard_match are normal exit conditions used only on
+    /// strings containing wildcards to tell if the wildcard produced any matches.
+    __warn_unused expand_result_t expand_string(wcstring input, completion_list_t *output,
+                                                expand_flags_t flags,
+                                                parse_error_list_t *errors) const;
+
+    /// expand_one is identical to expand_string, except it will fail if in expands to more than one
+    /// string. This is used for expanding command names.
+    ///
+    /// \param inout_str The parameter to expand in-place
+    /// \param flags Specifies if any expansion pass should be skipped. Legal values are any
+    /// combination of skip_cmdsubst skip_variables and skip_wildcards \param parser the parser to
+    /// use for command substitutions, or nullptr to disable. \param errors Resulting errors, or
+    /// NULL to ignore
+    ///
+    /// \return Whether expansion succeeded.
+    bool expand_one(wcstring &string, expand_flags_t flags,
+                    parse_error_list_t *errors = nullptr) const;
+
+    /// Expand a command string like $HOME/bin/cmd into a command and list of arguments.
+    /// Return the command and arguments by reference.
+    /// If the expansion resulted in no or an empty command, the command will be an empty string.
+    /// Note that API does not distinguish between expansion resulting in an empty command (''), and
+    /// expansion resulting in no command (e.g. unset variable).
+    // \return an expand error.
+    expand_result_t expand_command_and_args(const wcstring &instr, wcstring *out_cmd,
+                                            wcstring_list_t *out_args,
+                                            parse_error_list_t *errors = nullptr) const;
+
+   private:
+    const environment_t &vars;
+    parser_t *const parser{};
+    friend struct expand_run_t;
+};
 
 /// Convert the variable value to a human readable form, i.e. escape things, handle arrays, etc.
 /// Suitable for pretty-printing.

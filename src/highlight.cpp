@@ -344,7 +344,7 @@ static bool plain_statement_get_expanded_command(const wcstring &src,
     // Get the command. Try expanding it. If we cannot, it's an error.
     maybe_t<wcstring> cmd = command_for_plain_statement(stmt, src);
     if (!cmd) return false;
-    expand_result_t err = expand_to_command_and_args(*cmd, vars, out_cmd, nullptr);
+    expand_result_t err = expand_t(vars).expand_command_and_args(*cmd, out_cmd, nullptr);
     return err == expand_result_t::ok || err == expand_result_t::wildcard_match;
 }
 
@@ -439,7 +439,7 @@ bool autosuggest_validate_from_history(const history_item_t &item,
 
     if (parsed_command == L"cd" && !cd_dir.empty()) {
         // We can possibly handle this specially.
-        if (expand_one(cd_dir, expand_flag::skip_cmdsubst, vars, nullptr, no_cancel)) {
+        if (expand_t(vars).expand_one(cd_dir, expand_flag::skip_cmdsubst)) {
             handled = true;
             bool is_help =
                 string_prefixes_string(cd_dir, L"--help") || string_prefixes_string(cd_dir, L"-h");
@@ -798,6 +798,9 @@ class highlighter_t : private cancel_checkable_t {
     // return whether a plain statement is 'cd'.
     bool is_cd(tnode_t<g::plain_statement> stmt) const;
 
+    // Get something that can expand strings.
+    expand_t expander() const;
+
    public:
     // Constructor
     highlighter_t(const wcstring &str, size_t pos, const environment_t &ev, wcstring wd,
@@ -936,6 +939,8 @@ bool highlighter_t::is_cd(tnode_t<g::plain_statement> stmt) const {
     return cmd_is_cd;
 }
 
+expand_t highlighter_t::expander() const { return expand_t{vars, cancel_checker}; }
+
 // Color all of the arguments of the given node list, which should be argument_list or
 // argument_or_redirection_list.
 void highlighter_t::color_arguments(const std::vector<tnode_t<g::argument>> &args, bool cmd_is_cd) {
@@ -946,7 +951,7 @@ void highlighter_t::color_arguments(const std::vector<tnode_t<g::argument>> &arg
         if (cmd_is_cd) {
             // Mark this as an error if it's not 'help' and not a valid cd path.
             wcstring param = arg.get_source(this->buff);
-            if (expand_one(param, expand_flag::skip_cmdsubst, vars, nullptr, cancel_checker)) {
+            if (expander().expand_one(param, expand_flag::skip_cmdsubst)) {
                 bool is_help = string_prefixes_string(param, L"--help") ||
                                string_prefixes_string(param, L"-h");
                 if (!is_help && this->io_ok &&
@@ -990,8 +995,7 @@ void highlighter_t::color_redirection(tnode_t<g::redirection> redirection_node) 
                 // I/O is disallowed, so we don't have much hope of catching anything but gross
                 // errors. Assume it's valid.
                 target_is_valid = true;
-            } else if (!expand_one(target, expand_flag::skip_cmdsubst, vars, nullptr,
-                                   cancel_checker)) {
+            } else if (!expander().expand_one(target, expand_flag::skip_cmdsubst)) {
                 // Could not be expanded.
                 target_is_valid = false;
             } else {

@@ -1646,9 +1646,8 @@ static bool expand_test(const wchar_t *in, expand_flags_t flags, ...) {
     wchar_t *arg;
     parse_error_list_t errors;
     auto parser = parser_t::principal_parser().shared();
-
-    if (expand_string(in, &output, flags, pwd_environment_t{}, parser, no_cancel, &errors) ==
-        expand_result_t::error) {
+    if (expand_t(pwd_environment_t{}, parser.get(), no_cancel)
+            .expand_string(in, &output, flags, &errors) == expand_result_t::error) {
         if (errors.empty()) {
             err(L"Bug: Parse error reported but no error text found.");
         } else {

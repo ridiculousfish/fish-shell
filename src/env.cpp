@@ -173,6 +173,7 @@ wcstring environment_t::get_pwd_slash() const {
 }
 
 null_environment_t::~null_environment_t() = default;
+
 maybe_t<env_var_t> null_environment_t::get(const wcstring &key, env_mode_flags_t mode) const {
     UNUSED(key);
     UNUSED(mode);

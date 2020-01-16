@@ -322,8 +322,10 @@ completion_list_t parser_t::expand_argument_list(const wcstring &arg_list_src,
     tnode_t<grammar::freestanding_argument_list> arg_list(&tree, &tree.at(0));
     while (auto arg = arg_list.next_in_list<grammar::argument>()) {
         const wcstring arg_src = arg.get_source(arg_list_src);
-        if (expand_string(arg_src, &result, eflags, vars, parser, parser->cancel_checker(),
-                          nullptr /* errors */) == expand_result_t::error) {
+        auto cancel_check = parser ? parser->cancel_checker() : no_cancel;
+        if (expand_t(vars, parser.get(), cancel_check)
+                .expand_string(arg_src, &result, eflags, nullptr /* errors */) ==
+            expand_result_t::error) {
             break;  // failed to expand a string
         }
     }

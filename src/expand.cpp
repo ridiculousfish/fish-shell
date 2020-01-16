@@ -847,14 +847,11 @@ static void remove_internal_separator(wcstring *str, bool conv) {
     }
 }
 
-namespace {
-/// A type that knows how to perform expansions.
-class expander_t : public cancel_checkable_t {
-    /// Variables to use in expansion.
-    const environment_t &vars;
-
-    /// The parser for expanding command substitutions, or nullptr if not enabled.
-    std::shared_ptr<parser_t> parser;
+/// A stateful type that wraps up a particular call to expand.
+/// This is transient.
+struct expand_run_t {
+    /// The expand_t, which contains reference to variables and parsers.
+    const expand_t &exp;
 
     /// Flags to use during expansion.
     const expand_flags_t flags;
@@ -865,7 +862,7 @@ class expander_t : public cancel_checkable_t {
     /// An expansion stage is a member function pointer.
     /// It accepts the input string (transferring ownership) and returns the list of output
     /// completions by reference. It may return an error, which halts expansion.
-    using stage_t = expand_result_t (expander_t::*)(wcstring, completion_list_t *);
+    using stage_t = expand_result_t (expand_run_t::*)(wcstring, completion_list_t *);
 
     expand_result_t stage_cmdsubst(wcstring input, completion_list_t *out);
     expand_result_t stage_variables(wcstring input, completion_list_t *out);
@@ -873,23 +870,17 @@ class expander_t : public cancel_checkable_t {
     expand_result_t stage_home_and_self(wcstring input, completion_list_t *out);
     expand_result_t stage_wildcards(wcstring path_to_expand, completion_list_t *out);
 
-    expander_t(const environment_t &vars, std::shared_ptr<parser_t> parser, expand_flags_t flags,
-               parse_error_list_t *errors, const cancel_checker_t &cancel_check)
-        : cancel_checkable_t(cancel_check),
-          vars(vars),
-          parser(std::move(parser)),
-          flags(flags),
-          errors(errors) {}
+    expand_run_t(const expand_t &exp, expand_flags_t flags, parse_error_list_t *errors)
+        : exp(exp), flags(flags), errors(errors) {}
 
    public:
     static expand_result_t expand_string(wcstring input, completion_list_t *out_completions,
                                          expand_flags_t flags, const environment_t &vars,
-                                         const std::shared_ptr<parser_t> &parser,
-                                         const cancel_checker_t &cancel_checker,
+                                         parser_t *parser, const cancel_checker_t &cancel_checker,
                                          parse_error_list_t *errors);
 };
 
-expand_result_t expander_t::stage_cmdsubst(wcstring input, completion_list_t *out) {
+expand_result_t expand_run_t::stage_cmdsubst(wcstring input, completion_list_t *out) {
     if (flags & expand_flag::skip_cmdsubst) {
         size_t cur = 0, start = 0, end;
         switch (parse_util_locate_cmdsubst_range(input, &cur, nullptr, &start, &end, true)) {
@@ -904,15 +895,15 @@ expand_result_t expander_t::stage_cmdsubst(wcstring input, completion_list_t *ou
                 return expand_result_t::error;
         }
     } else {
-        assert(parser && "Must have a parser to expand command substitutions");
-        bool cmdsubst_ok = expand_cmdsubst(std::move(input), *parser, out, errors);
+        assert(exp.parser && "Must have a parser to expand command substitutions");
+        bool cmdsubst_ok = expand_cmdsubst(std::move(input), *exp.parser, out, errors);
         if (!cmdsubst_ok) return expand_result_t::error;
     }
 
     return expand_result_t::ok;
 }
 
-expand_result_t expander_t::stage_variables(wcstring input, completion_list_t *out) {
+expand_result_t expand_run_t::stage_variables(wcstring input, completion_list_t *out) {
     // We accept incomplete strings here, since complete uses expand_string to expand incomplete
     // strings from the commandline.
     wcstring next;
@@ -927,28 +918,27 @@ expand_result_t expander_t::stage_variables(wcstring input, completion_list_t *o
         append_completion(out, std::move(next));
     } else {
         size_t size = next.size();
-        if (!expand_variables(std::move(next), out, size, vars, errors)) {
+        if (!expand_variables(std::move(next), out, size, exp.vars, errors)) {
             return expand_result_t::error;
         }
     }
     return expand_result_t::ok;
 }
 
-expand_result_t expander_t::stage_braces(wcstring input, completion_list_t *out) {
-    UNUSED(vars);
+expand_result_t expand_run_t::stage_braces(wcstring input, completion_list_t *out) {
     return expand_braces(input, flags, out, errors);
 }
 
-expand_result_t expander_t::stage_home_and_self(wcstring input, completion_list_t *out) {
+expand_result_t expand_run_t::stage_home_and_self(wcstring input, completion_list_t *out) {
     if (!(flags & expand_flag::skip_home_directories)) {
-        expand_home_directory(input, vars);
+        expand_home_directory(input, exp.vars);
     }
     expand_percent_self(input);
     append_completion(out, std::move(input));
     return expand_result_t::ok;
 }
 
-expand_result_t expander_t::stage_wildcards(wcstring path_to_expand, completion_list_t *out) {
+expand_result_t expand_run_t::stage_wildcards(wcstring path_to_expand, completion_list_t *out) {
     expand_result_t result = expand_result_t::ok;
 
     remove_internal_separator(&path_to_expand, flags & expand_flag::skip_wildcards);
@@ -966,7 +956,7 @@ expand_result_t expander_t::stage_wildcards(wcstring path_to_expand, completion_
         //
         // So we're going to treat this input as a file path. Compute the "working directories",
         // which may be CDPATH if the special flag is set.
-        const wcstring working_dir = vars.get_pwd_slash();
+        const wcstring working_dir = exp.vars.get_pwd_slash();
         wcstring_list_t effective_working_dirs;
         bool for_cd = flags & expand_flag::special_for_cd;
         bool for_command = flags & expand_flag::special_for_command;
@@ -998,7 +988,7 @@ expand_result_t expander_t::stage_wildcards(wcstring path_to_expand, completion_
                 // Get the PATH/CDPATH and CWD. Perhaps these should be passed in. An empty CDPATH
                 // implies just the current directory, while an empty PATH is left empty.
                 wcstring_list_t paths;
-                if (auto paths_var = vars.get(for_cd ? L"CDPATH" : L"PATH")) {
+                if (auto paths_var = exp.vars.get(for_cd ? L"CDPATH" : L"PATH")) {
                     paths = paths_var->as_list();
                 }
                 if (paths.empty()) {
@@ -1015,7 +1005,7 @@ expand_result_t expander_t::stage_wildcards(wcstring path_to_expand, completion_
         completion_list_t expanded;
         for (const auto &effective_working_dir : effective_working_dirs) {
             wildcard_expand_result_t expand_res = wildcard_expand_string(
-                path_to_expand, effective_working_dir, flags, cancel_checker, &expanded);
+                path_to_expand, effective_working_dir, flags, exp.cancel_checker, &expanded);
             switch (expand_res) {
                 case wildcard_expand_result_t::match:
                     // Something matched,so overall we matched.
@@ -1042,11 +1032,21 @@ expand_result_t expander_t::stage_wildcards(wcstring path_to_expand, completion_
     return result;
 }
 
-expand_result_t expander_t::expand_string(wcstring input, completion_list_t *out_completions,
-                                          expand_flags_t flags, const environment_t &vars,
-                                          const std::shared_ptr<parser_t> &parser,
-                                          const cancel_checker_t &cancel_checker,
-                                          parse_error_list_t *errors) {
+/// Construct an expander from a parser only.
+expand_t::expand_t(parser_t &parser) : expand_t(parser.vars(), &parser, parser.cancel_checker()) {}
+
+/// Construct an expander from a parser, variable set, and cancel checker.
+/// The parser may be null.
+expand_t::expand_t(const environment_t &vars, parser_t *parser, cancel_checker_t cancel_check)
+    : cancel_checkable_t(std::move(cancel_check)), vars(vars), parser(parser) {}
+
+expand_t expand_t::nullenv() {
+    static const null_environment_t env{};
+    return expand_t{env};
+}
+
+expand_result_t expand_t::expand_string(wcstring input, completion_list_t *out_completions,
+                                        expand_flags_t flags, parse_error_list_t *errors) const {
     assert(((flags & expand_flag::skip_cmdsubst) || parser) &&
            "Must have a parser if not skipping command substitutions");
     // Early out. If we're not completing, and there's no magic in the input, we're done.
@@ -1055,12 +1055,13 @@ expand_result_t expander_t::expand_string(wcstring input, completion_list_t *out
         return expand_result_t::ok;
     }
 
-    expander_t expand(vars, parser, flags, errors, cancel_checker);
+    expand_run_t run(*this, flags, errors);
 
     // Our expansion stages.
-    const stage_t stages[] = {&expander_t::stage_cmdsubst, &expander_t::stage_variables,
-                              &expander_t::stage_braces, &expander_t::stage_home_and_self,
-                              &expander_t::stage_wildcards};
+    using stage_t = expand_run_t::stage_t;
+    const stage_t stages[] = {&expand_run_t::stage_cmdsubst, &expand_run_t::stage_variables,
+                              &expand_run_t::stage_braces, &expand_run_t::stage_home_and_self,
+                              &expand_run_t::stage_wildcards};
 
     // Load up our single initial completion.
     completion_list_t completions, output_storage;
@@ -1069,8 +1070,7 @@ expand_result_t expander_t::expand_string(wcstring input, completion_list_t *out
     expand_result_t total_result = expand_result_t::ok;
     for (stage_t stage : stages) {
         for (completion_t &comp : completions) {
-            expand_result_t this_result =
-                (expand.*stage)(std::move(comp.completion), &output_storage);
+            expand_result_t this_result = (run.*stage)(std::move(comp.completion), &output_storage);
             // If this_result was no match, but total_result is that we have a match, then don't
             // change it.
             if (!(this_result == expand_result_t::wildcard_no_match &&
@@ -1095,33 +1095,21 @@ expand_result_t expander_t::expand_string(wcstring input, completion_list_t *out
         if (!(flags & expand_flag::skip_home_directories)) {
             unexpand_tildes(input, vars, &completions);
         }
-        out_completions->insert(out_completions->end(),
-                                std::make_move_iterator(completions.begin()),
-                                std::make_move_iterator(completions.end()));
+        vec_append(*out_completions, std::move(completions));
     }
     return total_result;
 }
-}  // namespace
 
-expand_result_t expand_string(wcstring input, completion_list_t *out_completions,
-                              expand_flags_t flags, const environment_t &vars,
-                              const shared_ptr<parser_t> &parser,
-                              const cancel_checker_t &cancel_checker, parse_error_list_t *errors) {
-    return expander_t::expand_string(std::move(input), out_completions, flags, vars, parser,
-                                     cancel_checker, errors);
-}
-
-bool expand_one(wcstring &string, expand_flags_t flags, const environment_t &vars,
-                const shared_ptr<parser_t> &parser, const cancel_checker_t &cancel_check,
-                parse_error_list_t *errors) {
+bool expand_t::expand_one(wcstring &string, expand_flags_t flags,
+                          parse_error_list_t *errors) const {
     completion_list_t completions;
 
     if (!flags.get(expand_flag::for_completions) && expand_is_clean(string)) {
         return true;
     }
 
-    if (expand_string(std::move(string), &completions, flags | expand_flag::no_descriptions, vars,
-                      parser, cancel_check, errors) != expand_result_t::error &&
+    if (expand_string(std::move(string), &completions, flags | expand_flag::no_descriptions,
+                      errors) != expand_result_t::error &&
         completions.size() == 1) {
         string = std::move(completions.at(0).completion);
         return true;
@@ -1129,9 +1117,9 @@ bool expand_one(wcstring &string, expand_flags_t flags, const environment_t &var
     return false;
 }
 
-expand_result_t expand_to_command_and_args(const wcstring &instr, const environment_t &vars,
-                                           wcstring *out_cmd, wcstring_list_t *out_args,
-                                           parse_error_list_t *errors) {
+expand_result_t expand_t::expand_command_and_args(const wcstring &instr, wcstring *out_cmd,
+                                                  wcstring_list_t *out_args,
+                                                  parse_error_list_t *errors) const {
     // Fast path.
     if (expand_is_clean(instr)) {
         *out_cmd = instr;
@@ -1141,8 +1129,7 @@ expand_result_t expand_to_command_and_args(const wcstring &instr, const environm
     completion_list_t completions;
     expand_result_t expand_err = expand_string(
         instr, &completions,
-        {expand_flag::skip_cmdsubst, expand_flag::no_descriptions, expand_flag::skip_jobs}, vars,
-        nullptr, no_cancel, errors);
+        {expand_flag::skip_cmdsubst, expand_flag::no_descriptions, expand_flag::skip_jobs}, errors);
     if (expand_err == expand_result_t::ok || expand_err == expand_result_t::wildcard_match) {
         // The first completion is the command, any remaning are arguments.
         bool first = true;

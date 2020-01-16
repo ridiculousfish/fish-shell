@@ -11,6 +11,7 @@
 #include "proc.h"
 
 class block_t;
+class expand_t;
 class parser_t;
 
 /// An eval_result represents evaluation errors including wildcards which failed to match, syntax
@@ -44,6 +45,9 @@ class parse_execution_context_t {
     // No copying allowed.
     parse_execution_context_t(const parse_execution_context_t &) = delete;
     parse_execution_context_t &operator=(const parse_execution_context_t &) = delete;
+
+    // \return an expander for string expansion.
+    expand_t expander() const;
 
     // Check to see if we should end execution.
     // \return the eval result to end with, or none() to continue on.

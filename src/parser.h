@@ -376,6 +376,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// \return a cancel poller for checking if this parser has been signalled.
     cancel_checker_t cancel_checker() const;
 
+    /// \return a string expander for this parser.
+    expand_t expander() { return expand_t{*this}; }
+
     ~parser_t();
 };
 
