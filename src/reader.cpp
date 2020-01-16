@@ -142,8 +142,6 @@ void editable_line_t::insert_string(const wcstring &str, size_t start, size_t le
     this->position += len;
 }
 
-static bool reader_test_interrupted();
-
 namespace {
 
 /// Test if the given string contains error. Since this is the error detection for general purpose,
@@ -378,8 +376,8 @@ class reader_data_t : public std::enable_shared_from_this<reader_data_t> {
     std::vector<highlight_spec_t> colors;
     /// An array defining the block level at each character.
     std::vector<int> indents;
-    /// Function for tab completion.
-    complete_function_t complete_func{nullptr};
+    /// Whether tab completion is allowed.
+    bool complete_ok{false};
     /// Function for syntax highlighting.
     highlight_function_t highlight_func{highlight_universal};
     /// Function for testing if the string can be returned.
@@ -836,8 +834,6 @@ void reader_data_t::repaint_if_needed() {
         repaint();  // reader_repaint clears repaint_needed
     }
 }
-
-static bool reader_test_interrupted() { return interrupted != 0; }
 
 void reader_reset_interrupted() { interrupted = 0; }
 
@@ -1320,7 +1316,7 @@ static std::function<autosuggestion_result_t(void)> get_autosuggestion_performer
         // Try normal completions.
         completion_request_flags_t complete_flags = completion_request_t::autosuggestion;
         completion_list_t completions =
-            complete(search_string, complete_flags, *vars, nullptr, check_cancel);
+            complete(search_string, complete_flags, *vars, check_cancel);
         completions_sort_and_prioritize(&completions, complete_flags);
         if (!completions.empty()) {
             const completion_t &comp = completions.at(0);
@@ -2145,7 +2141,7 @@ void reader_set_allow_autosuggesting(bool flag) { current_data()->allow_autosugg
 
 void reader_set_expand_abbreviations(bool flag) { current_data()->expand_abbreviations = flag; }
 
-void reader_set_complete_function(complete_function_t f) { current_data()->complete_func = f; }
+void reader_set_complete_ok(bool flag) { current_data()->complete_ok = flag; }
 
 void reader_set_highlight_function(highlight_function_t func) {
     current_data()->highlight_func = func;
@@ -2248,7 +2244,7 @@ uint64_t reader_run_count() { return run_count; }
 /// Read interactively. Read input from stdin while providing editing facilities.
 static int read_i(parser_t &parser) {
     reader_push(parser, history_session_id(parser.vars()));
-    reader_set_complete_function(&complete);
+    reader_set_complete_ok(true);
     reader_set_highlight_function(&highlight_shell);
     reader_set_test_function(&reader_shell_test);
     reader_set_allow_autosuggesting(true);
@@ -2507,7 +2503,7 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
         }
         case rl::complete:
         case rl::complete_and_search: {
-            if (!complete_func) break;
+            if (!complete_ok) break;
 
             // Use the command line only; it doesn't make sense to complete in any other line.
             editable_line_t *el = &command_line;
@@ -2533,9 +2529,6 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
                 // Get the string; we have to do this after removing any trailing backslash.
                 const wchar_t *const buff = el->text.c_str();
 
-                // Clear the completion list.
-                rls.comp.clear();
-
                 // Figure out the extent of the command substitution surrounding the cursor.
                 // This is because we only look at the current command substitution to form
                 // completions - stuff happening outside of it is not interesting.
@@ -2559,8 +2552,7 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
                 // std::fwprintf(stderr, L"Complete (%ls)\n", buffcpy.c_str());
                 completion_request_flags_t complete_flags = {completion_request_t::descriptions,
                                                              completion_request_t::fuzzy_match};
-                rls.comp = complete_func(buffcpy, complete_flags, vars, parser_ref,
-                                         reader_test_interrupted);
+                rls.comp = complete(buffcpy, complete_flags, *parser_ref);
 
                 // User-supplied completions may have changed the commandline - prevent buffer
                 // overflow.

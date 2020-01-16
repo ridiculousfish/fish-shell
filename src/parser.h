@@ -251,6 +251,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Indicates that we should stop execution due to the given signal.
     static void cancel_requested(int sig);
 
+    /// Clear any cancel.
+    void clear_cancel() { cancellation_signal = 0; }
+
     /// Global event blocks.
     event_blockage_list_t global_event_blocks;
 

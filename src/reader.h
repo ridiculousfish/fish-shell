@@ -141,12 +141,8 @@ void reader_push(parser_t &parser, const wcstring &name);
 /// Return to previous reader environment.
 void reader_pop();
 
-/// Specify function to use for finding possible tab completions.
-typedef completion_list_t (*complete_function_t)(const wcstring &, completion_request_flags_t,
-                                                 const environment_t &,
-                                                 const std::shared_ptr<parser_t> &parser,
-                                                 const cancel_checker_t &cancel_checker);
-void reader_set_complete_function(complete_function_t);
+/// Mark whether tab completion is enabled.
+void reader_set_complete_ok(bool flag);
 
 /// The type of a highlight function.
 using highlight_function_t = void (*)(const wcstring &, std::vector<highlight_spec_t> &, size_t,

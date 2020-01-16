@@ -1083,6 +1083,7 @@ static void test_cancellation() {
 
     // Ensure that we don't think we should cancel.
     reader_reset_interrupted();
+    parser.clear_cancel();
 }
 
 static void test_indents() {
@@ -2613,7 +2614,7 @@ static void test_complete() {
     auto parser = parser_t::principal_parser().shared();
 
     auto do_complete = [&](const wcstring &cmd, completion_request_flags_t flags) {
-        return complete(cmd, flags, vars, parser, no_cancel);
+        return complete(cmd, flags, *parser, vars);
     };
 
     completion_list_t completions;
@@ -2787,7 +2788,7 @@ static void test_complete() {
     auto &pvars = parser_t::principal_parser().vars();
     function_add(L"testabbrsonetwothreefour", {}, nullptr, {});
     int ret = pvars.set_one(L"_fish_abbr_testabbrsonetwothreezero", ENV_LOCAL, L"expansion");
-    completions = complete(L"testabbrsonetwothree", {}, pvars, parser, no_cancel);
+    completions = complete(L"testabbrsonetwothree", {}, *parser, pvars);
     do_test(ret == 0);
     do_test(completions.size() == 2);
     do_test(completions.at(0).completion == L"four");
@@ -2872,7 +2873,7 @@ static void test_completion_insertions() {
 static void perform_one_autosuggestion_cd_test(const wcstring &command, const wcstring &expected,
                                                const environment_t &vars, long line) {
     completion_list_t comps =
-        complete(command, completion_request_t::autosuggestion, vars, nullptr, no_cancel);
+        complete(command, completion_request_t::autosuggestion, vars, no_cancel);
 
     bool expects_error = (expected == L"<error>");
 
@@ -2907,7 +2908,7 @@ static void perform_one_autosuggestion_cd_test(const wcstring &command, const wc
 
 static void perform_one_completion_cd_test(const wcstring &command, const wcstring &expected,
                                            const environment_t &vars, long line) {
-    completion_list_t comps = complete(command, {}, vars, nullptr, no_cancel);
+    completion_list_t comps = complete(command, {}, vars, no_cancel);
 
     bool expects_error = (expected == L"<error>");
 
@@ -3046,8 +3047,8 @@ static void test_autosuggest_suggest_special() {
 }
 
 static void perform_one_autosuggestion_should_ignore_test(const wcstring &command, long line) {
-    completion_list_t comps = complete(command, completion_request_t::autosuggestion,
-                                       null_environment_t{}, nullptr, no_cancel);
+    completion_list_t comps =
+        complete(command, completion_request_t::autosuggestion, null_environment_t{}, no_cancel);
     do_test(comps.empty());
     if (!comps.empty()) {
         const wcstring &suggestion = comps.front().completion;
