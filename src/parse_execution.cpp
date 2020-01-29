@@ -202,12 +202,18 @@ maybe_t<end_execution_reason_t> parse_execution_context_t::check_end_execution()
     return none();
 }
 
-/// Return whether the job contains a single statement, of block type, with no redirections.
+/// Return whether the job contains a single statement, of block type, with no redirections, in the
+/// foreground.
 bool parse_execution_context_t::job_is_simple_block(tnode_t<g::job> job_node) const {
     tnode_t<g::statement> statement = job_node.child<2>();
 
     // Must be no pipes.
     if (job_node.child<3>().try_get_child<g::tok_pipe, 0>()) {
+        return false;
+    }
+
+    // Must be foreground.
+    if (job_node_is_background(job_node)) {
         return false;
     }
 
