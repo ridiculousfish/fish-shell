@@ -353,29 +353,6 @@ typedef int job_id_t;
 job_id_t acquire_job_id(void);
 void release_job_id(job_id_t jid);
 
-/// Information about where a job comes from.
-/// This should be safe to copy across threads; in particular that means this cannot contain a
-/// job_t. It is also important that job_t not contain this: because it stores block IO, it will
-/// extend the life of the IO which may prevent pipes from closing in a timely manner. See #6397.
-struct job_lineage_t {
-    /// The pgid of the parental job.
-    /// If our job is "nested" as part of a function or block execution, and that function or block
-    /// is part of a pipeline, then this may be set.
-    maybe_t<pid_t> parent_pgid{};
-
-    /// Whether job control is on for the root.
-    /// This is set if our job is nested as part of a function or block execution.
-    bool root_has_job_control{false};
-
-    /// The IO chain associated with any block containing this job.
-    /// For example, in `begin; foo ; end < file.txt` this would have the 'file.txt' IO.
-    io_chain_t block_io{};
-
-    /// A shared pointer indicating that the entire tree of jobs is safe to disown.
-    /// This is set to true by the "root" job after it is constructed.
-    std::shared_ptr<relaxed_atomic_bool_t> root_constructed{};
-};
-
 /// A job has a mode which describes how its pgroup is assigned (before the value is known).
 /// This is a constant property of the job.
 enum class pgroup_provenance_t {
@@ -390,8 +367,40 @@ enum class pgroup_provenance_t {
     /// The job's pgroup will come from its first external process.
     first_external_proc,
 
+    /// The job's pgroup will come from the job tree.
+    job_tree,
+
     /// The job's pgroup will come from its lineage. This is used for jobs that are run nested.
     lineage,
+};
+
+/// Information about where a job comes from.
+/// This should be safe to copy across threads; in particular that means this cannot contain a
+/// job_t. It is also important that job_t not contain this: because it stores block IO, it will
+/// extend the life of the IO which may prevent pipes from closing in a timely manner. See #6397.
+struct job_lineage_t {
+    /// The provenance of the pgroup for any external commands that need to be run.
+    /// If this is 'unassigned' then either this is a root execution, or the parent is
+    /// a block or function.
+    pgroup_provenance_t pgroup_provenance{pgroup_provenance_t::unassigned};
+
+    /// The pgid of the parental job.
+    /// If our job is "nested" as part of a function or block execution, and that function or block
+    /// is part of a pipeline, then this may be set. This should only be set if the provenance is
+    /// 'lineage'.
+    maybe_t<pid_t> parent_pgid{};
+
+    /// Whether job control is on for the root.
+    /// This is set if our job is nested as part of a function or block execution.
+    bool root_has_job_control{false};
+
+    /// The IO chain associated with any block containing this job.
+    /// For example, in `begin; foo ; end < file.txt` this would have the 'file.txt' IO.
+    io_chain_t block_io{};
+
+    /// A shared pointer indicating that the entire tree of jobs is safe to disown.
+    /// This is set to true by the "root" job after it is constructed.
+    std::shared_ptr<relaxed_atomic_bool_t> root_constructed{};
 };
 
 /// A struct represeting a job. A job is basically a pipeline of one or more processes and a couple

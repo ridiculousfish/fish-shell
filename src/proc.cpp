@@ -284,14 +284,18 @@ int job_tree_t::get_cancel_signal() const {
 pid_t job_tree_t::pgroup_owner() {
     assert(this != principal().get() && "Principal job tree should never make a pgroup owner");
     std::call_once(owned_pgroup_flag_, [this] {
+        FLOG(exec_fork, "Forking for pgroup owner");
         assert(!owned_pgroup_ && "Should not already have an owned pgroup");
         pid_t pid = execute_fork();
         assert(pid >= 0 && "execute_fork should never return an invalid pid");
         if (pid == 0) {
             // The child can just exit directly; all we need is a pid which we can defer reaping.
+            pid_t me = getpid();
+            (void)setpgid(me, me);
             exit_without_destructors(0);
             DIE("exit_without_destructors should not return");
         }
+        (void)setpgid(pid, pid);
         this->owned_pgroup_ = pid;
     });
     return *owned_pgroup_;

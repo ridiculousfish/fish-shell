@@ -61,13 +61,18 @@ pgroup_provenance_t get_pgroup_provenance(const shared_ptr<job_t> &j,
     bool has_external = j->has_external_proc();
     assert(first_proc_is_internal ? has_internal : has_external);
 
-    if (lineage.parent_pgid.has_value()) {
-        // Our lineage indicates a pgid. This means the job is "nested" as a function or block
-        // inside another job, which has a real pgroup. We're going to use that.
-        return pgroup_provenance_t::lineage;
+    if (lineage.pgroup_provenance != pgroup_provenance_t::unassigned) {
+        // Our lineage gives us a provenance.
+        return lineage.pgroup_provenance;
     } else if (!j->wants_job_control()) {
         // This job doesn't need job control, it can just live in the fish pgroup.
         return pgroup_provenance_t::fish_itself;
+    } else if (j->use_concurrent_internal_procs()) {
+        // We have multiple processes and at least one is internal. All our processes need to run
+        // concurrently with one another, and every external job needs to be in the same pgroup. So
+        // we need some pid that will last for the duration of the job. The job tree can provide
+        // this.
+        return pgroup_provenance_t::job_tree;
     } else if (has_external && !first_proc_is_internal) {
         // The first process is external, it will own the pgroup.
         return pgroup_provenance_t::first_external_proc;
@@ -669,6 +674,7 @@ static proc_performer_t get_performer_for_process(process_t *p, job_t *job,
            "Unexpected process type");
     // Make a lineage for our children.
     job_lineage_t lineage;
+    lineage.pgroup_provenance = job->pgroup_provenance;
     lineage.parent_pgid = (job->pgid == INVALID_PID ? none() : maybe_t<pid_t>(job->pgid));
     lineage.block_io = io_chain;
     lineage.root_constructed = job->root_constructed;
@@ -983,6 +989,16 @@ bool exec_job(parser_t &parser, const shared_ptr<job_t> &j, const job_lineage_t 
 
         case pgroup_provenance_t::fish_itself:
             j->pgid = pgrp;
+            break;
+
+        case pgroup_provenance_t::job_tree:
+            // If we are made of only internal procs, we can defer creating a pgroup owner, thereby
+            // saving a fork(). In an extreme case where a function or block executes no external
+            // commands, we may never create the owner. But if we are going to launch an external
+            // proc, we will need a real pid to act as the pgroup owner.
+            if (j->has_external_proc()) {
+                j->pgid = j->job_tree->pgroup_owner();
+            }
             break;
 
         // The remaining cases are all deferred until later.
