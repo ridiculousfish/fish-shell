@@ -223,7 +223,7 @@ internal_proc_t::internal_proc_t() : internal_proc_id_(next_proc_id()) {}
 job_list_t jobs_requiring_warning_on_exit(const parser_t &parser) {
     job_list_t result;
     for (const auto &job : parser.jobs()) {
-        if (!job->is_foreground() && job->is_constructed() && !job->is_completed()) {
+        if (!job->job_tree->wants_foreground() && job->is_constructed() && !job->is_completed()) {
             result.push_back(job);
         }
     }
@@ -241,10 +241,8 @@ void print_exit_warning_for_jobs(const job_list_t &jobs) {
     fputws(_(L"Use 'disown PID' to remove jobs from the list without terminating them.\n"), stdout);
 }
 
-job_tree_t::job_tree_t(bool job_control, bool placeholder)
-    : job_control_(job_control),
-      is_placeholder_(placeholder),
-      job_id_(placeholder ? -1 : acquire_job_id()) {}
+job_tree_t::job_tree_t(props_t props)
+    : props_(props), job_id_(props.placeholder ? -1 : acquire_job_id()) {}
 
 job_tree_t::~job_tree_t() {
     if (job_id_ > 0) {
@@ -263,6 +261,7 @@ void job_tree_t::set_pgid(pid_t pgid) {
 maybe_t<pid_t> job_tree_t::get_pgid() const { return pgid_; }
 
 void job_tree_t::populate_tree_for_job(job_t *job, const job_tree_ref_t &proposed) {
+    bool init_bg = job->initial_background();
     // Note there's three cases to consider:
     //  nullptr         -> this is a root job, there is no inherited job tree
     //  placeholder     -> we are running as part of a simple function execution, create a new job
@@ -271,13 +270,13 @@ void job_tree_t::populate_tree_for_job(job_t *job, const job_tree_ref_t &propose
     // Decide if this job can use the placeholder tree.
     // This is true if it's a simple foreground execution of an internal proc.
     bool can_use_placeholder =
-        job->is_foreground() && job->processes.size() == 1 && job->processes.front()->is_internal();
+        !init_bg && job->processes.size() == 1 && job->processes.front()->is_internal();
 
     bool needs_new_tree = false;
     if (!proposed) {
         // We don't have a tree yet.
         needs_new_tree = true;
-    } else if (!job->is_foreground()) {
+    } else if (init_bg) {
         // Background jobs always get a new tree.
         needs_new_tree = true;
     } else if (proposed->is_placeholder() && !can_use_placeholder) {
@@ -290,8 +289,11 @@ void job_tree_t::populate_tree_for_job(job_t *job, const job_tree_ref_t &propose
     if (!needs_new_tree) {
         job->job_tree = proposed;
     } else {
-        job->job_tree =
-            job_tree_ref_t(new job_tree_t(job->wants_job_control(), can_use_placeholder));
+        props_t props{};
+        props.placeholder = can_use_placeholder;
+        props.job_control = job->wants_job_control();
+        props.initial_background = init_bg;
+        job->job_tree = job_tree_ref_t(new job_tree_t(props));
     }
 }
 
@@ -486,7 +488,8 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
                             assert(pid == proc->pid && "Unexpcted waitpid() return");
                             handle_child_status(proc.get(), proc_status_t::from_waitpid(status));
                             if (proc->status.stopped()) {
-                                j->mut_flags().foreground = false;
+                                // TODO: this seems strange.
+                                j->job_tree->set_wants_foreground(false);
                             }
                             if (proc->status.continued()) {
                                 j->mut_flags().notified = false;
@@ -538,7 +541,7 @@ using job_status_t = enum { JOB_STOPPED, JOB_ENDED };
 static void print_job_status(parser_t &parser, const job_t *j, job_status_t status) {
     wcstring_list_t args = {
         format_string(L"%d", j->job_id()),
-        format_string(L"%d", j->is_foreground()),
+        format_string(L"%d", j->job_tree->wants_foreground()),
         j->command(),
         status == JOB_STOPPED ? L"STOPPED" : L"ENDED",
     };
@@ -604,7 +607,7 @@ static bool try_clean_process_in_job(parser_t &parser, process_t *p, job_t *j,
     wcstring_list_t args;
     args.reserve(proc_is_job ? 5 : 7);
     args.push_back(format_string(L"%d", j->job_id()));
-    args.push_back(format_string(L"%d", j->is_foreground()));
+    args.push_back(format_string(L"%d", j->job_tree->wants_foreground()));
     args.push_back(j->command());
     args.push_back(sig2wcs(s.signal_code()));
     args.push_back(signal_get_desc(s.signal_code()));
@@ -630,7 +633,7 @@ static bool job_wants_message(const shared_ptr<job_t> &j) {
     // Are we foreground?
     // The idea here is to not print status messages for jobs that execute in the foreground (i.e.
     // without & and without being `bg`).
-    if (j->is_foreground()) return false;
+    if (j->job_tree->wants_foreground()) return false;
 
     return true;
 }
@@ -999,7 +1002,7 @@ void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp, bool se
             }
         }
 
-        if (is_foreground()) {
+        if (job_tree->wants_foreground()) {
             // Wait for the status of our own job to change.
             while (!reader_exit_forced() && !is_stopped() && !is_completed()) {
                 process_mark_finished_children(parser, true);
@@ -1007,7 +1010,7 @@ void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp, bool se
         }
     }
 
-    if (is_foreground() && is_completed()) {
+    if (job_tree->wants_foreground() && is_completed()) {
         // Set $status only if we are in the foreground and the last process in the job has
         // finished and is not a short-circuited builtin.
         auto &p = processes.back();
@@ -1024,7 +1027,7 @@ void proc_sanity_check(const parser_t &parser) {
         if (!j->is_constructed()) continue;
 
         // More than one foreground job?
-        if (j->is_foreground() && !(j->is_stopped() || j->is_completed())) {
+        if (j->job_tree->wants_foreground() && !(j->is_stopped() || j->is_completed())) {
             if (fg_job) {
                 FLOGF(error, _(L"More than one job in foreground: job 1: '%ls' job 2: '%ls'"),
                       fg_job->command_wcstr(), j->command_wcstr());

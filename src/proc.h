@@ -173,6 +173,7 @@ void release_job_id(job_id_t jid);
 class job_t;
 class job_tree_t;
 using job_tree_ref_t = std::shared_ptr<job_tree_t>;
+using job_tree_list_t = std::vector<job_tree_ref_t>;
 
 class job_tree_t {
    public:
@@ -185,14 +186,25 @@ class job_tree_t {
     /// Get the pgid, or none() if it has not been set.
     maybe_t<pid_t> get_pgid() const;
 
-    /// \return whether we want job control
-    bool wants_job_control() const { return job_control_; }
+    /// \return whether we want job control, i.e. to be in our own pgroup.
+    bool wants_job_control() const { return props_.job_control; }
+
+    /// \return whether we are initially backgrounded (i.e. have a &).
+    bool is_initial_background() { return props_.initial_background; }
 
     /// \return whether this is a placeholder.
-    bool is_placeholder() const { return is_placeholder_; }
+    bool is_placeholder() const { return props_.placeholder; }
 
     /// \return the job ID, or -1 if none.
     job_id_t get_id() const { return job_id_; }
+
+    /// \return whether this job wants to execute in the foreground; i.e. fish should wait for it.
+    /// This is conceptually racey.
+    bool wants_foreground() const { return wants_foreground_; }
+
+    /// Set whether this job tree wants to execute in the foreground.
+    /// This may be manipulated by fg and bg builtins.
+    void set_wants_foreground(bool flag) { wants_foreground_ = flag; }
 
     /// Mark the root as constructed.
     /// This is used to avoid reaping a process group leader while there are still procs that may
@@ -207,13 +219,18 @@ class job_tree_t {
     ~job_tree_t();
 
    private:
-    maybe_t<pid_t> pgid_{};
-    const bool job_control_;
-    const bool is_placeholder_;
-    const job_id_t job_id_;
-    relaxed_atomic_bool_t root_constructed_{};
+    struct props_t {
+        bool placeholder{};
+        bool job_control{};
+        bool initial_background;
+    };
 
-    explicit job_tree_t(bool job_control, bool placeholder);
+    const props_t props_;
+    job_id_t job_id_;
+    maybe_t<pid_t> pgid_{};
+    relaxed_atomic_bool_t root_constructed_{};
+    relaxed_atomic_bool_t wants_foreground_{};
+    explicit job_tree_t(props_t props);
 };
 
 /// A structure representing a single fish process. Contains variables for tracking process state
@@ -499,9 +516,6 @@ class job_t {
         /// Whether the user has been told about stopped job.
         bool notified{false};
 
-        /// Whether this job is in the foreground.
-        bool foreground{false};
-
         /// Whether the exit status should be negated. This flag can only be set by the not builtin.
         bool negate{false};
 
@@ -522,11 +536,16 @@ class job_t {
     /// Access mutable job flags.
     flags_t &mut_flags() { return job_flags; }
 
+    /// \return if we we should initially run in the background.
+    bool initial_background() const { return properties.initial_background; }
+
     /// \return if we want job control.
     bool wants_job_control() const { return properties.job_control; }
 
     /// \return if this job should own the terminal when it runs.
-    bool should_claim_terminal() const { return properties.wants_terminal && is_foreground(); }
+    bool should_claim_terminal() const {
+        return properties.wants_terminal && job_tree->wants_foreground();
+    }
 
     /// Mark this job as constructed. The job must not have previously been marked as constructed.
     void mark_constructed();
@@ -540,8 +559,7 @@ class job_t {
     // Helper functions to check presence of flags on instances of jobs
     /// The job has been fully constructed, i.e. all its member processes have been launched
     bool is_constructed() const { return flags().constructed; }
-    /// The job was launched in the foreground and has control of the terminal
-    bool is_foreground() const { return flags().foreground; }
+
     /// The job is complete, i.e. all its member processes have been reaped
     bool is_completed() const;
     /// The job is in a stopped state

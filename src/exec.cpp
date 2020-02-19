@@ -59,7 +59,8 @@ pgroup_provenance_t get_pgroup_provenance(const shared_ptr<job_t> &j,
     bool has_external = j->has_external_proc();
     assert(first_proc_is_internal ? has_internal : has_external);
 
-    if (lineage.job_tree && lineage.job_tree->get_pgid().has_value() && j->is_foreground()) {
+    if (lineage.job_tree && lineage.job_tree->get_pgid().has_value() &&
+        !lineage.job_tree->is_initial_background()) {
         // Our lineage indicates a pgid. This means the job is "nested" as a function or block
         // inside another job, which has a real pgroup. We're going to use that, unless it's
         // backgrounded, in which case it should not inherit a pgroup.
@@ -328,7 +329,7 @@ static void run_internal_process_or_short_circuit(parser_t &parser, const std::s
 
 bool blocked_signals_for_job(const job_t &job, sigset_t *sigmask) {
     // Block some signals in background jobs for which job control is turned off (#6828).
-    if (!job.is_foreground() && !job.wants_job_control()) {
+    if (!job.job_tree->is_foreground() && !job.wants_job_control()) {
         sigaddset(sigmask, SIGINT);
         sigaddset(sigmask, SIGQUIT);
         return true;

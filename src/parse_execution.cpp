@@ -939,7 +939,7 @@ end_execution_reason_t parse_execution_context_t::populate_not_process(
     auto optional_time = not_statement.require_get_child<g::optional_time, 2>();
     if (optional_time.tag() == parse_optional_time_time) {
         flags.has_time_prefix = true;
-        if (!job->mut_flags().foreground) {
+        if (!job->initial_background()) {
             return this->report_error(STATUS_INVALID_ARGS, not_statement, ERROR_TIME_BACKGROUND);
         }
     }

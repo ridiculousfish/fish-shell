@@ -39,9 +39,11 @@ int builtin_fg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         // Select last constructed job (i.e. first job in the job queue) that can be brought
         // to the foreground.
 
+        // TODO: job IDs are global, this should be globally visible too.
         for (const auto &j : parser.jobs()) {
             if (j->is_constructed() && (!j->is_completed()) &&
-                ((j->is_stopped() || (!j->is_foreground())) && j->wants_job_control())) {
+                ((j->is_stopped() || (!j->job_tree->wants_foreground())) &&
+                 j->wants_job_control())) {
                 job = j.get();
                 break;
             }
@@ -104,7 +106,7 @@ int builtin_fg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     reader_write_title(job->command(), parser);
 
     parser.job_promote(job);
-    job->mut_flags().foreground = true;
+    job->job_tree->set_wants_foreground(true);
 
     job->continue_job(parser, true, job->is_stopped());
     return STATUS_CMD_OK;
