@@ -389,6 +389,11 @@ class job_t {
         /// Whether the job wants to own the terminal when in the foreground.
         bool wants_terminal{};
 
+        /// Whether the job had the background ampersand when constructed, e.g. /bin/echo foo &
+        /// Note that a job may move between foreground and background; this just describes what the
+        /// initial state should be.
+        bool initial_background{};
+
         /// Whether this job was created as part of an event handler.
         bool from_event_handler{};
 
