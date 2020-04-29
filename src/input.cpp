@@ -604,6 +604,12 @@ std::shared_ptr<const mapping_list_t> input_mapping_set_t::all_mappings() {
         mapping_list_t all_mappings = mapping_list_;
         all_mappings.insert(all_mappings.end(), preset_mapping_list_.begin(),
                             preset_mapping_list_.end());
+        // stable-sort longer mappings so they appear first.
+        // Use stable-sort so that user-defined mappings retain priority over predefined ones.
+        std::stable_sort(all_mappings.begin(), all_mappings.end(),
+                         [](const input_mapping_t &v1, const input_mapping_t &v2) {
+                             return v1.seq.size() > v2.seq.size();
+                         });
         all_mappings_cache_ = std::make_shared<const mapping_list_t>(std::move(all_mappings));
     }
     return all_mappings_cache_;
