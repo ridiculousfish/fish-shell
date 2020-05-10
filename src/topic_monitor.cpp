@@ -78,7 +78,7 @@ void topic_monitor_t::post(topic_t topic) {
     auto oldtopics = pending_updates_.fetch_or(rawtopics, std::memory_order_relaxed);
     if ((oldtopics & rawtopics) == rawtopics) {
         // No new bits were set.
-        return;
+//        return;
     }
 
     // Ok, we changed one or more bits. Ensure the topic change is visible, and announce the change
@@ -171,6 +171,7 @@ generation_list_t topic_monitor_t::await_gens(const generation_list_t &input_gen
             // Under tsan our notifying pipe is non-blocking, so we would busy-loop on the read()
             // call until data is available (that is, fish would use 100% cpu while waiting for
             // processes). The select prevents that.
+            usleep(1000000 / 4);
             if (1) for (;;) {
                 fd_set fds;
                 FD_ZERO(&fds);
