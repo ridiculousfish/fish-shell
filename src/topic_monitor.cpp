@@ -26,6 +26,9 @@
 int fork_count;
 int sigchld_count;
 
+int pipe_amt_write;
+int pipe_amt_read;
+
 /// Implementation of the principal monitor. This uses new (and leaks) to avoid registering a
 /// pointless at-exit handler for the dtor.
 static topic_monitor_t *const s_principal = new topic_monitor_t();
@@ -82,6 +85,8 @@ void topic_monitor_t::post(topic_t topic) {
         } else if (ret < 0) {
             perror("pipe_write");
         }
+        assert(ret == 1);
+        pipe_amt_write += ret;
     } while (ret < 0 && errno == EINTR);
     // Ignore EAGAIN and other errors (which conceivably could occur during shutdown).
 }
@@ -166,6 +171,7 @@ generation_list_t topic_monitor_t::await_gens(const generation_list_t &input_gen
             auto unused = read(fd, ignored, sizeof ignored);
             if (unused) {
             }
+            pipe_amt_read += unused;
 
             // We are finished reading. We must stop being the reader, and post on the condition
             // variable to wake up any other threads waiting for us to finish reading.
