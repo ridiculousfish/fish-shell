@@ -23,6 +23,15 @@
 #define TOPIC_MONITOR_TSAN_WORKAROUND
 #endif
 
+int poll_readable(int fd) {
+    struct timeval can_read_timeout = {0, 0};
+    fd_set fds;
+
+    FD_ZERO(&fds);
+    FD_SET(fd, &fds);
+    return select(fd + 1, &fds, nullptr, nullptr, &can_read_timeout);
+}
+
 int fork_count;
 int sigchld_count;
 
