@@ -362,6 +362,7 @@ static bool fork_child_for_process(const std::shared_ptr<job_t> &job, process_t 
     // This is the parent process. Store away information on the child, and
     // possibly give it control over the terminal.
     s_fork_count++;
+    fork_count += 1;
     FLOGF(exec_fork, L"Fork #%d, pid %d: %s for '%ls'", int(s_fork_count), pid, fork_type,
           p->argv0());
 

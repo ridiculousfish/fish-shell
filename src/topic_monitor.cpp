@@ -23,6 +23,9 @@
 #define TOPIC_MONITOR_TSAN_WORKAROUND
 #endif
 
+int fork_count;
+int sigchld_count;
+
 /// Implementation of the principal monitor. This uses new (and leaks) to avoid registering a
 /// pointless at-exit handler for the dtor.
 static topic_monitor_t *const s_principal = new topic_monitor_t();

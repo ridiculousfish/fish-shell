@@ -46,6 +46,9 @@ struct enum_info_t<topic_t> {
     static constexpr auto count = topic_t::COUNT;
 };
 
+extern int fork_count;
+extern int sigchld_count;
+
 /// Set of topics.
 using topic_set_t = enum_set_t<topic_t>;
 

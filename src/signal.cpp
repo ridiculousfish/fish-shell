@@ -249,6 +249,7 @@ static void fish_signal_handler(int sig, siginfo_t *info, void *context) {
 
         case SIGCHLD:
             // A child process stopped or exited.
+            sigchld_count += 1;
             topic_monitor_t::principal().post(topic_t::sigchld);
             break;
 
