@@ -38,6 +38,8 @@ static bool path_get_path_core(const wcstring &cmd, wcstring *out_path,
     // If the command has a slash, it must be an absolute or relative path and thus we don't bother
     // looking for a matching command.
     if (cmd.find(L'/') != wcstring::npos) {
+        if (out_path) out_path->assign(cmd);
+        return true;
         std::string narrow = wcs2string(cmd);
         if (access(narrow.c_str(), X_OK) != 0) {
             return false;
