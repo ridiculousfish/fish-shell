@@ -77,6 +77,11 @@ void topic_monitor_t::post(topic_t topic) {
         // write() is async signal safe.
         const uint8_t v = 0;
         ret = write(pipes_.write.fd(), &v, sizeof v);
+        if (ret == 0) {
+            fprintf(stderr, "pipe_write returned 0\n");
+        } else if (ret < 0) {
+            perror("pipe_write");
+        }
     } while (ret < 0 && errno == EINTR);
     // Ignore EAGAIN and other errors (which conceivably could occur during shutdown).
 }
