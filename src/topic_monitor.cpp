@@ -53,10 +53,10 @@ topic_monitor_t::topic_monitor_t() {
 
     // Make sure that our write side doesn't block, else we risk hanging in a signal handler.
     // The read end must block to avoid spinning in await.
-    DIE_ON_FAILURE(make_fd_nonblocking(pipes_.write.fd()));
+    //DIE_ON_FAILURE(make_fd_nonblocking(pipes_.write.fd()));
 
 #ifdef TOPIC_MONITOR_TSAN_WORKAROUND
-    DIE_ON_FAILURE(make_fd_nonblocking(pipes_.read.fd()));
+    //DIE_ON_FAILURE(make_fd_nonblocking(pipes_.read.fd()));
 #endif
 }
 
