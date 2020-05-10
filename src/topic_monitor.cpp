@@ -158,15 +158,30 @@ generation_list_t topic_monitor_t::await_gens(const generation_list_t &input_gen
             assert(gens == input_gens &&
                    "Generations should not have changed if we are the reader.");
             int fd = pipes_.read.fd();
-#ifdef TOPIC_MONITOR_TSAN_WORKAROUND
+//#ifdef TOPIC_MONITOR_TSAN_WORKAROUND
             // Under tsan our notifying pipe is non-blocking, so we would busy-loop on the read()
             // call until data is available (that is, fish would use 100% cpu while waiting for
             // processes). The select prevents that.
-            fd_set fds;
-            FD_ZERO(&fds);
-            FD_SET(fd, &fds);
-            (void)select(fd + 1, &fds, nullptr, nullptr, nullptr /* timeout */);
-#endif
+            if (1) for (;;) {
+                fd_set fds;
+                FD_ZERO(&fds);
+                FD_SET(fd, &fds);
+                int samt = select(fd + 1, &fds, nullptr, nullptr, nullptr /* timeout */);
+                if (samt > 0) {
+                    assert(samt == 1 && "Should be one ready fd");
+                    break;
+                } else if (samt == 0) {
+                    fprintf(stderr, "impossible return\n");
+                    break;
+                } else if (samt < 0) {
+                    if (errno == EINTR) {
+                        continue;
+                    }
+                    perror("select");
+                }
+            }
+
+//#endif
             uint8_t ignored[PIPE_BUF];
             auto unused = read(fd, ignored, sizeof ignored);
             if (unused) {
