@@ -71,7 +71,14 @@ topic_monitor_t::topic_monitor_t() {
 
 topic_monitor_t::~topic_monitor_t() = default;
 
+static std::atomic<int> postcount{0};
+
 void topic_monitor_t::post(topic_t topic) {
+    if (postcount > 0) {
+        fprintf(stderr, "DOUBLE POST\n");
+    }
+    postcount += 1;
+
     // Beware, we may be in a signal handler!
     // Atomically update the pending topics.
     auto rawtopics = topic_set_t{topic}.to_raw();
@@ -98,6 +105,7 @@ void topic_monitor_t::post(topic_t topic) {
         pipe_amt_write += ret;
     } while (ret < 0 && errno == EINTR);
     // Ignore EAGAIN and other errors (which conceivably could occur during shutdown).
+    postcount -= 1;
 }
 
 generation_list_t topic_monitor_t::updated_gens_in_data(acquired_lock<data_t> &data) {
