@@ -62,7 +62,7 @@ topic_monitor_t::topic_monitor_t() {
 
     // Make sure that our write side doesn't block, else we risk hanging in a signal handler.
     // The read end must block to avoid spinning in await.
-    //DIE_ON_FAILURE(make_fd_nonblocking(pipes_.write.fd()));
+    DIE_ON_FAILURE(make_fd_nonblocking(pipes_.write.fd()));
 
 #ifdef TOPIC_MONITOR_TSAN_WORKAROUND
     //DIE_ON_FAILURE(make_fd_nonblocking(pipes_.read.fd()));
@@ -99,6 +99,7 @@ void topic_monitor_t::post(topic_t topic) {
         if (ret == 0) {
             fprintf(stderr, "pipe_write returned 0\n");
         } else if (ret < 0) {
+            if (errno == EAGAIN) break;
             perror("pipe_write");
         }
         assert(ret == 1);
