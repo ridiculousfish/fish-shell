@@ -424,6 +424,10 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
                         // Try reaping an external process.
                         int status = -1;
                         auto pid = waitpid(proc->pid, &status, WNOHANG | WUNTRACED | WCONTINUED);
+                        if (pid <= 0) {
+                            perror("!!! waitpid!");
+                            abort();
+                        }
                         if (pid > 0) {
                             assert(pid == proc->pid && "Unexpcted waitpid() return");
                             handle_child_status(proc.get(), proc_status_t::from_waitpid(status));
