@@ -829,6 +829,7 @@ int terminal_maybe_give_to_job(const job_t *j, bool continuing_from_stopped) {
                 pgroup_terminated = true;
             } else if (errno == EPERM) {
                 // Retry so long as this isn't because the process group is dead.
+                fprintf(stderr, "retrying something random\n");
                 int wait_result = waitpid(-1 * j->pgid, &wait_result, WNOHANG);
                 if (wait_result == -1) {
                     // Note that -1 is technically an "error" for waitpid in the sense that an
