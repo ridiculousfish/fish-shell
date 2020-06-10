@@ -235,7 +235,7 @@ bool function_get_definition(const wcstring &name, wcstring &out_definition) {
         uint32_t body_start = header_src->start + header_src->length;
         uint32_t body_end = jobs_src->start + jobs_src->length;
         assert(body_start <= jobs_src->start && "job list must come after header");
-        out_definition = wcstring(props->parsed_source->src, body_start, body_end - body_start);
+        out_definition = wcstring(props->parsed_source->source(), body_start, body_end - body_start);
     }
     return true;
 }

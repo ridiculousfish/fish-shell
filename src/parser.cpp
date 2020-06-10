@@ -636,7 +636,7 @@ eval_res_t parser_t::eval(const wcstring &cmd, const io_chain_t &io,
                           const job_group_ref_t &job_group, enum block_type_t block_type) {
     // Parse the source into a tree, if we can.
     parse_error_list_t error_list;
-    if (parsed_source_ref_t ps = parse_source(cmd, parse_flag_none, &error_list)) {
+    if (parse_tree_ref_t ps = parse_source(cmd, parse_flag_none, &error_list)) {
         return this->eval(ps, io, job_group, block_type);
     } else {
         // Get a backtrace. This includes the message.
@@ -653,7 +653,7 @@ eval_res_t parser_t::eval(const wcstring &cmd, const io_chain_t &io,
     }
 }
 
-eval_res_t parser_t::eval(const parsed_source_ref_t &ps, const io_chain_t &io,
+eval_res_t parser_t::eval(const parse_tree_ref_t &ps, const io_chain_t &io,
                           const job_group_ref_t &job_group, enum block_type_t block_type) {
     assert(block_type == block_type_t::top || block_type == block_type_t::subst);
     if (!ps->tree.empty()) {
@@ -669,7 +669,7 @@ eval_res_t parser_t::eval(const parsed_source_ref_t &ps, const io_chain_t &io,
 }
 
 template <typename T>
-eval_res_t parser_t::eval_node(const parsed_source_ref_t &ps, tnode_t<T> node,
+eval_res_t parser_t::eval_node(const parse_tree_ref_t &ps, tnode_t<T> node,
                                const io_chain_t &block_io, const job_group_ref_t &job_group,
                                block_type_t block_type) {
     static_assert(
@@ -725,9 +725,9 @@ eval_res_t parser_t::eval_node(const parsed_source_ref_t &ps, tnode_t<T> node,
 }
 
 // Explicit instantiations. TODO: use overloads instead?
-template eval_res_t parser_t::eval_node(const parsed_source_ref_t &, tnode_t<grammar::statement>,
+template eval_res_t parser_t::eval_node(const parse_tree_ref_t &, tnode_t<grammar::statement>,
                                         const io_chain_t &, const job_group_ref_t &, block_type_t);
-template eval_res_t parser_t::eval_node(const parsed_source_ref_t &, tnode_t<grammar::job_list>,
+template eval_res_t parser_t::eval_node(const parse_tree_ref_t &, tnode_t<grammar::job_list>,
                                         const io_chain_t &, const job_group_ref_t &, block_type_t);
 
 void parser_t::get_backtrace(const wcstring &src, const parse_error_list_t &errors,

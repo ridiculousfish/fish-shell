@@ -979,8 +979,8 @@ static void test_debounce_timeout() {
 }
 
 static parser_test_error_bits_t detect_argument_errors(const wcstring &src) {
-    parse_node_tree_t tree;
-    if (!parse_tree_from_string(src, parse_flag_none, &tree, NULL, symbol_argument_list)) {
+    parse_tree_ref_t tree = parse_source(src, parse_flag_none, nullptr, symbol_argument_list);
+    if (!tree) {
         return PARSER_TEST_ERROR;
     }
 

@@ -622,7 +622,7 @@ static proc_performer_t get_performer_for_process(process_t *p, job_t *job,
     job_group_ref_t job_group = job->group;
 
     if (p->type == process_type_t::block_node) {
-        const parsed_source_ref_t &source = p->block_node_source;
+        const parse_tree_ref_t &source = p->block_node_source;
         tnode_t<grammar::statement> node = p->internal_block_node;
         assert(source && node && "Process is missing node info");
         return [=](parser_t &parser) {

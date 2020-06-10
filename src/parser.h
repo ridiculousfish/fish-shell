@@ -295,14 +295,14 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Evaluate the parsed source ps.
     /// Because the source has been parsed, a syntax error is impossible.
-    eval_res_t eval(const parsed_source_ref_t &ps, const io_chain_t &io,
+    eval_res_t eval(const parse_tree_ref_t &ps, const io_chain_t &io,
                     const job_group_ref_t &job_group = {},
                     block_type_t block_type = block_type_t::top);
 
     /// Evaluates a node.
     /// The node type must be grammar::statement or grammar::job_list.
     template <typename T>
-    eval_res_t eval_node(const parsed_source_ref_t &ps, tnode_t<T> node, const io_chain_t &block_io,
+    eval_res_t eval_node(const parse_tree_ref_t &ps, tnode_t<T> node, const io_chain_t &block_io,
                          const job_group_ref_t &job_group,
                          block_type_t block_type = block_type_t::top);
 

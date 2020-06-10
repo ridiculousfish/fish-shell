@@ -3820,7 +3820,7 @@ static int read_ni(parser_t &parser, int fd, const io_chain_t &io) {
     }
 
     parse_error_list_t errors;
-    parsed_source_ref_t pstree;
+    parse_tree_ref_t pstree;
     if (!parse_util_detect_errors(str, &errors, false /* do not accept incomplete */, &pstree)) {
         parser.eval(pstree, io);
         return 0;

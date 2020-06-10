@@ -18,7 +18,7 @@ class parser_t;
 /// A function's constant properties. These do not change once initialized.
 struct function_properties_t {
     /// Parsed source containing the function.
-    parsed_source_ref_t parsed_source;
+    parse_tree_ref_t parsed_source;
 
     /// Node containing the function statement, pointing into parsed_source.
     /// We store block_statement, not job_list, so that comments attached to the header are

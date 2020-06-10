@@ -161,11 +161,10 @@ class tnode_t;
 /// The parse tree itself.
 class parse_node_tree_t : public std::vector<parse_node_t> {
    public:
-    parse_node_tree_t() {}
-    parse_node_tree_t(parse_node_tree_t &&) = default;
-    parse_node_tree_t &operator=(parse_node_tree_t &&) = default;
-    parse_node_tree_t(const parse_node_tree_t &) = delete;             // no copying
-    parse_node_tree_t &operator=(const parse_node_tree_t &) = delete;  // no copying
+    explicit parse_node_tree_t(wcstring &&src) : src_(std::move(src)) {}
+
+    // Access the underlying source.
+    const wcstring &source() const { return src_; }
 
     // Get the node corresponding to a child of the given node, or NULL if there is no such child.
     // If expected_type is provided, assert that the node has that type.
@@ -204,29 +203,15 @@ class parse_node_tree_t : public std::vector<parse_node_t> {
     const parse_node_t *next_node_in_node_list(const parse_node_t &node_list,
                                                parse_token_type_t entry_type,
                                                const parse_node_t **list_tail) const;
+
+    /// The source which was parsed.
+    const wcstring src_;
 };
 
-/// The big entry point. Parse a string, attempting to produce a tree for the given goal type.
-bool parse_tree_from_string(const wcstring &str, parse_tree_flags_t flags,
-                            parse_node_tree_t *output, parse_error_list_t *errors,
-                            parse_token_type_t goal = symbol_job_list);
-
-/// A type wrapping up a parse tree and the original source behind it.
-struct parsed_source_t {
-    wcstring src;
-    parse_node_tree_t tree;
-
-    parsed_source_t(wcstring s, parse_node_tree_t t) : src(std::move(s)), tree(std::move(t)) {}
-
-    parsed_source_t(const parsed_source_t &) = delete;
-    void operator=(const parsed_source_t &) = delete;
-    parsed_source_t(parsed_source_t &&) = default;
-    parsed_source_t &operator=(parsed_source_t &&) = default;
-};
 /// Return a shared pointer to parsed_source_t, or null on failure.
-using parsed_source_ref_t = std::shared_ptr<const parsed_source_t>;
-parsed_source_ref_t parse_source(wcstring src, parse_tree_flags_t flags, parse_error_list_t *errors,
-                                 parse_token_type_t goal = symbol_job_list);
+using parse_tree_ref_t = std::shared_ptr<const parse_node_tree_t>;
+parse_tree_ref_t parse_source(wcstring &&src, parse_tree_flags_t flags, parse_error_list_t *errors,
+                              parse_token_type_t goal = symbol_job_list);
 
 /// Error message for improper use of the exec builtin.
 #define EXEC_ERR_MSG _(L"The '%ls' command can not be used in a pipeline")

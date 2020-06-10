@@ -131,7 +131,7 @@ class parse_node_tree_t;
 parser_test_error_bits_t parse_util_detect_errors(const wcstring &buff_src,
                                                   parse_error_list_t *out_errors = nullptr,
                                                   bool allow_incomplete = true,
-                                                  parsed_source_ref_t *out_pstree = nullptr);
+                                                  parse_tree_ref_t *out_pstree = nullptr);
 
 /// Detect errors in the specified string when parsed as an argument list. Returns the text of an
 /// error, or none if no error occurred.

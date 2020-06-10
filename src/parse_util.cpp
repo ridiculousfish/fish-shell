@@ -1211,7 +1211,7 @@ static bool detect_errors_in_plain_statement(const wcstring &buff_src,
 parser_test_error_bits_t parse_util_detect_errors(const wcstring &buff_src,
                                                   parse_error_list_t *out_errors,
                                                   bool allow_incomplete,
-                                                  parsed_source_ref_t *out_pstree) {
+                                                  parse_tree_ref_t *out_pstree) {
     namespace g = grammar;
     parse_node_tree_t node_tree;
     parse_error_list_t parse_errors;

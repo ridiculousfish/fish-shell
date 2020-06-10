@@ -88,7 +88,7 @@ static redirection_spec_t get_stderr_merge() {
     return redirection_spec_t{STDERR_FILENO, redirection_mode_t::fd, stdout_fileno_str};
 }
 
-parse_execution_context_t::parse_execution_context_t(parsed_source_ref_t pstree,
+parse_execution_context_t::parse_execution_context_t(parse_tree_ref_t pstree,
                                                      const operation_context_t &ctx,
                                                      io_chain_t block_io)
     : pstree(std::move(pstree)),
@@ -99,7 +99,7 @@ parse_execution_context_t::parse_execution_context_t(parsed_source_ref_t pstree,
 // Utilities
 
 wcstring parse_execution_context_t::get_source(const parse_node_t &node) const {
-    return node.get_source(pstree->src);
+    return node.get_source(pstree->source());
 }
 
 tnode_t<g::plain_statement> parse_execution_context_t::infinite_recursive_statement_in_job_list(

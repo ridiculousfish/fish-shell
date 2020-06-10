@@ -263,7 +263,7 @@ class process_t {
 
     /// For internal block processes only, the node offset of the statement.
     /// This is always either block, ifs, or switchs, never boolean or decorated.
-    parsed_source_ref_t block_node_source{};
+    parse_tree_ref_t block_node_source{};
     tnode_t<grammar::statement> internal_block_node{};
 
     struct concrete_assignment {
