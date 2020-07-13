@@ -27,6 +27,13 @@ struct fd_monitor_item_t {
     /// The fd to monitor.
     autoclose_fd_t fd{};
 
+    /// Whether to monitor the fd for being readable or writable.
+    enum class wait_for_t {
+        readable,
+        writable,
+    };
+    wait_for_t wait_for{};
+
     /// A callback to be invoked when the fd is readable, or when we are timed out.
     /// If we time out, then timed_out will be true.
     /// If the fd is invalid on return from the function, then the item is removed.
@@ -37,12 +44,19 @@ struct fd_monitor_item_t {
     uint64_t timeout_usec{kNoTimeout};
 
     /// Construct from a file, callback, and optional timeout.
-    fd_monitor_item_t(autoclose_fd_t fd, callback_t callback, uint64_t timeout_usec = kNoTimeout)
-        : fd(std::move(fd)), callback(std::move(callback)), timeout_usec(timeout_usec) {
+    fd_monitor_item_t(autoclose_fd_t fd, wait_for_t wait_for, callback_t callback,
+                      uint64_t timeout_usec = kNoTimeout)
+        : fd(std::move(fd)),
+          wait_for(wait_for),
+          callback(std::move(callback)),
+          timeout_usec(timeout_usec) {
         assert(timeout_usec > 0 && "Invalid timeout");
     }
 
     fd_monitor_item_t() = default;
+
+    /// \return whether we are waiting for reading (true) or writing (false).
+    bool waits_for_read() const { return wait_for == fd_monitor_item_t::wait_for_t::readable; }
 
    private:
     // Fields and methods for the private use of fd_monitor_t.

@@ -758,13 +758,26 @@ static void test_fd_monitor() {
         std::atomic<bool> did_timeout{false};
         std::atomic<size_t> length_read{0};
         std::atomic<size_t> total_calls{0};
+        bool wait_for_writable{false};
         bool always_exit{false};
         fd_monitor_item_t item;
-        autoclose_fd_t writer;
 
-        explicit item_maker_t(uint64_t timeout_usec) {
+        // The write end of our fd if we are waiting for readable.
+        // The read end if we are waiting for writable.
+        autoclose_fd_t pipe_end;
+
+        explicit item_maker_t(uint64_t timeout_usec, bool wait_for_writable = false)
+            : wait_for_writable(wait_for_writable) {
             auto pipes = make_autoclose_pipes({}).acquire();
-            writer = std::move(pipes.write);
+            autoclose_fd_t item_fd;
+            if (wait_for_writable) {
+                item_fd = std::move(pipes.write);
+                pipe_end = std::move(pipes.read);
+            } else {
+                item_fd = std::move(pipes.read);
+                pipe_end = std::move(pipes.write);
+            }
+
             auto callback = [this](autoclose_fd_t &fd, bool timed_out) {
                 bool was_closed = false;
                 if (timed_out) {
@@ -780,7 +793,10 @@ static void test_fd_monitor() {
                     fd.close();
                 }
             };
-            item = fd_monitor_item_t(std::move(pipes.read), std::move(callback), timeout_usec);
+            item = fd_monitor_item_t(std::move(item_fd),
+                                     wait_for_writable ? fd_monitor_item_t::wait_for_t::writable
+                                                       : fd_monitor_item_t::wait_for_t::readable,
+                                     std::move(callback), timeout_usec);
         }
 
         item_maker_t(const item_maker_t &) = delete;
@@ -788,7 +804,7 @@ static void test_fd_monitor() {
         // Write 42 bytes to our write end.
         void write42() {
             char buff[42] = {0};
-            (void)write_loop(writer.fd(), buff, sizeof buff);
+            (void)write_loop(pipe_end.fd(), buff, sizeof buff);
         }
     };
 
@@ -810,19 +826,23 @@ static void test_fd_monitor() {
     // Item which should get 42 bytes, then get notified it is closed.
     item_maker_t item42_thenclose(16 * usec_per_msec);
 
+    // Item which should notice it is writable.
+    item_maker_t item_writable(16 * usec_per_msec, true);
+    item_writable.always_exit = true;
+
     // Item which should be called back once.
     item_maker_t item_oneshot(16 * usec_per_msec);
     item_oneshot.always_exit = true;
     {
         fd_monitor_t monitor;
         for (auto item : {&item_never, &item_hugetimeout, &item0_timeout, &item42_timeout,
-                          &item42_nottimeout, &item42_thenclose, &item_oneshot}) {
+                          &item42_nottimeout, &item42_thenclose, &item_writable, &item_oneshot}) {
             monitor.add(std::move(item->item));
         }
         item42_timeout.write42();
         item42_nottimeout.write42();
         item42_thenclose.write42();
-        item42_thenclose.writer.close();
+        item42_thenclose.pipe_end.close();
         item_oneshot.write42();
         std::this_thread::sleep_for(std::chrono::milliseconds(84));
     }
@@ -845,6 +865,9 @@ static void test_fd_monitor() {
     do_test(item42_thenclose.did_timeout == false);
     do_test(item42_thenclose.length_read == 42);
     do_test(item42_thenclose.total_calls == 2);
+
+    do_test(item_writable.did_timeout == false);
+    do_test(item_writable.total_calls == 1);
 
     do_test(!item_oneshot.did_timeout);
     do_test(item_oneshot.length_read == 42);

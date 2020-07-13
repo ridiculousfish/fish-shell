@@ -41,7 +41,8 @@ fd_monitor_t::fd_monitor_t() {
             wperror(L"read");
         }
     };
-    items_.push_back(fd_monitor_item_t(std::move(self_pipe->read), std::move(callback)));
+    items_.push_back(fd_monitor_item_t(
+        std::move(self_pipe->read), fd_monitor_item_t::wait_for_t::readable, std::move(callback)));
 }
 
 // Extremely hacky destructor to clean up.
@@ -119,12 +120,23 @@ void fd_monitor_t::run_in_background() {
     for (;;) {
         uint64_t timeout_usec = fd_monitor_item_t::kNoTimeout;
         int max_fd = -1;
-        fd_set fds;
-        FD_ZERO(&fds);
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        fd_set write_fds;
+        FD_ZERO(&write_fds);
+        bool has_read_item = false;
+        bool has_write_item = false;
+
         auto now = std::chrono::steady_clock::now();
 
         for (auto &item : items_) {
-            FD_SET(item.fd.fd(), &fds);
+            if (item.waits_for_read()) {
+                FD_SET(item.fd.fd(), &read_fds);
+                has_read_item = true;
+            } else {
+                FD_SET(item.fd.fd(), &write_fds);
+                has_write_item = true;
+            }
             if (!item.last_time.has_value()) item.last_time = now;
             timeout_usec = std::min(timeout_usec, item.usec_remaining(now));
             max_fd = std::max(max_fd, item.fd.fd());
@@ -144,21 +156,24 @@ void fd_monitor_t::run_in_background() {
 
         // Call select().
         struct timeval tv;
-        int ret = select(max_fd + 1, &fds, nullptr, nullptr, usec_to_tv_or_null(timeout_usec, &tv));
+        int ret = select(max_fd + 1, has_read_item ? &read_fds : nullptr,
+                         has_write_item ? &write_fds : nullptr, nullptr,
+                         usec_to_tv_or_null(timeout_usec, &tv));
         if (ret < 0 && errno != EINTR) {
             // Surprising error.
             wperror(L"select");
         }
 
         // A predicate which services each item in turn, returning true if it should be removed.
-        auto servicer = [&fds, &now](fd_monitor_item_t &item) {
+        auto servicer = [&read_fds, &write_fds, &now](fd_monitor_item_t &item) {
             int fd = item.fd.fd();
-            bool remove = !item.service_item(&fds, now);
+            const fd_set *fds = item.waits_for_read() ? &read_fds : &write_fds;
+            bool remove = !item.service_item(fds, now);
             if (remove) FLOG(fd_monitor, "Removing fd", fd);
             return remove;
         };
 
-        // Service all items that are either readable or timed our, and remove any which say to do
+        // Service all items that are either readable or timed out, and remove any which say to do
         // so.
         now = std::chrono::steady_clock::now();
         items_.erase(std::remove_if(items_.begin(), items_.end(), servicer), items_.end());
