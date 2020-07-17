@@ -267,7 +267,6 @@ void job_group_t::populate_group_for_job(job_t *job, const job_group_ref_t &prop
     // Decide if this job can use an internal group.
     // This is true if it's a simple foreground execution of an internal proc.
     bool initial_bg = job->is_initially_background();
-    bool first_proc_internal = job->processes.front()->is_internal();
     bool can_use_internal =
         !initial_bg && job->processes.size() == 1 && job->processes.front()->is_internal();
 
@@ -298,13 +297,8 @@ void job_group_t::populate_group_for_job(job_t *job, const job_group_ref_t &prop
         // Mark if it's foreground.
         job->group->set_is_foreground(!initial_bg);
 
-        // Perhaps this job should immediately live in fish's pgroup.
-        // There's two reasons why it may be so:
-        //  1. The job doesn't need job control.
-        //  2. The first process in the job is internal to fish; this needs to own the tty.
-        if (!can_use_internal && (!props.job_control || first_proc_internal)) {
-            job->group->set_pgid(getpgrp());
-        }
+        // If the job doesn't need job control, it lives in fish's pgroup immediately.
+        if (!props.is_internal && !props.job_control) job->group->set_pgid(getpgrp());
     }
 }
 
