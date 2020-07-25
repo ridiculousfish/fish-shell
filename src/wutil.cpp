@@ -227,12 +227,13 @@ int wunlink(const wcstring &file_name) {
     return unlink(tmp.c_str());
 }
 
-void wperror(const wchar_t *s) {
-    int e = errno;
+void wperror(const wchar_t *s) { wperror_code(s, errno); }
+
+void wperror_code(const wchar_t *s, int code) {
     if (s[0] != L'\0') {
         std::fwprintf(stderr, L"%ls: ", s);
     }
-    std::fwprintf(stderr, L"%s\n", std::strerror(e));
+    std::fwprintf(stderr, L"%s\n", std::strerror(code));
 }
 
 int make_fd_nonblocking(int fd) {

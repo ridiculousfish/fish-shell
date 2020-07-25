@@ -59,6 +59,9 @@ int wunlink(const wcstring &file_name);
 /// Wide character version of perror().
 void wperror(const wchar_t *s);
 
+/// Wide character version of perror() that takes a code.
+void wperror_code(const wchar_t *s, int code);
+
 /// Async-safe version of perror().
 void safe_perror(const char *message);
 

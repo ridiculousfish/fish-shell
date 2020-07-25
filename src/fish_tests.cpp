@@ -48,6 +48,7 @@
 #include "complete.h"
 #include "env.h"
 #include "env_universal_common.h"
+#include "errors.h"
 #include "event.h"
 #include "expand.h"
 #include "fallback.h"  // IWYU pragma: keep
@@ -5589,6 +5590,34 @@ void test_maybe() {
     do_test(c2.value() == "abc");
 }
 
+void test_errors() {
+    say(L"Testing result and error");
+    error_t v1{};
+    do_test(v1.is_ok());
+    do_test(!v1.errored());
+    do_test(v1.code() == 0);
+
+    result_t<double> r1{1234.0};
+    do_test(r1.is_ok());
+    do_test(!r1.errored());
+    do_test(r1.code() == 0);
+    do_test(r1.value() == 1234.0);
+
+    // Non-copyable types should be OK.
+    result_t<std::unique_ptr<int>> r2{make_unique<int>(5)};
+    do_test(*r2.value() == 5);
+    do_test(*r2.acquire() == 5);
+
+    // Validate error codes.
+    do_test(error_t::from_code(3).code() == 3);
+    errno = 8;
+    do_test(error_t::from_errno().code() == 8);
+
+    // Tricky bits.
+    result_t<long> q{error_t::from_code(5)};
+    do_test(q.code() == 5);
+}
+
 void test_layout_cache() {
     layout_cache_t seqs;
 
@@ -6021,6 +6050,7 @@ int main(int argc, char **argv) {
     if (should_test_function("string")) test_string();
     if (should_test_function("illegal_command_exit_code")) test_illegal_command_exit_code();
     if (should_test_function("maybe")) test_maybe();
+    if (should_test_function("errors")) test_errors();
     if (should_test_function("layout_cache")) test_layout_cache();
     if (should_test_function("prompt")) test_prompt_truncation();
     if (should_test_function("normalize")) test_normalize_path();
