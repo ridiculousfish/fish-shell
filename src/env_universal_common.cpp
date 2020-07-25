@@ -467,8 +467,8 @@ bool env_universal_t::write_to_fd(int fd, const wcstring &path) {
     assert(fd >= 0);
     bool success = true;
     std::string contents = serialize_with_vars(vars);
-    if (write_loop(fd, contents.data(), contents.size()) < 0) {
-        const char *error = std::strerror(errno);
+    if (auto code = write_loop(fd, contents.data(), contents.size()).as_err()) {
+        const char *error = std::strerror(*code);
         FLOGF(error, _(L"Unable to write to universal variables file '%ls': %s"), path.c_str(),
               error);
         success = false;
@@ -790,11 +790,11 @@ uvar_format_t env_universal_t::read_message_internal(int fd, var_table_t *vars) 
     std::string contents;
     while (contents.size() < k_max_read_size) {
         char buffer[4096];
-        ssize_t amt = read_loop(fd, buffer, sizeof buffer);
-        if (amt <= 0) {
+        auto amt = read_loop(fd, buffer, sizeof buffer);
+        if (amt.errored() || *amt == 0) {
             break;
         }
-        contents.append(buffer, amt);
+        contents.append(buffer, *amt);
     }
 
     // Handle overlong files.

@@ -200,7 +200,7 @@ static void enqueue_thread_result(void_function_t req) {
     s_result_queue.acquire()->push(std::move(req));
     const char wakeup_byte = IO_SERVICE_RESULT_QUEUE;
     int notify_fd = get_notify_pipes().write;
-    assert_with_errno(write_loop(notify_fd, &wakeup_byte, sizeof wakeup_byte) != -1);
+    write_loop(notify_fd, &wakeup_byte, sizeof wakeup_byte).check_print(L"write");
 }
 
 static void *this_thread() { return (void *)(intptr_t)pthread_self(); }
@@ -422,7 +422,7 @@ void iothread_perform_on_main(void_function_t &&func) {
     // Tell the pipe.
     const char wakeup_byte = IO_SERVICE_MAIN_THREAD_REQUEST_QUEUE;
     int notify_fd = get_notify_pipes().write;
-    assert_with_errno(write_loop(notify_fd, &wakeup_byte, sizeof wakeup_byte) != -1);
+    write_loop(notify_fd, &wakeup_byte, sizeof wakeup_byte).check_print(L"write");
 
     // Wait on the condition, until we're done.
     std::unique_lock<std::mutex> perform_lock(s_main_thread_performer_lock);

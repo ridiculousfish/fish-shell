@@ -587,28 +587,27 @@ long read_blocked(int fd, void *buf, size_t count) {
     return bytes_read;
 }
 
-/// Loop a write request while failure is non-critical. Return -1 and set errno in case of critical
-/// error.
-ssize_t write_loop(int fd, const char *buff, size_t count) {
+error_t write_loop(int fd, const char *buff, size_t count) {
     size_t out_cum = 0;
     while (out_cum < count) {
         ssize_t out = write(fd, &buff[out_cum], count - out_cum);
         if (out < 0) {
             if (errno != EAGAIN && errno != EINTR) {
-                return -1;
+                return error_t::from_errno();
             }
         } else {
             out_cum += static_cast<size_t>(out);
         }
     }
-    return static_cast<ssize_t>(out_cum);
+    return error_t::ok();
 }
 
-ssize_t read_loop(int fd, void *buff, size_t count) {
+result_t<ssize_t> read_loop(int fd, void *buff, size_t count) {
     ssize_t result;
     do {
         result = read(fd, buff, count);
     } while (result < 0 && (errno == EAGAIN || errno == EINTR));
+    if (result < 0) return error_t::from_errno();
     return result;
 }
 

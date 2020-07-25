@@ -100,7 +100,7 @@ static bool write_background_color(outputter_t &outp, unsigned char idx) {
 
 void outputter_t::flush_to(int fd) {
     if (fd >= 0 && !contents_.empty()) {
-        write_loop(fd, contents_.data(), contents_.size());
+        write_loop(fd, contents_.data(), contents_.size()).check_print(L"write");
         contents_.clear();
     }
 }

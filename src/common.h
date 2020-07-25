@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "errors.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "maybe.h"
 
@@ -604,13 +605,14 @@ void fish_setlocale();
 /// \return the number of bytes read, or 0 on EOF. On EAGAIN, returns -1 if nothing was read.
 long read_blocked(int fd, void *buf, size_t count);
 
-/// Loop a write request while failure is non-critical. Return -1 and set errno in case of critical
-/// error.
-ssize_t write_loop(int fd, const char *buff, size_t count);
+/// Loop a write request while failure is non-critical.
+/// \return an error. Note this always writes the full amount.
+error_t write_loop(int fd, const char *buff, size_t count);
 
-/// Loop a read request while failure is non-critical. Return -1 and set errno in case of critical
-/// error.
-ssize_t read_loop(int fd, void *buff, size_t count);
+/// Loop a read request while failure is non-critical.
+/// \return the amount read, or an error code.
+/// Note this does not always read the full amount.
+result_t<ssize_t> read_loop(int fd, void *buff, size_t count);
 
 /// Replace special characters with backslash escape sequences. Newline is replaced with \n, etc.
 ///

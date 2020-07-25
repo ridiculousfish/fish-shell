@@ -84,8 +84,8 @@ int flush_to_fd(std::string *buffer, int fd, size_t min_size) {
     if (buffer->empty() || buffer->size() < min_size) {
         return 0;
     }
-    if (write_loop(fd, buffer->data(), buffer->size()) < 0) {
-        return errno;
+    if (auto err = write_loop(fd, buffer->data(), buffer->size()).as_err()) {
+        return *err;
     }
     buffer->clear();
     return 0;

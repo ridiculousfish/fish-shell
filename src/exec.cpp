@@ -253,9 +253,9 @@ static void run_internal_process(process_t *p, std::string &&outdata, std::strin
     iothread_perform_cantwait([f]() {
         proc_status_t status = f->success_status;
         if (!f->skip_out()) {
-            ssize_t ret = write_loop(f->src_outfd, f->outdata.data(), f->outdata.size());
-            if (ret < 0) {
-                if (errno != EPIPE) {
+            if (auto err =
+                    write_loop(f->src_outfd, f->outdata.data(), f->outdata.size()).as_err()) {
+                if (*err != EPIPE) {
                     wperror(L"write");
                 }
                 if (status.is_success()) {
@@ -264,9 +264,9 @@ static void run_internal_process(process_t *p, std::string &&outdata, std::strin
             }
         }
         if (!f->skip_err()) {
-            ssize_t ret = write_loop(f->src_errfd, f->errdata.data(), f->errdata.size());
-            if (ret < 0) {
-                if (errno != EPIPE) {
+            if (auto err =
+                    write_loop(f->src_errfd, f->errdata.data(), f->errdata.size()).as_err()) {
+                if (*err != EPIPE) {
                     wperror(L"write");
                 }
                 if (status.is_success()) {
@@ -454,15 +454,15 @@ static bool handle_builtin_output(parser_t &parser, const std::shared_ptr<job_t>
     // If we have no redirections for stdout/stderr, just write them directly.
     if (!stdout_io && !stderr_io) {
         bool did_err = false;
-        if (write_loop(STDOUT_FILENO, outbuff.data(), outbuff.size()) < 0) {
-            if (errno != EPIPE) {
+        if (auto err = write_loop(STDOUT_FILENO, outbuff.data(), outbuff.size()).as_err()) {
+            if (*err != EPIPE) {
                 did_err = true;
                 FLOG(error, L"Error while writing to stdout");
                 wperror(L"write_loop");
             }
         }
-        if (write_loop(STDERR_FILENO, errbuff.data(), errbuff.size()) < 0) {
-            if (errno != EPIPE && !did_err) {
+        if (auto err = write_loop(STDERR_FILENO, errbuff.data(), errbuff.size()).as_err()) {
+            if (*err != EPIPE && !did_err) {
                 did_err = true;
                 FLOG(error, L"Error while writing to stderr");
                 wperror(L"write_loop");

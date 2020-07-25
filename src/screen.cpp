@@ -1117,9 +1117,11 @@ void s_write(screen_t *s, const wcstring &left_prompt, const wcstring &right_pro
         const std::string prompt_narrow = wcs2string(left_prompt);
         const std::string command_line_narrow = wcs2string(explicit_command_line);
 
-        write_loop(STDOUT_FILENO, "\r", 1);
-        write_loop(STDOUT_FILENO, prompt_narrow.c_str(), prompt_narrow.size());
-        write_loop(STDOUT_FILENO, command_line_narrow.c_str(), command_line_narrow.size());
+        write_loop(STDOUT_FILENO, "\r", 1).check_print(L"write");
+        write_loop(STDOUT_FILENO, prompt_narrow.c_str(), prompt_narrow.size())
+            .check_print(L"write");
+        write_loop(STDOUT_FILENO, command_line_narrow.c_str(), command_line_narrow.size())
+            .check_print(L"write");
 
         return;
     }
@@ -1220,7 +1222,7 @@ void s_reset_line(screen_t *s, bool repaint_prompt) {
     s->need_clear_lines = true;
 
     // This should prevent resetting the cursor position during the next repaint.
-    write_loop(STDOUT_FILENO, "\r", 1);
+    (void)write_loop(STDOUT_FILENO, "\r", 1);
     s->actual.cursor.x = 0;
 
     fstat(STDOUT_FILENO, &s->prev_buff_1);
@@ -1300,8 +1302,8 @@ void s_reset_abandoning_line(screen_t *s, int screen_width) {
     }
 
     const std::string narrow_abandon_line_string = wcs2string(abandon_line_string);
-    write_loop(STDOUT_FILENO, narrow_abandon_line_string.c_str(),
-               narrow_abandon_line_string.size());
+    (void)write_loop(STDOUT_FILENO, narrow_abandon_line_string.c_str(),
+                     narrow_abandon_line_string.size());
     s->actual.cursor.x = 0;
 
     fstat(STDOUT_FILENO, &s->prev_buff_1);

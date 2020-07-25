@@ -2782,7 +2782,7 @@ struct autoload_tester_t {
     static void touch_file(const wcstring &path) {
         int fd = wopen_cloexec(path, O_RDWR | O_CREAT, 0666);
         do_test(fd >= 0);
-        write_loop(fd, "Hello", 5);
+        write_loop(fd, "Hello", 5).check_print(L"write");
         close(fd);
     }
 
