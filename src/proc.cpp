@@ -896,7 +896,7 @@ maybe_t<pid_t> job_t::get_pgid() const { return group->get_pgid(); }
 
 job_id_t job_t::job_id() const { return group->get_id(); }
 
-void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp) {
+void job_t::continue_job(parser_t &parser) {
     // Put job first in the job list.
     parser.job_promote(this);
     mut_flags().notified = false;
@@ -915,11 +915,15 @@ void job_t::continue_job(parser_t &parser, bool reclaim_foreground_pgrp) {
     // Make sure we retake control of the terminal before leaving this function.
     bool term_transferred = false;
     cleanup_t take_term_back([&] {
-        if (term_transferred && reclaim_foreground_pgrp) {
-            // Only restore terminal attrs if we're continuing a job. See:
+        if (term_transferred) {
+            // Should we restore the terminal attributes?
+            // Historically we have done this conditionally only if we sent SIGCONT.
+            // TODO: rationalize what the right behavior here is.
+            bool restore_attrs = send_sigcont;
+            // Issues of interest:
             // https://github.com/fish-shell/fish-shell/issues/121
             // https://github.com/fish-shell/fish-shell/issues/2114
-            terminal_return_from_job_group(this->group.get(), send_sigcont);
+            terminal_return_from_job_group(this->group.get(), restore_attrs);
         }
     });
 

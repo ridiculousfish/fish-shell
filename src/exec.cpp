@@ -902,9 +902,6 @@ bool exec_job(parser_t &parser, const shared_ptr<job_t> &j, const io_chain_t &bl
         return true;
     }
 
-    pid_t pgrp = getpgrp();
-    // Check to see if we should reclaim the foreground pgrp after the job finishes or stops.
-    const bool reclaim_foreground_pgrp = (tcgetpgrp(STDIN_FILENO) == pgrp);
     const size_t stdout_read_limit = parser.libdata().read_limit;
 
     // Get the list of all FDs so we can ensure our pipes do not conflict.
@@ -1003,7 +1000,7 @@ bool exec_job(parser_t &parser, const shared_ptr<job_t> &j, const io_chain_t &bl
         return false;
     }
 
-    j->continue_job(parser, reclaim_foreground_pgrp);
+    j->continue_job(parser);
     return true;
 }
 
