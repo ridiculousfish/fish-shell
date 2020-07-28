@@ -40,11 +40,23 @@ int wcsfilecmp_glob(const wchar_t *a, const wchar_t *b);
 /// Get the current time in microseconds since Jan 1, 1970.
 long long get_time();
 
-/// Switch to a directory given by an dir_fd, returning by reference a lock which, while held,
-/// blocks other calls to locking_fchdir. This caches dir_fd and elides the call if the cwd does not
-/// change. \return the result of the fchdir call.
+/// A lock type returned by locking_fchdir.
+/// It releases the lock in its destructor.
+struct chdir_serializer_t;
+struct fchdir_lock_t {
+    friend chdir_serializer_t;
+    ~fchdir_lock_t();
+
+   private:
+    bool locked{false};
+};
+
 class autoclose_fd_t;
+/// Switch to a directory given by an dir_fd, returning by reference a lock which, while held,
+/// blocks other calls to locking_fchdir with different directories. This caches dir_fd and
+/// elides the fchdir call if the cwd does not change.
+/// \return 0, or -1 on error, in which case errno will be set.
 int locking_fchdir(const std::shared_ptr<const autoclose_fd_t> &dir_fd,
-                   std::unique_lock<std::mutex> *out_lock = nullptr);
+                   fchdir_lock_t *out_lock = nullptr);
 
 #endif

@@ -8,10 +8,12 @@
 #include <sys/time.h>
 #include <wctype.h>
 
+#include <atomic>
 #include <cwchar>
 
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
+#include "flog.h"
 #include "wutil.h"     // IWYU pragma: keep
 
 // Compare the strings to see if they begin with an integer that can be compared and return the
@@ -156,30 +158,124 @@ long long get_time() {
     return 1000000LL * time_struct.tv_sec + time_struct.tv_usec;
 }
 
-int locking_fchdir(const std::shared_ptr<const autoclose_fd_t> &dir_fd,
-                   std::unique_lock<std::mutex> *out_lock) {
-    static std::mutex s_lock;
+/// chdir_serializer_t is responsible for serializing calls to fchdir().
+/// This is necessary because cwd must be correct during calls to fork() - there is no 'fork_at'.
+struct chdir_serializer_t {
+    struct data_t {
+        /// The current working directory. This corresponds to the most recent *successful* call to
+        /// fchdir().
+        std::shared_ptr<const autoclose_fd_t> current{};
 
-    // Take the lock, perhaps giving it to the caller.
-    // TODO: it would be nice to make this a counting lock that can be held by multiple callers so
-    // long as they all agree on the cwd. In practice we won't have different threads with different
-    // PWDs often.
-    std::unique_lock<std::mutex> locker(s_lock);
-    if (out_lock) {
-        *out_lock = std::move(locker);
+        /// Total number of locks on 'current'.
+        /// The CWD is only permitted to change if lock_count is 0.
+        uint32_t lock_count{0};
+
+        /// A pair of counters for use in serializing threads.
+        /// Each thread "takes a ticket" by postincrementing next_available, and only runs when it
+        /// equals now_serving. The purpose of the tickets is to ensure the lock is fair: if two
+        /// threads disagree on the CWD they should take turns. Note that the difference 'last_taken
+        /// - now_serving' is the current number of waiters.
+        uint64_t next_available{0};
+        uint64_t now_serving{0};
+    };
+
+    /// Data protected by the lock.
+    owning_lock<data_t> data_{};
+
+    /// A condition variable for waiting for the cwd to be released.
+    /// The associated mutex is the one protecting 'data'.
+    std::condition_variable condition_{};
+
+    /// Set the cwd to a given value, waiting until it's our turn to do so.
+    /// \return 0 on success, an errno value if fchdir() fails.
+    int lock_cwd(const std::shared_ptr<const autoclose_fd_t> &dir_fd, fchdir_lock_t *out_lock);
+
+    /// Mark that a user of the CWD is finished.
+    void release_cwd_lock();
+
+    /// Advance the now_serving ticket, if there are no locks on it.
+    void try_advance_ticket(acquired_lock<data_t> &data);
+
+    /// The shared chdir serializer.
+    static chdir_serializer_t *const shared;
+};
+
+void chdir_serializer_t::try_advance_ticket(acquired_lock<data_t> &data) {
+    assert(data->now_serving <= data->next_available && "tickets should be monotone increasing");
+    // Only need to post if someone is waiting.
+    if (data->lock_count == 0 && data->now_serving < data->next_available) {
+        data->now_serving += 1;
+        // TODO: faster to post without holding the mutex.
+        condition_.notify_all();
     }
+}
 
-    // Change directories if needed.
-    // Note s_current_cwd is protected by the lock.
-    static std::shared_ptr<const autoclose_fd_t> s_current_cwd;
-    if (s_current_cwd == dir_fd) {
-        // The cwd has not changed.
+int chdir_serializer_t::lock_cwd(const std::shared_ptr<const autoclose_fd_t> &dir_fd,
+                                 fchdir_lock_t *out_lock) {
+    auto data = data_.acquire();
+
+    // Very common fast path: if nobody is waiting and current cwd already agrees, we can simply
+    // return 0 (perhaps bumping the lock count).
+    // This way multiple users can share the lock if they agree on the cwd.
+    if (data->current == dir_fd && data->now_serving == data->next_available) {
+        if (out_lock) {
+            assert(!out_lock->locked && "Should not already be locked");
+            out_lock->locked = true;
+            data->lock_count += 1;
+        }
         return 0;
     }
 
-    int ret = fchdir(dir_fd->fd());
-    if (ret == 0) {
-        s_current_cwd = dir_fd;
+    // Take a ticket and wait until it's our turn.
+    assert(data->now_serving <= data->next_available && "tickets should be monotone increasing");
+    const uint64_t ticket = data->next_available++;
+    while (data->now_serving != ticket) {
+        condition_.wait(data.get_lock());
     }
-    return ret;
+
+    // It's our turn. Invoke fchdir() if we are not already in the right directory.
+    // We may want to change the lock count, it has to be zero!
+    assert(data->lock_count == 0 && "Should be no locks");
+    int err = 0;
+    if (data->current != dir_fd) {
+        // Loop on EINTR.
+        do {
+            int res = fchdir(dir_fd->fd());
+            err = res ? errno : 0;
+        } while (err == EINTR);
+
+        // Save the directory if fchdir succeeded.
+        if (!err) data->current = dir_fd;
+    }
+
+    // Bump the lock count if there was no error and if requested.
+    if (err == 0 && out_lock != nullptr) {
+        assert(!out_lock->locked && "Should not already be locked");
+        out_lock->locked = true;
+        data->lock_count += 1;
+    }
+    try_advance_ticket(data);
+    if (err) {
+        errno = err;
+        return -1;
+    }
+    return 0;
+}
+
+void chdir_serializer_t::release_cwd_lock() {
+    auto data = data_.acquire();
+    assert(data->lock_count > 0 && "Lock count should be > 0");
+    data->lock_count -= 1;
+    try_advance_ticket(data);
+}
+
+/// Leaked to avoid shutdown dtor registration.
+chdir_serializer_t *const chdir_serializer_t::shared = new chdir_serializer_t();
+
+fchdir_lock_t::~fchdir_lock_t() {
+    if (locked) chdir_serializer_t::shared->release_cwd_lock();
+}
+
+int locking_fchdir(const std::shared_ptr<const autoclose_fd_t> &dir_fd, fchdir_lock_t *out_lock) {
+    return chdir_serializer_t::shared->lock_cwd(dir_fd, out_lock);
 }

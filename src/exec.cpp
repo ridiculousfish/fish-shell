@@ -502,7 +502,7 @@ static bool exec_external_command(parser_t &parser, const std::shared_ptr<job_t>
     // Ensure our process-wide cwd matches our parser, and that nobody calls chdir() until our fork
     // or spawn is complete.
     // This also sets up PWD correctly for the dup2 list we are about to construct.
-    std::unique_lock<std::mutex> chdir_lock{};
+    fchdir_lock_t chdir_lock{};
     if (locking_fchdir(parser.libdata().cwd_fd, &chdir_lock) < 0) {
         wperror(L"fchdir");
         return false;
