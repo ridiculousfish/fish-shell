@@ -88,53 +88,41 @@ void job_group_t::populate_group_for_job(job_t *job, const job_group_ref_t &prop
     bool can_use_internal =
         !initial_bg && job->processes.size() == 1 && job->processes.front()->is_internal();
 
-    bool needs_new_group = false;
-    if (!proposed) {
-        // We don't have a group yet.
-        needs_new_group = true;
-    } else if (initial_bg) {
-        // Background jobs always get a new group.
-        needs_new_group = true;
-    } else if (proposed->is_internal() && !can_use_internal) {
-        // We cannot use the internal group for this job.
-        needs_new_group = true;
+    // We can re-use the proposed group if we have one, we are not background, and either we're OK
+    // with an internal group or the group is not internal.
+    if (proposed && !initial_bg && (can_use_internal || !proposed->is_internal())) {
+        job->group = proposed;
+        return;
     }
 
-    job->mut_flags().is_group_root = needs_new_group;
+    // We must create a new group.
+    job->mut_flags().is_group_root = true;
+    properties_t props{};
+    props.job_control = job->wants_job_control();
+    props.wants_terminal = job->wants_job_control() && !job->from_event_handler();
+    props.is_internal = can_use_internal;
+    props.job_id = can_use_internal ? -1 : acquire_job_id();
+    job_group_ref_t group = job_group_ref_t(new job_group_t(props, job->command()));
 
-    if (!needs_new_group) {
-        job->group = proposed;
-    } else {
-        properties_t props{};
-        props.job_control = job->wants_job_control();
-        props.wants_terminal = job->wants_job_control() && !job->from_event_handler();
-        props.is_internal = can_use_internal;
-        props.job_id = can_use_internal ? -1 : acquire_job_id();
-        job_group_ref_t group = job_group_ref_t(new job_group_t(props, job->command()));
+    // Mark if it's foreground.
+    group->set_is_foreground(!initial_bg);
 
-        // Mark if it's foreground.
-        group->set_is_foreground(!initial_bg);
-
-        // Perhaps this job should immediately live in fish's pgroup.
-        // There's two reasons why it may be so:
-        //  1. The job doesn't need job control.
-        //  2. The first process in the job is internal to fish; this needs to own the tty.
-        if (!can_use_internal && (!props.job_control || first_proc_internal)) {
+    if (!can_use_internal) {
+        // We will need to assign a real pgid for this.
+        if (!props.job_control) {
+            // The job doesn't need job control, it can live in fish's pgroup.
             group->set_pgid(getpgrp());
-        }
-
-        // Perhaps we should fork a process for this job immediately.
-        // This happens if concurrent execution is enabled, and our job contains at least one
-        // internal process. It's important that all processes end up in the same process group
-        // so that signal delivery works.
-        // TODO: in principle this could be deferred until it is needed. Certain pipelines may never
-        // even need a pgroup.
-        if (feature_test(features_t::concurrent) && !group->get_pgid() &&
-            job->processes.size() > 1 && job->has_internal_proc()) {
+        } else if (feature_test(features_t::concurrent) && job->has_internal_proc()) {
+            // The job has at least one concurrent process and can't use an internal group.
             group->set_pgid(create_owned_pgid(job->command()));
             group->owns_pgid_ = true;
+        } else if (!feature_test(features_t::concurrent) && first_proc_internal) {
+            // The first process in the job is internal to fish; this needs to own the tty.
+            group->set_pgid(getpgrp());
+        } else {
+            // We do not need to assign a pgid yet.
+            // The first process in the group will assign one.
         }
-
-        job->group = std::move(group);
     }
+    job->group = std::move(group);
 }
