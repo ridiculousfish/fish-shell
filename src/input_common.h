@@ -42,6 +42,7 @@ enum class readline_cmd_t {
     backward_kill_bigword,
     history_token_search_backward,
     history_token_search_forward,
+    history_run_pager,
     self_insert,
     self_insert_notfirst,
     transpose_chars,

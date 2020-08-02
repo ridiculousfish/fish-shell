@@ -117,6 +117,7 @@ static const input_function_metadata_t input_function_metadata[] = {
     {readline_cmd_t::backward_kill_bigword, L"backward-kill-bigword"},
     {readline_cmd_t::history_token_search_backward, L"history-token-search-backward"},
     {readline_cmd_t::history_token_search_forward, L"history-token-search-forward"},
+    {readline_cmd_t::history_run_pager, L"history-run-pager"},
     {readline_cmd_t::self_insert, L"self-insert"},
     {readline_cmd_t::self_insert_notfirst, L"self-insert-notfirst"},
     {readline_cmd_t::transpose_chars, L"transpose-chars"},

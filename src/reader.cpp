@@ -3085,6 +3085,9 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
             }
             break;
         }
+        case rl::history_run_pager: {
+            break;
+        }
         case rl::backward_char: {
             editable_line_t *el = active_edit_line();
             if (is_navigating_pager_contents()) {
