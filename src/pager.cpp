@@ -298,26 +298,13 @@ static void join_completions(comp_info_list_t *comps) {
     }
 }
 
-/// Generate a list of comp_t structures from a list of completions.
-static comp_info_list_t process_completions_into_infos(const completion_list_t &lst) {
-    const size_t lst_size = lst.size();
-
-    // Make the list of the correct size up-front.
-    comp_info_list_t result(lst_size);
-    for (size_t i = 0; i < lst_size; i++) {
-        const completion_t &comp = lst.at(i);
-        comp_t *comp_info = &result.at(i);
-
-        // Append the single completion string. We may later merge these into multiple.
-        comp_info->comp.push_back(escape_string(comp.completion, ESCAPE_NO_QUOTED));
-
-        // Append the mangled description.
-        comp_info->desc = comp.description;
-        mangle_1_completion_description(&comp_info->desc);
-
-        // Set the representative completion.
-        comp_info->representative = comp;
-    }
+comp_t comp_from_completion(completion_t c) {
+    comp_t result;
+    // Append the single completion string. We may later merge these into multiple.
+    result.comp.push_back(escape_string(c.completion, ESCAPE_NO_QUOTED));
+    result.desc = c.description;
+    mangle_1_completion_description(&result.desc);
+    result.representative = std::move(c);
     return result;
 }
 
@@ -377,18 +364,31 @@ void pager_t::refilter_completions() {
     }
 }
 
-void pager_t::set_completions(const completion_list_t &raw_completions) {
-    // Get completion infos out of it.
-    unfiltered_completion_infos = process_completions_into_infos(raw_completions);
-
-    // Maybe join them.
+void pager_t::set_comps(comp_info_list_t infos) {
+    unfiltered_completion_infos = std::move(infos);
     if (prefix == L"-") join_completions(&unfiltered_completion_infos);
-
-    // Compute their various widths.
     measure_completion_infos(&unfiltered_completion_infos, prefix);
+    refilter_completions();
+}
 
-    // Refilter them.
-    this->refilter_completions();
+void pager_t::set_completions(completion_list_t raw_completions) {
+    comp_info_list_t comps;
+    comps.reserve(raw_completions.size());
+    for (auto &c : raw_completions) {
+        comps.push_back(comp_from_completion(std::move(c)));
+    }
+    set_comps(std::move(comps));
+}
+
+void pager_t::set_completions(wcstring_list_t strings) {
+    comp_info_list_t comps;
+    comps.reserve(strings.size());
+    for (auto &s : strings) {
+        completion_t c(std::move(s));
+        c.flags |= COMPLETE_DONT_ESCAPE;
+        comps.push_back(comp_from_completion(std::move(c)));
+    }
+    set_comps(std::move(comps));
 }
 
 void pager_t::set_prefix(const wcstring &pref) { prefix = pref; }
@@ -776,17 +776,20 @@ bool pager_t::select_next_completion_in_direction(selection_motion_t direction,
 }
 
 size_t pager_t::visual_selected_completion_index(size_t rows, size_t cols) const {
+    (void)cols;
     // No completions -> no selection.
-    if (completion_infos.empty() || rows == 0 || cols == 0) {
+    if (completion_infos.empty()) {
         return PAGER_SELECTION_NONE;
     }
 
     size_t result = selected_completion_idx;
     if (result != PAGER_SELECTION_NONE) {
-        // If the selected completion is beyond the last selection, go left by columns until it's
-        // within it. This is how we implement "column memory".
-        while (result >= completion_infos.size() && result >= rows) {
-            result -= rows;
+        if (rows > 0) {
+            // If the selected completion is beyond the last selection, go left by columns until
+            // it's within it. This is how we implement "column memory".
+            while (result >= completion_infos.size() && result >= rows) {
+                result -= rows;
+            }
         }
 
         // If we are still beyond the last selection, clamp it.

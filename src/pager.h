@@ -136,13 +136,15 @@ class pager_t {
     line_t completion_print_item(const wcstring &prefix, const comp_t *c, size_t row, size_t column,
                                  size_t width, bool secondary, bool selected,
                                  page_rendering_t *rendering) const;
+    void set_comps(comp_info_list_t infos);
 
    public:
     // The text of the search field.
     editable_line_t search_field_line;
 
     // Sets the set of completions.
-    void set_completions(const completion_list_t &raw_completions);
+    void set_completions(completion_list_t comp);
+    void set_completions(wcstring_list_t comp);
 
     // Sets the prefix.
     void set_prefix(const wcstring &pref);

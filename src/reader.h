@@ -112,6 +112,9 @@ class editable_line_t {
 
     /// Redo the most recent undo. Returns true on success.
     bool redo();
+
+    /// Sets the text outright.
+    void set_text(const wcstring &text, size_t offset = wcstring::npos);
 };
 
 /// Read commands from \c fd until encountering EOF.

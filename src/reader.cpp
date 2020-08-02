@@ -276,6 +276,11 @@ bool editable_line_t::redo() {
     return true;
 }
 
+void editable_line_t::set_text(const wcstring &text, size_t offset) {
+    this->text_ = text;
+    this->position_ = std::min(offset, text.size());
+}
+
 namespace {
 
 /// Encapsulation of the reader's history search functionality.
@@ -3086,6 +3091,16 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
             break;
         }
         case rl::history_run_pager: {
+            wcstring_list_t history_list;
+            this->history->get_history(history_list);
+            this->pager.search_field_line.set_text(this->command_line.text());
+            this->pager.set_search_field_shown(true);
+            this->pager.set_completions(std::move(history_list));
+            this->current_page_rendering = page_rendering_t();
+            if (!is_navigating_pager_contents()) {
+                select_completion_in_direction(selection_motion_t::south);
+            }
+            reader_repaint_needed();
             break;
         }
         case rl::backward_char: {
