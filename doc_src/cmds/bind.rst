@@ -136,6 +136,8 @@ The following special input functions are available:
 
 - ``forward-word``, move one word to the right
 
+- ``history-run-pager``, open the pager with search enabled, showing history
+
 - ``history-search-backward``, search the history for the previous match
 
 - ``history-search-forward``, search the history for the next match

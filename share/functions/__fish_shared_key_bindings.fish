@@ -67,6 +67,7 @@ function __fish_shared_key_bindings -d "Bindings shared between emacs and vi mod
     bind --preset $argv \e\[1\;9D prevd-or-backward-word #iTerm2
 
     # Alt-up/Alt-down
+    bind --preset $argv \cr history-run-pager
     bind --preset $argv \e\eOA history-token-search-backward
     bind --preset $argv \e\eOB history-token-search-forward
     bind --preset $argv \e\e\[A history-token-search-backward
