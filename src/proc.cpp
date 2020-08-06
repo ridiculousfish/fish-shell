@@ -196,7 +196,6 @@ maybe_t<statuses_t> job_t::get_statuses() const {
 }
 
 void internal_proc_t::mark_exited(proc_status_t status) {
-    assert(!exited() && "Process is already exited");
     status_.store(status, std::memory_order_relaxed);
     exited_.store(true, std::memory_order_release);
     topic_monitor_t::principal().post(topic_t::internal_exit);
@@ -378,6 +377,25 @@ static void reap_disowned_pids() {
                          disowned_pids->end());
 }
 
+/// Helper to kill a process and immediately reap it.
+static void kill_and_reap(pid_t pid) {
+    if (kill(pid, SIGKILL)) {
+        wperror(L"kill");
+        return;
+    }
+    pid_t res;
+    int status{};
+    do {
+        res = waitpid(pid, &status, 0);
+    } while (res < 0 && errno == EINTR);
+    if (res < 0) {
+        wperror(L"waitpid");
+        return;
+    }
+    assert(res == pid && "Unexpected waitpid return");
+    FLOGF(proc_reap_external, "Reaped shadow process %d with status %d", (int)pid, status);
+}
+
 /// See if any reapable processes have exited, and mark them accordingly.
 /// \param block_ok if no reapable processes have exited, block until one is (or until we receive a
 /// signal).
@@ -450,6 +468,12 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
                 FLOGF(proc_reap_external, "External process '%ls' (pid %d, %s)", proc->argv0(),
                       proc->pid, proc->status.stopped() ? "stopped" : "continued");
             }
+
+            // In concurrent mode, we assign pids to internal processes.
+            // If our pid exits (e.g. via kill) then apply the same status to the internal process.
+            if (proc->completed && proc->internal_proc_) {
+                proc->internal_proc_->mark_exited(status);
+            }
         }
     }
 
@@ -467,6 +491,16 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
             handle_child_status(j, proc.get(), proc->internal_proc_->get_status());
             FLOGF(proc_reap_internal, "Reaped internal process '%ls' (id %llu, status %d)",
                   proc->argv0(), proc->internal_proc_->get_id(), proc->status.status_value());
+
+            // Internal process exits should always mark the process as complete.
+            assert(proc->completed && "Process should now be completed");
+
+            // Note this process may have a pid associated with it, in concurrent mode.
+            // This pid is for a forked copy of fish that just runs pause()!
+            // We need to ensure it exits.
+            if (proc->pid > 0) {
+                kill_and_reap(proc->pid);
+            }
         }
     }
 

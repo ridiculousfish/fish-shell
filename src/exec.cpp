@@ -315,6 +315,37 @@ void blocked_signals_for_job(const job_t &job, sigset_t *sigmask) {
     }
 }
 
+/// Call fork() as part of executing an *internal* process \p p in a job \j.
+static bool fork_child_for_internal_process(const std::shared_ptr<job_t> &job, process_t *p) {
+    assert(!job->group->is_internal() && "Internal groups should never need to fork");
+    pid_t pid = execute_fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        // Child process. Run until we get asked to stop.
+        // TODO: consider if we have to close more fds.
+        for (int fd = 0; fd < 64; fd++) {
+            (void)close(fd);
+        }
+        for (;;) (void)pause();
+        DIE("Unreachable");
+    }
+
+    // This is the parent process.
+    s_fork_count++;
+    FLOGF(exec_fork, L"Fork #%d, pid %d: %s for '%ls'", int(s_fork_count), pid, "internal command",
+          p->argv0());
+
+    p->pid = pid;
+    pid_t pgid = maybe_assign_pgid_from_child(job, p->pid);
+    // Place the child into the group.
+    // Note there is not even a benign race here: the child will not call exec() and does not
+    // attempt to manipulate its pgroup.
+    if (int err = execute_setpgid(p->pid, pgid, true /* is parent */)) {
+        report_setpgid_error(err, pgid, job.get(), p);
+    }
+    return true;
+}
+
 /// Call fork() as part of executing a process \p p in a job \j. Execute \p child_action in the
 /// context of the child. Returns true if fork succeeded, false if fork failed.
 static bool fork_child_for_process(const std::shared_ptr<job_t> &job, process_t *p,
@@ -763,25 +794,32 @@ static bool exec_concurrent_block_or_func_process(parser_t &parser, std::shared_
                                                   process_t *p, const io_chain_t &io_chain) {
     assert((p->type == process_type_t::function || p->type == process_type_t::block_node) &&
            "Unexpected process type");
+    auto performer = get_performer_for_process(p, j.get(), io_chain);
+    if (!performer) return false;
 
-    bool success = false;
-    if (auto performer = get_performer_for_process(p, j.get(), io_chain)) {
-        // We can perform this process.
-        // Branch our parser so we have a new place to execute.
-        std::shared_ptr<parser_t> bg_executor = parser.branch();
-
-        // Make an internal process.
-        auto internal_proc = std::make_shared<internal_proc_t>();
-        FLOGF(proc_internal_proc, "Created internal proc %llu to concurrently exec proc '%ls'",
-              internal_proc->get_id(), p->argv0());
-        p->internal_proc_ = internal_proc;
-
-        p->check_generations_before_launch();
-        success = make_detached_pthread([=] {
-            proc_status_t status = performer(*bg_executor);
-            internal_proc->mark_exited(status);
-        });
+    // If job control is enabled, we need to make a real pid for this.
+    if (j->wants_job_control()) {
+        if (!fork_child_for_internal_process(j, p)) {
+            // Fork failed.
+            return false;
+        }
     }
+
+    // We can perform this process.
+    // Branch our parser so we have a new place to execute.
+    std::shared_ptr<parser_t> bg_executor = parser.branch();
+
+    // Make an internal process.
+    auto internal_proc = std::make_shared<internal_proc_t>();
+    FLOGF(proc_internal_proc, "Created internal proc %llu to concurrently exec proc '%ls'",
+          internal_proc->get_id(), p->argv0());
+    p->internal_proc_ = internal_proc;
+
+    p->check_generations_before_launch();
+    bool success = make_detached_pthread([=] {
+        proc_status_t status = performer(*bg_executor);
+        internal_proc->mark_exited(status);
+    });
     return success;
 }
 
