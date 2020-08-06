@@ -35,13 +35,6 @@ static void release_job_id(job_id_t jid) {
 }
 
 job_group_t::~job_group_t() {
-    if (owns_pgid_) {
-        // We own the pgid; waitpid() on it.
-        int stat = -1;
-        if (waitpid(*pgid_, &stat, 0) < 0) {
-            wperror(L"waitpid");
-        }
-    }
     if (props_.job_id > 0) {
         release_job_id(props_.job_id);
     }
@@ -57,22 +50,6 @@ void job_group_t::set_pgid(pid_t pgid) {
 
 maybe_t<pid_t> job_group_t::get_pgid() const { return pgid_; }
 
-/// \return a new pid which can serve as a pgroup owner.
-/// The child process exits immediately.
-static pid_t create_owned_pgid(const wcstring &cmd) {
-    pid_t pid = execute_fork();
-    assert(pid >= 0 && "execute_fork should never return an invalid pid");
-    if (pid == 0) {
-        // The child can just exit directly; all we need is a pid which we can defer reaping.
-        exit_without_destructors(0);
-        DIE("exit_without_destructors should not return");
-    }
-    if (setpgid(pid, pid)) {
-        wperror(L"setpgid");
-    }
-    FLOG(exec_fork, "Fork", pid, "to act as pgroup owner for", cmd);
-    return pid;
-}
 
 void job_group_t::populate_group_for_job(job_t *job, const job_group_ref_t &proposed) {
     assert(!job->group && "Job already has a group");
@@ -112,10 +89,6 @@ void job_group_t::populate_group_for_job(job_t *job, const job_group_ref_t &prop
         if (!props.job_control) {
             // The job doesn't need job control, it can live in fish's pgroup.
             group->set_pgid(getpgrp());
-        } else if (feature_test(features_t::concurrent) && job->has_internal_proc()) {
-            // The job has at least one concurrent process and can't use an internal group.
-            group->set_pgid(create_owned_pgid(job->command()));
-            group->owns_pgid_ = true;
         } else if (!feature_test(features_t::concurrent) && first_proc_internal) {
             // The first process in the job is internal to fish; this needs to own the tty.
             group->set_pgid(getpgrp());

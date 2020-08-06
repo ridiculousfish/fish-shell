@@ -118,9 +118,6 @@ class job_group_t {
     // If not zero, a signal indicating cancellation.
     int cancel_signal_{};
 
-    // If set, we own the pgid and are responsible for waitpid()ing it in our destructor.
-    bool owns_pgid_{false};
-
     job_group_t(const properties_t &props, wcstring command)
         : props_(props), command_(std::move(command)) {}
 };
