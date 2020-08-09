@@ -250,6 +250,12 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Miscellaneous library data.
     library_data_t library_data{};
 
+    /// The parent internal process for this parser.
+    /// This is set if this parser is running a concurrent block or function.
+    /// Its purpose is to allow the parser to check for cancellation.
+    /// Note this is null for the principal parser and is not changed after init.
+    std::shared_ptr<internal_proc_t> parent_internal_proc_{};
+
     /// List of profile items.
     /// This must be a deque because we return pointers to them to callers,
     /// who may hold them across blocks (which would cause reallocations internal
@@ -420,7 +426,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Branch this parser: return a new parser suitable for executing in another thread. Like
     /// fork() but for parsers. Black magic.
-    std::shared_ptr<parser_t> branch() const;
+    std::shared_ptr<parser_t> branch(std::shared_ptr<internal_proc_t> parent_proc) const;
 
     ~parser_t();
 };

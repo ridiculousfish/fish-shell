@@ -324,8 +324,9 @@ operation_context_t parser_t::context() {
     return operation_context_t{this->shared(), this->vars(), this->cancel_checker()};
 }
 
-std::shared_ptr<parser_t> parser_t::branch() const {
+std::shared_ptr<parser_t> parser_t::branch(std::shared_ptr<internal_proc_t> parent_proc) const {
     std::shared_ptr<parser_t> clone{new parser_t(variables->branch())};
+    clone->parent_internal_proc_ = parent_proc;
     clone->block_list = this->block_list;
     clone->eval_level = this->eval_level;
     clone->library_data = this->library_data;

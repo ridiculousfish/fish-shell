@@ -805,15 +805,15 @@ static bool exec_concurrent_block_or_func_process(parser_t &parser, std::shared_
         }
     }
 
-    // We can perform this process.
-    // Branch our parser so we have a new place to execute.
-    std::shared_ptr<parser_t> bg_executor = parser.branch();
-
     // Make an internal process.
     auto internal_proc = std::make_shared<internal_proc_t>();
     FLOGF(proc_internal_proc, "Created internal proc %llu to concurrently exec proc '%ls'",
           internal_proc->get_id(), p->argv0());
     p->internal_proc_ = internal_proc;
+
+    // We can perform this process.
+    // Branch our parser so we have a new place to execute.
+    std::shared_ptr<parser_t> bg_executor = parser.branch(internal_proc);
 
     p->check_generations_before_launch();
     bool success = make_detached_pthread([=] {
