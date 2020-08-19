@@ -54,6 +54,13 @@ expect_prompt()
 expect_marker(2)
 print_var_contents("foo", "bar")
 
+sendline("read sleepy | begin ; sleep .05 ; end ")
+expect_read_prompt()
+sendline("zzzz\r_marker 6")
+expect_prompt()
+expect_marker(6)
+print_var_contents("sleepy", "zzzz")
+
 # read -s
 
 sendline("read -s foo")

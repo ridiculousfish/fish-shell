@@ -52,6 +52,11 @@ void iothread_perform_on_main(const std::function<void()> &func);
 bool make_detached_pthread(void *(*func)(void *), void *param);
 bool make_detached_pthread(std::function<void()> &&func);
 
+/// Get and set the generation for the iothread main thread request.
+/// This may only be called on the main thread.
+uint64_t get_main_thread_req_generation();
+void set_main_thread_req_generation(uint64_t v);
+
 /// \returns a thread ID for this thread.
 /// Thread IDs are never repeated.
 uint64_t thread_id();
