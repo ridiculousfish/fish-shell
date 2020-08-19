@@ -44,6 +44,7 @@
 #include "flog.h"
 #include "global_safety.h"
 #include "io.h"
+#include "iothread.h"
 #include "job_group.h"
 #include "output.h"
 #include "parse_tree.h"
@@ -408,6 +409,11 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
         }
     }
 
+    // If this is the main thread, wait for main thread requests.
+    // TODO: this mainly exists so that a 'read -i' in concurrent mode won't deadlock.
+    // How can we express this more cleanly?
+    if (is_main_thread()) reapgens.mainthread_req = get_main_thread_req_generation();
+
     // Now check for changes, optionally waiting.
     if (!topic_monitor_t::principal().check(&reapgens, block_ok)) {
         // Nothing changed.
@@ -482,6 +488,16 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
 
     // Remove any zombies.
     reap_disowned_pids();
+
+    // Handle any main thread requests.
+    if (reapgens.is_valid(topic_t::mainthread_req) &&
+        reapgens.mainthread_req != get_main_thread_req_generation()) {
+        ASSERT_IS_MAIN_THREAD();
+        // Note it is important to set the generation *before* servicing requests, because a
+        // request could spawn and handle new requests which would increase the generation.
+        set_main_thread_req_generation(reapgens.mainthread_req);
+        iothread_service_main(false /* not interactive */);
+    }
 }
 
 /// Call the fish_job_summary function with the given args.

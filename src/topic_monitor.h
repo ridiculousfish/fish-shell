@@ -42,14 +42,16 @@ constexpr generation_t invalid_generation = std::numeric_limits<generation_t>::m
 
 /// The list of topics which may be observed.
 enum class topic_t : uint8_t {
-    sighupint,      // Corresponds to both SIGHUP and SIGINT signals.
-    sigchld,        // Corresponds to SIGCHLD signal.
-    internal_exit,  // Corresponds to an internal process exit.
+    sighupint,       // Corresponds to both SIGHUP and SIGINT signals.
+    sigchld,         // Corresponds to SIGCHLD signal.
+    internal_exit,   // Corresponds to an internal process exit.
+    mainthread_req,  // A main thread request from iothread.
 };
 
 /// Helper to return all topics, allowing easy iteration.
-inline std::array<topic_t, 3> all_topics() {
-    return {{topic_t::sighupint, topic_t::sigchld, topic_t::internal_exit}};
+inline std::array<topic_t, 4> all_topics() {
+    return {
+        {topic_t::sighupint, topic_t::sigchld, topic_t::internal_exit, topic_t::mainthread_req}};
 }
 
 /// Simple value type containing the values for a topic.
@@ -61,6 +63,7 @@ class generation_list_t {
     generation_t sighupint{0};
     generation_t sigchld{0};
     generation_t internal_exit{0};
+    generation_t mainthread_req{0};
 
     /// \return the value for a topic.
     generation_t &at(topic_t topic) {
@@ -71,6 +74,8 @@ class generation_list_t {
                 return sighupint;
             case topic_t::internal_exit:
                 return internal_exit;
+            case topic_t::mainthread_req:
+                return mainthread_req;
         }
         DIE("Unreachable");
     }
@@ -83,12 +88,16 @@ class generation_list_t {
                 return sigchld;
             case topic_t::internal_exit:
                 return internal_exit;
+            case topic_t::mainthread_req:
+                return mainthread_req;
         }
         DIE("Unreachable");
     }
 
     /// \return ourselves as an array.
-    std::array<generation_t, 3> as_array() const { return {{sighupint, sigchld, internal_exit}}; }
+    std::array<generation_t, 4> as_array() const {
+        return {{sighupint, sigchld, internal_exit, mainthread_req}};
+    }
 
     /// Set the value of \p topic to the smaller of our value and the value in \p other.
     void set_min_from(topic_t topic, const generation_list_t &other) {
@@ -111,7 +120,7 @@ class generation_list_t {
 
     bool operator==(const generation_list_t &rhs) const {
         return sighupint == rhs.sighupint && sigchld == rhs.sigchld &&
-               internal_exit == rhs.internal_exit;
+               internal_exit == rhs.internal_exit && mainthread_req == rhs.mainthread_req;
     }
 
     bool operator!=(const generation_list_t &rhs) const { return !(*this == rhs); }
@@ -121,12 +130,17 @@ class generation_list_t {
 
     /// Generation list containing invalid generations only.
     static generation_list_t invalids() {
-        return generation_list_t(invalid_generation, invalid_generation, invalid_generation);
+        return generation_list_t(invalid_generation, invalid_generation, invalid_generation,
+                                 invalid_generation);
     }
 
    private:
-    generation_list_t(generation_t sighupint, generation_t sigchld, generation_t internal_exit)
-        : sighupint(sighupint), sigchld(sigchld), internal_exit(internal_exit) {}
+    generation_list_t(generation_t sighupint, generation_t sigchld, generation_t internal_exit,
+                      generation_t mainthread_req)
+        : sighupint(sighupint),
+          sigchld(sigchld),
+          internal_exit(internal_exit),
+          mainthread_req(mainthread_req) {}
 };
 
 /// A simple binary semaphore.

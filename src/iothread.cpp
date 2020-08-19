@@ -23,6 +23,8 @@
 #include "fds.h"
 #include "flog.h"
 #include "global_safety.h"
+#include "iothread.h"
+#include "topic_monitor.h"
 #include "wutil.h"
 
 // We just define a thread limit of 1024.
@@ -348,8 +350,13 @@ void iothread_perform_on_main(const void_function_t &func) {
     // Append it. Ensure we don't hold the lock after.
     s_main_thread_queue.acquire()->requests.push_back(std::move(handler));
 
-    // Tell the signaller and then wait until our future is set.
+    // Tell the signaller so that we will wake up if we are waiting at the prompt.
     get_notify_signaller().post();
+
+    // Tell the topic monitor so that we will wake up the main thread if it is waiting on a job.
+    topic_monitor_t::principal().post(topic_t::mainthread_req);
+
+    // Wait until the function completes!
     wait_until_done.get_future().wait();
 }
 
@@ -405,6 +412,21 @@ bool make_detached_pthread(void_func_t &&func) {
     // Thread spawning failed, clean up our heap allocation.
     delete vf;
     return false;
+}
+
+// The global main-thread request generation. This is used to be notified of new main-thread
+// requests, from the topic monitor.
+static generation_t s_main_thread_req_generation = 0;
+
+uint64_t get_main_thread_req_generation() {
+    ASSERT_IS_MAIN_THREAD();
+    return s_main_thread_req_generation;
+}
+
+void set_main_thread_req_generation(uint64_t v) {
+    ASSERT_IS_MAIN_THREAD();
+    assert(v >= s_main_thread_req_generation && "Generation should not go backwards");
+    s_main_thread_req_generation = v;
 }
 
 static uint64_t next_thread_id() {
@@ -510,6 +532,7 @@ uint64_t debounce_t::perform(std::function<void()> handler) {
 void debounce_t::enqueue_main_thread_result(std::function<void()> func) {
     s_main_thread_queue.acquire()->interactive_requests.push_back(std::move(func));
     get_notify_signaller().post();
+    // Note we do not need to post to the topic monitor, since this is an interactive request only.
 }
 
 debounce_t::debounce_t(long timeout_msec)
