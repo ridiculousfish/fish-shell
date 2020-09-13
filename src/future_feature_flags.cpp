@@ -6,7 +6,7 @@
 
 #include "wcstringutil.h"
 
-features_t::features_t() = default;
+features_t::features_t() { set(features_t::concurrent, true); }
 
 /// The set of features applying to this instance.
 features_t features_t::global_features;
