@@ -1298,6 +1298,42 @@ static autoclose_fd_t make_fifo(const wchar_t *test_path, const wchar_t *suffix)
     return res;
 }
 
+// A universal notifier which uses SIGIO with a named pipe. This relies on the following behavior
+// which is unspecified but appears to work on both Linux and Mac: if you write data to a pipe then
+// SIGIO will be generated for the read end *even if there is already data available on the pipe.*
+// This allows us to write data forever, and never read it (until and unless the write would block,
+// at which point we read it all out).
+//
+// So, to post a notification, write anything to the pipe; if that would block empty the pipe and
+// try again.
+//
+// To receive a notification, watch for SIGIO on the read end.
+class universal_notifier_sigio_t final : public universal_notifier_t {
+   public:
+    // Note we use a different suffix from universal_notifier_named_pipe_t to produce different
+    // FIFOs. This is because universal_notifier_named_pipe_t is level triggered while we are edge
+    // triggered. If they shared the same FIFO, then the named_pipe variant would keep firing
+    // forever.
+    explicit universal_notifier_sigio_t(const wchar_t *test_path)
+        : pipe_(make_fifo(test_path, L".notify")) {}
+
+    ~universal_notifier_sigio_t() = default;
+
+    void post_notification() override {
+        // Write a byte to send SIGIO. If the pipe is full, read some and try again.
+    }
+
+   private:
+    // Read some data off of the pipe, discarding it. This is run if the write fails because the
+    // pipe is full.
+    void drain_some() const {
+        char buff[256];
+        ignore_result(read(pipe_.fd(), buff, sizeof buff));
+    }
+
+    autoclose_fd_t pipe_{};
+};
+
 // Named-pipe based notifier. All clients open the same named pipe for reading and writing. The
 // pipe's readability status is a trigger to enter polling mode.
 //
@@ -1480,6 +1516,9 @@ std::unique_ptr<universal_notifier_t> universal_notifier_t::new_notifier_for_str
         }
         case strategy_shmem_polling: {
             return make_unique<universal_notifier_shmem_poller_t>();
+        }
+        case strategy_sigio: {
+            return make_unique<universal_notifier_sigio_t>(test_path);
         }
         case strategy_named_pipe: {
             return make_unique<universal_notifier_named_pipe_t>(test_path);
