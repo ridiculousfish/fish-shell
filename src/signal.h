@@ -46,7 +46,7 @@ void signal_clear_cancel();
 /// This corresponds to the number of times we have received SIGIO with POLL_IN set as the code.
 /// This is used by the universal variable machinery. It is a simple unsigned counter which wraps to
 /// 0.
-uint32_t signal_get_sigio_pollin_count();
+uint32_t signal_get_sigio_count();
 
 enum class topic_t : uint8_t;
 /// A sigint_detector_t can be used to check if a SIGINT (or SIGHUP) has been delivered.
