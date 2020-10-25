@@ -1350,6 +1350,7 @@ class universal_notifier_sigio_t final : public universal_notifier_t {
             // Read from the pipe so that SIGIO may be delivered again.
             drain_some();
             // We may have gotten another SIGIO because the pipe just became writable again.
+            // In particular BSD sends SIGIO on read even if there is no data to be read.
             // Re-fetch the sigio count.
             sigio_count_ = signal_get_sigio_count();
             return true;
@@ -1370,11 +1371,13 @@ class universal_notifier_sigio_t final : public universal_notifier_t {
         // Also Linux got support for O_ASYNC on fifos in 2.6 (released 2003).
         // Do not be noisy if this fails.
         if (fcntl(pipe.fd(), F_SETFL, O_NONBLOCK | O_ASYNC) == -1) {
-            FLOG(uvar_file, "fcntl(F_SETFL) failed, universal variable notifications disabled");
+            FLOGF(uvar_file,
+                  _(L"fcntl(F_SETFL) failed, universal variable notifications disabled"));
             return autoclose_fd_t{};
         }
         if (fcntl(pipe.fd(), F_SETOWN, getpid()) == -1) {
-            FLOG(uvar_file, "fcntl(F_SETOWN) failed, universal variable notifications disabled");
+            FLOGF(uvar_file,
+                  _(L"fcntl(F_SETOWN) failed, universal variable notifications disabled"));
             return autoclose_fd_t{};
         }
         return pipe;
@@ -1567,8 +1570,7 @@ class universal_notifier_named_pipe_t final : public universal_notifier_t {
 universal_notifier_t::notifier_strategy_t universal_notifier_t::resolve_default_strategy() {
 #ifdef FISH_NOTIFYD_AVAILABLE
     return strategy_notifyd;
-    // Note: We use POLL_IN to query SIGIO information, without it it is useless.
-#elif defined(SIGIO) && defined(POLL_IN)
+#elif defined(SIGIO)
     return strategy_sigio;
 #elif defined(__CYGWIN__)
     return strategy_shmem_polling;
