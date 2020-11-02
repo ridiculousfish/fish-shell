@@ -40,6 +40,7 @@
 #include <csignal>
 #include <cwchar>
 #include <functional>
+#include <future>
 #include <memory>
 #include <set>
 #include <stack>
@@ -143,6 +144,12 @@ static operation_context_t get_bg_context(const std::shared_ptr<environment_t> &
     };
     return operation_context_t{nullptr, *env, std::move(cancel_checker)};
 }
+
+/// We try to ensure that syntax highlighting completes appropriately when executing.
+/// But we do not want it to block forever (e.g. it may hang on determining if an arbitrary argument
+/// is a path). This is how long we'll wait (in milliseconds) before giving up and performing a
+/// no-io syntax highlighting. See #7418.
+static constexpr long kHighlightTimeoutForExecutionMs = 250;
 
 /// Get the debouncer for autosuggestions and background highlighting.
 /// These are deliberately leaked to avoid shutdown dtor registration.
@@ -648,7 +655,8 @@ class reader_data_t : public std::enable_shared_from_this<reader_data_t> {
     void update_autosuggestion();
     void accept_autosuggestion(bool full, bool single = false,
                                move_word_style_t style = move_word_style_punctuation);
-    void super_highlight_me_plenty(bool no_io = false);
+    void super_highlight_me_plenty();
+    void super_highlight_me_with_io_timeout();
 
     void highlight_complete(highlight_result_t result);
     void exec_mode_prompt();
@@ -2373,30 +2381,51 @@ static std::function<highlight_result_t(void)> get_highlight_performer(parser_t 
 }
 
 /// Highlight the command line in a super, plentiful way.
-/// \param no_io if true, do a highlight that does not perform I/O, synchronously. If false, perform
-///        an asynchronous highlight in the background, which may perform disk I/O.
-void reader_data_t::super_highlight_me_plenty(bool no_io) {
+void reader_data_t::super_highlight_me_plenty() {
     if (!conf.highlight_ok) return;
 
-    const editable_line_t *el = &command_line;
-
     // Do nothing if this text is already in flight.
+    const editable_line_t *el = &command_line;
     if (el->text() == in_flight_highlight_request) return;
     in_flight_highlight_request = el->text();
 
     FLOG(reader_render, L"Highlighting");
-    auto highlight_performer = get_highlight_performer(parser(), el->text(), !no_io);
-    if (no_io) {
-        // Highlighting without IO, we just do it.
-        highlight_complete(highlight_performer());
+    auto highlight_performer = get_highlight_performer(parser(), el->text(), true /* io_ok */);
+    auto shared_this = this->shared_from_this();
+    debounce_highlighting().perform(highlight_performer, [shared_this](highlight_result_t result) {
+        shared_this->highlight_complete(std::move(result));
+    });
+}
+
+/// Highlight the command line, except do not wait too long for I/O.
+/// Note we do not use debouncing here.
+void reader_data_t::super_highlight_me_with_io_timeout() {
+    if (!conf.highlight_ok) return;
+
+    const editable_line_t *el = &command_line;
+    in_flight_highlight_request = el->text();
+    auto highlight_with_io = get_highlight_performer(parser(), el->text(), true /* io_ok */);
+
+    // Wrap our performer in a future.
+    // Note we intentionally do not use the debouncer here, we want this to execute now.
+    auto promise = std::make_shared<std::promise<highlight_result_t>>();
+    iothread_perform([=] { promise->set_value(highlight_with_io()); });
+
+    // Wait for a little while.
+    auto future = promise->get_future();
+    auto wait_res = future.wait_for(std::chrono::milliseconds(kHighlightTimeoutForExecutionMs));
+    highlight_result_t result;
+    if (wait_res == std::future_status::ready) {
+        // We finished in time.
+        assert(future.valid() && "Future should be valid");
+        result = future.get();
     } else {
-        // Highlighting including I/O proceeds in the background.
-        auto shared_this = this->shared_from_this();
-        debounce_highlighting().perform(highlight_performer,
-                                        [shared_this](highlight_result_t result) {
-                                            shared_this->highlight_complete(std::move(result));
-                                        });
+        // Did not finish in time. Give up and highlight without I/O.
+        auto highlight_no_io = get_highlight_performer(parser(), el->text(), false /* io not ok */);
+        result = highlight_no_io();
     }
+    // We always highlight with something.
+    this->highlight_complete(result);
 }
 
 /// The stack of current interactive reading contexts.
@@ -3087,10 +3116,9 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
                 bool abbreviation_expanded = expand_abbreviation_as_necessary(1);
                 if (abbreviation_expanded && conf.syntax_check_ok) {
                     command_test_result = reader_shell_test(parser(), el->text());
-                    // If the command is OK, then we're going to execute it. We still want to do
-                    // syntax highlighting on this newly changed command, but a synchronous variant
-                    // that performs no I/O, so as not to block the user.
-                    if (command_test_result == 0) super_highlight_me_plenty(true);
+                    // If the command is OK, then we're going to execute it. Do a form of
+                    // syntax highlighting on the new command which does not wait forever.
+                    if (command_test_result == 0) super_highlight_me_with_io_timeout();
                 }
             }
 
