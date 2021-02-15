@@ -476,7 +476,7 @@ static launch_result_t fork_child_for_process(const std::shared_ptr<job_t> &job,
 /// If \p piped_output_needs_buffering is set, and if the output is going to a pipe, then the other
 /// end then synchronously writing to the pipe risks deadlock, so we must buffer it.
 static std::shared_ptr<output_stream_t> create_output_stream_for_builtin(
-    int fd, const io_chain_t &io_chain, bool piped_output_needs_buffering) {
+    int fd, const io_chain_t &io_chain, bool piped_output_needs_buffering = false) {
     using std::make_shared;
     const shared_ptr<const io_data_t> io = io_chain.io_for_fd(fd);
     if (io == nullptr) {
@@ -861,6 +861,40 @@ static launch_result_t exec_builtin_process(parser_t &parser, const std::shared_
     return launch_result_t::ok;
 }
 
+/// Executes a builtin process concurrently (in a background thread).
+static launch_result_t exec_concurrent_builtin_process(parser_t &parser,
+                                                       const std::shared_ptr<job_t> &j,
+                                                       process_t *p, const io_chain_t &io_chain) {
+    assert(p->type == process_type_t::builtin && "Process is not a builtin");
+    std::shared_ptr<output_stream_t> out =
+        create_output_stream_for_builtin(STDOUT_FILENO, io_chain);
+    std::shared_ptr<output_stream_t> err =
+        create_output_stream_for_builtin(STDERR_FILENO, io_chain);
+
+    proc_performer_t performer = get_performer_for_builtin(p, j.get(), io_chain, out, err);
+    if (!performer) {
+        return launch_result_t::failed;
+    }
+
+    // We can perform this process.
+    // Branch our parser so we have a new place to execute.
+    std::shared_ptr<parser_t> bg_executor = parser.branch();
+
+    // Make an internal process.
+    auto internal_proc = std::make_shared<internal_proc_t>();
+    FLOGF(proc_internal_proc, "Created internal proc %llu to concurrently exec builtin '%ls'",
+          internal_proc->get_id(), p->argv0());
+    p->internal_proc_ = internal_proc;
+
+    bool launched = make_detached_pthread([=] {
+        // TODO: need to rationalize what happens if out/err are strings.
+        // For example, if we have a stderr redirection to a random fd.
+        proc_status_t status = performer(*bg_executor);
+        internal_proc->mark_exited(status);
+    });
+    return launched ? launch_result_t::ok : launch_result_t::failed;
+}
+
 static bool use_concurrent_internal_procs(const std::shared_ptr<job_t> &j) {
     return feature_test(features_t::concurrent) && j->processes.size() > 1;
 }
@@ -990,8 +1024,14 @@ static launch_result_t exec_process_in_job(parser_t &parser, process_t *p,
         }
 
         case process_type_t::builtin: {
-            if (exec_builtin_process(parser, j, p, process_net_io_chain,
-                                     piped_output_needs_buffering) == launch_result_t::failed) {
+            launch_result_t result;
+            if (concurrent_procs) {
+                result = exec_concurrent_builtin_process(parser, j, p, process_net_io_chain);
+            } else {
+                result = exec_builtin_process(parser, j, p, process_net_io_chain,
+                                              piped_output_needs_buffering);
+            }
+            if (result == launch_result_t::failed) {
                 return launch_result_t::failed;
             }
             break;
