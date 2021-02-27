@@ -2518,8 +2518,8 @@ void reader_data_t::finish_highlighting_before_exec() {
         auto now = sc::steady_clock::now();
         auto deadline = now + sc::milliseconds(kHighlightTimeoutForExecutionMs);
         while (now < deadline) {
-            long timeout_usec = sc::duration_cast<sc::microseconds>(deadline - now).count();
-            iothread_service_main_with_timeout(timeout_usec);
+            uint64_t timeout_usec = sc::duration_cast<sc::microseconds>(deadline - now).count();
+            iothread_service_main_with_timeout(timeout_usec, true /* interactive */);
 
             // Note iothread_service_main_with_timeout will reentrantly modify us,
             // by invoking a completion.

@@ -123,19 +123,21 @@ static thread_pool_t &s_io_thread_pool = *(new thread_pool_t(1, IO_MAX_THREADS))
 
 /// A queue of "things to do on the main thread."
 struct main_thread_queue_t {
-    // Functions to invoke as the completion callback from debounce.
-    std::vector<void_function_t> completions;
-
-    // iothread_perform_on_main requests.
-    // Note this contains pointers to structs that are stack-allocated on the requesting thread.
+    // These may be performed at the prompt or while waiting for a job.
     std::vector<void_function_t> requests;
 
+    // These may be performed only while the user is at the prompt.
+    std::vector<void_function_t> interactive_requests;
+
     /// Transfer ownership of ourselves to a new queue and return it.
-    /// 'this' is left empty.
-    main_thread_queue_t take() {
+    /// If \p interactive is set, then return all requests; otherwise return only non-interactive
+    /// requests. 'this' is left empty.
+    main_thread_queue_t take(bool interactive) {
         main_thread_queue_t result;
-        std::swap(result.completions, this->completions);
         std::swap(result.requests, this->requests);
+        if (interactive) {
+            std::swap(result.interactive_requests, this->interactive_requests);
+        }
         return result;
     }
 
@@ -259,9 +261,9 @@ void iothread_perform_impl(void_function_t &&func, bool cant_wait) {
 
 int iothread_port() { return get_notify_signaller().read_fd(); }
 
-void iothread_service_main_with_timeout(uint64_t timeout_usec) {
+void iothread_service_main_with_timeout(uint64_t timeout_usec, bool interactive) {
     if (select_wrapper_t::is_fd_readable(iothread_port(), timeout_usec)) {
-        iothread_service_main();
+        iothread_service_main(interactive);
     }
 }
 
@@ -289,7 +291,7 @@ int iothread_drain_all() {
 
     // Nasty polling via select().
     while (pool.req_data.acquire()->total_threads > 0) {
-        iothread_service_main_with_timeout(1000);
+        iothread_service_main_with_timeout(1000, true /* interactive */);
     }
 
     // Clear the drain flag.
@@ -308,7 +310,7 @@ int iothread_drain_all() {
 }
 
 // Service the main thread queue, by invoking any functions enqueued for the main thread.
-void iothread_service_main() {
+void iothread_service_main(bool interactive) {
     ASSERT_IS_MAIN_THREAD();
     // Note the order here is important: we must consume events before handling requests, as posting
     // uses the opposite order.
@@ -316,16 +318,16 @@ void iothread_service_main() {
 
     // Move the queue to a local variable.
     // Note the s_main_thread_queue lock is not held after this.
-    main_thread_queue_t queue = s_main_thread_queue.acquire()->take();
+    main_thread_queue_t queue = s_main_thread_queue.acquire()->take(interactive);
 
-    // Perform each completion in order.
-    for (const void_function_t &func : queue.completions) {
-        // ensure we don't invoke empty functions, that raises an exception
+    // Should only have interactive requests if interactive.
+    assert(interactive || queue.interactive_requests.empty());
+
+    // Perform each function.
+    for (const void_function_t &func : queue.requests) {
         if (func) func();
     }
-
-    // Perform each main thread request.
-    for (const void_function_t &func : queue.requests) {
+    for (const void_function_t &func : queue.interactive_requests) {
         if (func) func();
     }
 }
@@ -506,7 +508,7 @@ uint64_t debounce_t::perform(std::function<void()> handler) {
 
 // static
 void debounce_t::enqueue_main_thread_result(std::function<void()> func) {
-    s_main_thread_queue.acquire()->completions.push_back(std::move(func));
+    s_main_thread_queue.acquire()->interactive_requests.push_back(std::move(func));
     get_notify_signaller().post();
 }
 

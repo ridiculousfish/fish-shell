@@ -14,12 +14,13 @@
 /// \return the fd on which to listen for completion callbacks.
 int iothread_port();
 
-/// Services iothread main thread completions and requests.
-/// This does not block.
-void iothread_service_main();
+/// Services iothread main thread requests.
+/// If \p interactive is set, then run both interactive and non-interactive requests; otherwise run
+/// only non-interactive requests. This does not block.
+void iothread_service_main(bool interactive);
 
 // Services any main thread requests. Does not wait more than \p timeout_usec.
-void iothread_service_main_with_timeout(uint64_t timeout_usec);
+void iothread_service_main_with_timeout(uint64_t timeout_usec, bool interactive);
 
 /// Waits for all iothreads to terminate.
 /// \return the number of threads that were running.
@@ -41,6 +42,7 @@ inline void iothread_perform_cantwait(std::function<void()> &&func) {
 }
 
 /// Performs a function on the main thread, blocking until it completes.
+/// The request is considered non-interactive.
 void iothread_perform_on_main(const std::function<void()> &func);
 
 /// Creates a pthread, manipulating the signal mask so that the thread receives no signals.

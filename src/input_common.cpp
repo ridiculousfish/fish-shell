@@ -184,7 +184,7 @@ char_event_t input_event_queue_t::readch() {
                 break;
 
             case readb_ioport_notified:
-                iothread_service_main();
+                iothread_service_main(true /* interactive */);
                 break;
 
             default: {
