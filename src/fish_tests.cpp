@@ -1004,7 +1004,7 @@ static void test_debounce() {
 
     // Wait until the last completion is done.
     while (!completion_ran.back()) {
-        iothread_service_main();
+        iothread_service_main(true);
     }
     iothread_drain_all();
 
