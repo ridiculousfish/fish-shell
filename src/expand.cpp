@@ -1087,7 +1087,7 @@ expand_result_t expander_t::stage_wildcards(wcstring path_to_expand, completion_
                 // Get the PATH/CDPATH and CWD. Perhaps these should be passed in. An empty CDPATH
                 // implies just the current directory, while an empty PATH is left empty.
                 wcstring_list_t paths;
-                if (auto paths_var = ctx.vars.get(for_cd ? L"CDPATH" : L"PATH")) {
+                if (auto paths_var = ctx.vars.get(for_cd ? L"CDPATH"_im : L"PATH"_im)) {
                     paths = paths_var->as_list();
                 }
 
@@ -1334,15 +1334,16 @@ maybe_t<wcstring> expand_abbreviation(const wcstring &src, const environment_t &
     return none();
 }
 
-std::map<wcstring, wcstring> get_abbreviations(const environment_t &vars) {
+std::map<imstring, wcstring> get_abbreviations(const environment_t &vars) {
     const wcstring prefix = L"_fish_abbr_";
     auto names = vars.get_names(0);
-    std::map<wcstring, wcstring> result;
-    for (const wcstring &name : names) {
+    std::map<imstring, wcstring> result;
+    for (const imstring &name : names) {
         if (string_prefixes_string(prefix, name)) {
             wcstring key;
             unescape_string(name.substr(prefix.size()), &key, UNESCAPE_DEFAULT, STRING_STYLE_VAR);
-            result[key] = vars.get(name)->as_string();
+            imstring imkey = std::move(key);
+            result[imkey] = vars.get(name)->as_string();
         }
     }
     return result;

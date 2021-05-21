@@ -58,11 +58,11 @@ size_t count_preceding_backslashes(const wcstring &text, size_t idx) {
     return backslashes;
 }
 
-bool string_prefixes_string(const wchar_t *proposed_prefix, const wcstring &value) {
+bool string_prefixes_string(const wchar_t *proposed_prefix, const imstring &value) {
     return string_prefixes_string(proposed_prefix, value.c_str());
 }
 
-bool string_prefixes_string(const wcstring &proposed_prefix, const wcstring &value) {
+bool string_prefixes_string(const imstring &proposed_prefix, const imstring &value) {
     size_t prefix_size = proposed_prefix.size();
     return prefix_size <= value.size() && value.compare(0, prefix_size, proposed_prefix) == 0;
 }
@@ -88,27 +88,27 @@ bool string_prefixes_string(const char *proposed_prefix, const char *value) {
     return true;
 }
 
-bool string_prefixes_string_case_insensitive(const wcstring &proposed_prefix,
-                                             const wcstring &value) {
+bool string_prefixes_string_case_insensitive(const imstring &proposed_prefix,
+                                             const imstring &value) {
     size_t prefix_size = proposed_prefix.size();
     return prefix_size <= value.size() &&
            wcsncasecmp(proposed_prefix.c_str(), value.c_str(), prefix_size) == 0;
 }
 
-bool string_suffixes_string(const wcstring &proposed_suffix, const wcstring &value) {
+bool string_suffixes_string(const imstring &proposed_suffix, const imstring &value) {
     size_t suffix_size = proposed_suffix.size();
     return suffix_size <= value.size() &&
            value.compare(value.size() - suffix_size, suffix_size, proposed_suffix) == 0;
 }
 
-bool string_suffixes_string(const wchar_t *proposed_suffix, const wcstring &value) {
+bool string_suffixes_string(const wchar_t *proposed_suffix, const imstring &value) {
     size_t suffix_size = std::wcslen(proposed_suffix);
-    return suffix_size <= value.size() &&
-           value.compare(value.size() - suffix_size, suffix_size, proposed_suffix) == 0;
+    return suffix_size <= value.size() && value.compare(value.size() - suffix_size, suffix_size,
+                                                        proposed_suffix, suffix_size) == 0;
 }
 
-bool string_suffixes_string_case_insensitive(const wcstring &proposed_suffix,
-                                             const wcstring &value) {
+bool string_suffixes_string_case_insensitive(const imstring &proposed_suffix,
+                                             const imstring &value) {
     size_t suffix_size = proposed_suffix.size();
     return suffix_size <= value.size() && wcsncasecmp(value.c_str() + (value.size() - suffix_size),
                                                       proposed_suffix.c_str(), suffix_size) == 0;
@@ -116,7 +116,7 @@ bool string_suffixes_string_case_insensitive(const wcstring &proposed_suffix,
 
 /// Returns true if needle, represented as a subsequence, is contained within haystack.
 /// Note subsequence is not substring: "foo" is a subsequence of "follow" for example.
-static bool subsequence_in_string(const wcstring &needle, const wcstring &haystack) {
+static bool subsequence_in_string(const imstring &needle, const imstring &haystack) {
     // Impossible if haystack is larger than string.
     if (haystack.size() > haystack.size()) {
         return false;
@@ -139,8 +139,8 @@ static bool subsequence_in_string(const wcstring &needle, const wcstring &haysta
 }
 
 // static
-maybe_t<string_fuzzy_match_t> string_fuzzy_match_t::try_create(const wcstring &string,
-                                                               const wcstring &match_against,
+maybe_t<string_fuzzy_match_t> string_fuzzy_match_t::try_create(const imstring &string,
+                                                               const imstring &match_against,
                                                                bool anchor_start) {
     // Helper to lazily compute if case insensitive matches should use icase or smartcase.
     // Use icase if the input contains any uppercase characters, smartcase otherwise.
@@ -234,7 +234,7 @@ static size_t ifind_impl(const T &haystack, const T &needle) {
     return T::npos;
 }
 
-size_t ifind(const wcstring &haystack, const wcstring &needle, bool fuzzy) {
+size_t ifind(const imstring &haystack, const imstring &needle, bool fuzzy) {
     return fuzzy ? ifind_impl<true>(haystack, needle) : ifind_impl<false>(haystack, needle);
 }
 
@@ -242,7 +242,7 @@ size_t ifind(const std::string &haystack, const std::string &needle, bool fuzzy)
     return fuzzy ? ifind_impl<true>(haystack, needle) : ifind_impl<false>(haystack, needle);
 }
 
-wcstring_list_t split_string(const wcstring &val, wchar_t sep) {
+wcstring_list_t split_string(const imstring &val, wchar_t sep) {
     wcstring_list_t out;
     size_t pos = 0, end = val.size();
     while (pos <= end) {
@@ -250,13 +250,13 @@ wcstring_list_t split_string(const wcstring &val, wchar_t sep) {
         if (next_pos == wcstring::npos) {
             next_pos = end;
         }
-        out.emplace_back(val, pos, next_pos - pos);
+        out.push_back(val.substr_wcstring(pos, next_pos - pos));
         pos = next_pos + 1;  // skip the separator, or skip past the end
     }
     return out;
 }
 
-wcstring_list_t split_string_tok(const wcstring &val, const wcstring &seps, size_t max_results) {
+wcstring_list_t split_string_tok(const imstring &val, const imstring &seps, size_t max_results) {
     wcstring_list_t out;
     size_t end = val.size();
     size_t pos = 0;
@@ -270,14 +270,14 @@ wcstring_list_t split_string_tok(const wcstring &val, const wcstring &seps, size
         if (next_sep == wcstring::npos) {
             next_sep = end;
         }
-        out.emplace_back(val, pos, next_sep - pos);
+        out.push_back(val.substr_wcstring(pos, next_sep - pos));
         // Note we skip exactly one sep here. This is because on the last iteration we retain all
         // but the first leading separators. This is historical.
         pos = next_sep + 1;
     }
     if (pos < end && max_results > 0) {
         assert(out.size() + 1 == max_results && "Should have split the max");
-        out.emplace_back(val, pos);
+        out.emplace_back(val.substr_wcstring(pos));
     }
     assert(out.size() <= max_results && "Got too many results");
     return out;

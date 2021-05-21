@@ -119,7 +119,7 @@ maybe_t<int> builtin_type(parser_t &parser, io_streams_t &streams, const wchar_t
         return STATUS_INVALID_ARGS;
     }
 
-    wcstring_list_t builtins = builtin_get_names();
+    imstring_list_t builtins = builtin_get_names();
     bool res = false;
     for (int idx = optind; argv[idx]; ++idx) {
         int found = 0;

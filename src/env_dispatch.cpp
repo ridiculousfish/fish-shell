@@ -61,7 +61,7 @@
 
 /// List of all locale environment variable names that might trigger (re)initializing the locale
 /// subsystem.
-static const wcstring locale_variables[] = {L"LANG",
+static const imstring locale_variables[] = {L"LANG",
                                             L"LANGUAGE",
                                             L"LC_ALL",
                                             L"LC_ADDRESS",
@@ -81,35 +81,35 @@ static const wcstring locale_variables[] = {L"LANG",
 
 /// List of all curses environment variable names that might trigger (re)initializing the curses
 /// subsystem.
-static const wcstring curses_variables[] = {L"TERM", L"TERMINFO", L"TERMINFO_DIRS"};
+static const imstring curses_variables[] = {L"TERM", L"TERMINFO", L"TERMINFO_DIRS"};
 
 class var_dispatch_table_t {
-    using named_callback_t = std::function<void(const wcstring &, env_stack_t &)>;
-    std::unordered_map<wcstring, named_callback_t> named_table_;
+    using named_callback_t = std::function<void(const imstring &, env_stack_t &)>;
+    std::unordered_map<imstring, named_callback_t> named_table_;
 
     using anon_callback_t = std::function<void(env_stack_t &)>;
-    std::unordered_map<wcstring, anon_callback_t> anon_table_;
+    std::unordered_map<imstring, anon_callback_t> anon_table_;
 
-    bool observes_var(const wcstring &name) {
+    bool observes_var(const imstring &name) {
         return named_table_.count(name) || anon_table_.count(name);
     }
 
    public:
     /// Add a callback for the given variable, which expects the name.
     /// We must not already be observing this variable.
-    void add(wcstring name, named_callback_t cb) {
+    void add(imstring name, named_callback_t cb) {
         assert(!observes_var(name) && "Already observing that variable");
         named_table_.emplace(std::move(name), std::move(cb));
     }
 
     /// Add a callback for the given variable, which ignores the name.
     /// We must not already be observing this variable.
-    void add(wcstring name, anon_callback_t cb) {
+    void add(imstring name, anon_callback_t cb) {
         assert(!observes_var(name) && "Already observing that variable");
         anon_table_.emplace(std::move(name), std::move(cb));
     }
 
-    void dispatch(const wcstring &key, env_stack_t &vars) const {
+    void dispatch(const imstring &key, env_stack_t &vars) const {
         auto named = named_table_.find(key);
         if (named != named_table_.end()) {
             named->second(key, vars);
@@ -148,10 +148,10 @@ void env_dispatch_init(const environment_t &vars) {
 }
 
 /// Properly sets all timezone information.
-static void handle_timezone(const wchar_t *env_var_name, const environment_t &vars) {
+static void handle_timezone(const imstring &env_var_name, const environment_t &vars) {
     const auto var = vars.get(env_var_name, ENV_DEFAULT);
-    FLOGF(env_dispatch, L"handle_timezone() current timezone var: |%ls| => |%ls|", env_var_name,
-          !var ? L"MISSING" : var->as_string().c_str());
+    FLOGF(env_dispatch, L"handle_timezone() current timezone var: |%ls| => |%ls|",
+          env_var_name.c_str(), !var ? L"MISSING" : var->as_string().c_str());
     std::string name = wcs2string(env_var_name);
     if (var.missing_or_empty()) {
         unsetenv_lock(name.c_str());
@@ -201,7 +201,7 @@ static void guess_emoji_width(const environment_t &vars) {
 }
 
 /// React to modifying the given variable.
-void env_dispatch_var_change(const wcstring &key, env_stack_t &vars) {
+void env_dispatch_var_change(const imstring &key, env_stack_t &vars) {
     ASSERT_IS_MAIN_THREAD();
     // Do nothing if not yet fully initialized.
     if (!s_var_dispatch_table) return;
@@ -265,8 +265,8 @@ static void handle_complete_path_change(const env_stack_t &vars) {
     complete_invalidate_path();
 }
 
-static void handle_tz_change(const wcstring &var_name, const env_stack_t &vars) {
-    handle_timezone(var_name.c_str(), vars);
+static void handle_tz_change(const imstring &var_name, const env_stack_t &vars) {
+    handle_timezone(var_name, vars);
 }
 
 static void handle_locale_change(const environment_t &vars) {

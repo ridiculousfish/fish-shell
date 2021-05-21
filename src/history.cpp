@@ -1534,7 +1534,7 @@ history_item_t history_t::item_at_index(size_t idx) { return impl()->item_at_ind
 size_t history_t::size() { return impl()->size(); }
 
 /// The set of all histories.
-static owning_lock<std::map<wcstring, std::shared_ptr<history_t>>> s_histories;
+static owning_lock<std::map<imstring, std::shared_ptr<history_t>>> s_histories;
 
 void history_save_all() {
     auto histories = s_histories.acquire();

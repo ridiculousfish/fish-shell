@@ -123,6 +123,7 @@ class logger_t {
     void log1(int64_t);
     void log1(uint64_t);
 
+    void log1(const imstring &s) { log1(s.c_str()); }
     void log1(const wcstring &s) { log1(s.c_str()); }
     void log1(const std::string &s) { log1(s.c_str()); }
 

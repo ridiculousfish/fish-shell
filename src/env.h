@@ -177,7 +177,7 @@ class env_var_t {
     }
     bool operator!=(const env_var_t &rhs) const { return !(*this == rhs); }
 };
-typedef std::unordered_map<wcstring, env_var_t> var_table_t;
+using var_table_t = std::unordered_map<imstring, env_var_t>;
 
 /// An environment is read-only access to variable values.
 class environment_t {
@@ -185,9 +185,9 @@ class environment_t {
     environment_t() = default;
 
    public:
-    virtual maybe_t<env_var_t> get(const wcstring &key,
+    virtual maybe_t<env_var_t> get(const imstring &key,
                                    env_mode_flags_t mode = ENV_DEFAULT) const = 0;
-    virtual wcstring_list_t get_names(int flags) const = 0;
+    virtual imstring_list_t get_names(int flags) const = 0;
     virtual ~environment_t();
 
     /// Returns the PWD with a terminating slash.
@@ -200,8 +200,8 @@ class null_environment_t : public environment_t {
     null_environment_t() = default;
     ~null_environment_t() override;
 
-    maybe_t<env_var_t> get(const wcstring &key, env_mode_flags_t mode = ENV_DEFAULT) const override;
-    wcstring_list_t get_names(int flags) const override;
+    maybe_t<env_var_t> get(const imstring &key, env_mode_flags_t mode = ENV_DEFAULT) const override;
+    imstring_list_t get_names(int flags) const override;
 };
 
 /// A mutable environment which allows scopes to be pushed and popped.
@@ -226,19 +226,19 @@ class env_stack_t final : public environment_t {
     env_stack_t(env_stack_t &&);
 
     /// Implementation of environment_t.
-    maybe_t<env_var_t> get(const wcstring &key, env_mode_flags_t mode = ENV_DEFAULT) const override;
+    maybe_t<env_var_t> get(const imstring &key, env_mode_flags_t mode = ENV_DEFAULT) const override;
 
     /// Implementation of environment_t.
-    wcstring_list_t get_names(int flags) const override;
+    imstring_list_t get_names(int flags) const override;
 
     /// Sets the variable with the specified name to the given values.
-    int set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals);
+    int set(const imstring &key, env_mode_flags_t mode, wcstring_list_t vals);
 
     /// Sets the variable with the specified name to a single value.
-    int set_one(const wcstring &key, env_mode_flags_t mode, wcstring val);
+    int set_one(const imstring &key, env_mode_flags_t mode, wcstring val);
 
     /// Sets the variable with the specified name to no values.
-    int set_empty(const wcstring &key, env_mode_flags_t mode);
+    int set_empty(const imstring &key, env_mode_flags_t mode);
 
     /// Update the PWD variable based on the result of getcwd.
     void set_pwd_from_getcwd();
@@ -251,7 +251,7 @@ class env_stack_t final : public environment_t {
     /// the scope of the variable that should be erased.
     ///
     /// \return zero if the variable existed, and non-zero if the variable did not exist
-    int remove(const wcstring &key, int mode);
+    int remove(const imstring &key, int mode);
 
     /// Push the variable stack. Used for implementing local variables for functions and for-loops.
     void push(bool new_scope);

@@ -215,7 +215,7 @@ class process_t : noncopyable_t {
     const ast::statement_t *internal_block_node{};
 
     struct concrete_assignment {
-        wcstring variable_name;
+        imstring variable_name;
         wcstring_list_t values;
     };
     /// The expanded variable assignments for this process, as specified by the `a=b cmd` syntax.

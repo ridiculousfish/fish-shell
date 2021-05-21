@@ -39,26 +39,26 @@ namespace {
 /// There's only one of these; it's managed by a lock.
 struct function_set_t {
     /// The map of all functions by name.
-    std::unordered_map<wcstring, function_properties_ref_t> funcs;
+    std::unordered_map<imstring, function_properties_ref_t> funcs;
 
     /// Tombstones for functions that should no longer be autoloaded.
-    std::unordered_set<wcstring> autoload_tombstones;
+    std::unordered_set<imstring> autoload_tombstones;
 
     /// The autoloader for our functions.
     autoload_t autoloader{L"fish_function_path"};
 
     /// Remove a function.
     /// \return true if successful, false if it doesn't exist.
-    bool remove(const wcstring &name);
+    bool remove(const imstring &name);
 
     /// Get the properties for a function, or nullptr if none.
-    function_properties_ref_t get_props(const wcstring &name) const {
+    function_properties_ref_t get_props(const imstring &name) const {
         auto iter = funcs.find(name);
         return iter == funcs.end() ? nullptr : iter->second;
     }
 
     /// \return true if we should allow autoloading a given function.
-    bool allow_autoload(const wcstring &name) const;
+    bool allow_autoload(const imstring &name) const;
 
     function_set_t() = default;
 };
@@ -66,7 +66,7 @@ struct function_set_t {
 /// The big set of all functions.
 static owning_lock<function_set_t> function_set;
 
-bool function_set_t::allow_autoload(const wcstring &name) const {
+bool function_set_t::allow_autoload(const imstring &name) const {
     // Prohibit autoloading if we have a non-autoload (explicit) function, or if the function is
     // tombstoned.
     auto props = get_props(name);
@@ -85,7 +85,7 @@ static std::shared_ptr<function_properties_t> copy_props(const function_properti
 /// Make sure that if the specified function is a dynamically loaded function, it has been fully
 /// loaded.
 /// Note this executes fish script code.
-static void try_autoload(const wcstring &name, parser_t &parser) {
+static void try_autoload(const imstring &name, parser_t &parser) {
     ASSERT_IS_MAIN_THREAD();
     maybe_t<wcstring> path_to_autoload;
     // Note we can't autoload while holding the funcset lock.
@@ -93,7 +93,8 @@ static void try_autoload(const wcstring &name, parser_t &parser) {
     {
         auto funcset = function_set.acquire();
         if (funcset->allow_autoload(name)) {
-            path_to_autoload = funcset->autoloader.resolve_command(name, env_stack_t::globals());
+            path_to_autoload =
+                funcset->autoloader.resolve_command(name.to_wcstring(), env_stack_t::globals());
         }
     }
 
@@ -101,23 +102,20 @@ static void try_autoload(const wcstring &name, parser_t &parser) {
     if (path_to_autoload) {
         // Crucially, the lock is acquired *after* do_autoload_file_at_path().
         autoload_t::perform_autoload(*path_to_autoload, parser);
-        function_set.acquire()->autoloader.mark_autoload_finished(name);
+        function_set.acquire()->autoloader.mark_autoload_finished(name.to_wcstring());
     }
 }
 
 /// Insert a list of all dynamically loaded functions into the specified list.
-static void autoload_names(std::unordered_set<wcstring> &names, int get_hidden) {
-    size_t i;
-
+static void autoload_names(std::unordered_set<imstring> &names, bool get_hidden) {
     // TODO: justfy this.
     auto &vars = env_stack_t::principal();
     const auto path_var = vars.get(L"fish_function_path");
     if (path_var.missing_or_empty()) return;
 
     const wcstring_list_t &path_list = path_var->as_list();
-
-    for (i = 0; i < path_list.size(); i++) {
-        const wcstring &ndir_str = path_list.at(i);
+    for (size_t i = 0; i < path_list.size(); i++) {
+        const imstring &ndir_str = path_list.at(i);
         dir_t dir(ndir_str);
         if (!dir.valid()) continue;
 
@@ -129,15 +127,13 @@ static void autoload_names(std::unordered_set<wcstring> &names, int get_hidden) 
 
             suffix = std::wcsrchr(fn, L'.');
             if (suffix && (std::wcscmp(suffix, L".fish") == 0)) {
-                wcstring name(fn, suffix - fn);
-                names.insert(name);
+                names.insert(imstring(fn, suffix - fn));
             }
         }
     }
 }
 
-void function_add(wcstring name, std::shared_ptr<function_properties_t> props) {
-    ASSERT_IS_MAIN_THREAD();
+void function_add(const imstring &name, std::shared_ptr<function_properties_t> props) {
     assert(props && "Null props");
     auto funcset = function_set.acquire();
 
@@ -158,25 +154,25 @@ void function_add(wcstring name, std::shared_ptr<function_properties_t> props) {
     (void)ins;
 }
 
-function_properties_ref_t function_get_props(const wcstring &name) {
+function_properties_ref_t function_get_props(const imstring &name) {
     if (parser_keywords_is_reserved(name)) return nullptr;
     return function_set.acquire()->get_props(name);
 }
 
-function_properties_ref_t function_get_props_autoload(const wcstring &name, parser_t &parser) {
+function_properties_ref_t function_get_props_autoload(const imstring &name, parser_t &parser) {
     ASSERT_IS_MAIN_THREAD();
     if (parser_keywords_is_reserved(name)) return nullptr;
     try_autoload(name, parser);
     return function_get_props(name);
 }
 
-bool function_exists(const wcstring &cmd, parser_t &parser) {
+bool function_exists(const imstring &cmd, parser_t &parser) {
     ASSERT_IS_MAIN_THREAD();
     if (!valid_func_name(cmd)) return false;
     return function_get_props_autoload(cmd, parser) != nullptr;
 }
 
-bool function_exists_no_autoload(const wcstring &cmd) {
+bool function_exists_no_autoload(const imstring &cmd) {
     if (!valid_func_name(cmd)) return false;
     if (parser_keywords_is_reserved(cmd)) return false;
     auto funcset = function_set.acquire();
@@ -185,7 +181,7 @@ bool function_exists_no_autoload(const wcstring &cmd) {
     return funcset->get_props(cmd) || funcset->autoloader.can_autoload(cmd);
 }
 
-bool function_set_t::remove(const wcstring &name) {
+bool function_set_t::remove(const imstring &name) {
     size_t amt = funcs.erase(name);
     if (amt > 0) {
         event_remove_function_handlers(name);
@@ -193,7 +189,7 @@ bool function_set_t::remove(const wcstring &name) {
     return amt > 0;
 }
 
-void function_remove(const wcstring &name) {
+void function_remove(const imstring &name) {
     auto funcset = function_set.acquire();
     funcset->remove(name);
     // Prevent (re-)autoloading this function.
@@ -210,12 +206,12 @@ static wcstring get_function_body_source(const function_properties_t &props) {
         uint32_t body_start = header_src->start + header_src->length;
         uint32_t body_end = end_kw_src->start;
         assert(body_start <= body_end && "end keyword should come after header");
-        return wcstring(props.parsed_source->src, body_start, body_end - body_start);
+        return props.parsed_source->src.substr_wcstring(body_start, body_end - body_start);
     }
     return wcstring{};
 }
 
-void function_set_desc(const wcstring &name, const wcstring &desc, parser_t &parser) {
+void function_set_desc(const imstring &name, wcstring desc, parser_t &parser) {
     ASSERT_IS_MAIN_THREAD();
     try_autoload(name, parser);
     auto funcset = function_set.acquire();
@@ -224,12 +220,12 @@ void function_set_desc(const wcstring &name, const wcstring &desc, parser_t &par
         // Note the description is immutable, as it may be accessed on another thread, so we copy
         // the properties to modify it.
         auto new_props = copy_props(iter->second);
-        new_props->description = desc;
+        new_props->description = std::move(desc);
         iter->second = new_props;
     }
 }
 
-bool function_copy(const wcstring &name, const wcstring &new_name) {
+bool function_copy(const imstring &name, const imstring &new_name) {
     auto funcset = function_set.acquire();
     auto props = funcset->get_props(name);
     if (!props) {
@@ -249,12 +245,12 @@ bool function_copy(const wcstring &name, const wcstring &new_name) {
     return true;
 }
 
-wcstring_list_t function_get_names(int get_hidden) {
-    std::unordered_set<wcstring> names;
+imstring_list_t function_get_names(bool get_hidden) {
+    std::unordered_set<imstring> names;
     auto funcset = function_set.acquire();
     autoload_names(names, get_hidden);
     for (const auto &func : funcset->funcs) {
-        const wcstring &name = func.first;
+        const imstring &name = func.first;
 
         // Maybe skip hidden.
         if (!get_hidden && (name.empty() || name.at(0) == L'_')) {
@@ -262,7 +258,7 @@ wcstring_list_t function_get_names(int get_hidden) {
         }
         names.insert(name);
     }
-    return wcstring_list_t(names.begin(), names.end());
+    return imstring_list_t(names.begin(), names.end());
 }
 
 void function_invalidate_path() {
@@ -270,19 +266,19 @@ void function_invalidate_path() {
     // Note we don't want to risk removal during iteration; we expect this to be called
     // infrequently.
     auto funcset = function_set.acquire();
-    wcstring_list_t autoloadees;
+    imstring_list_t autoloadees;
     for (const auto &kv : funcset->funcs) {
         if (kv.second->is_autoload) {
             autoloadees.push_back(kv.first);
         }
     }
-    for (const wcstring &name : autoloadees) {
+    for (const imstring &name : autoloadees) {
         funcset->remove(name);
     }
     funcset->autoloader.clear();
 }
 
-wcstring function_properties_t::annotated_definition(const wcstring &name) const {
+wcstring function_properties_t::annotated_definition(const imstring &name) const {
     wcstring out;
     wcstring desc = this->localized_description();
     wcstring def = get_function_body_source(*this);
@@ -298,7 +294,7 @@ wcstring function_properties_t::annotated_definition(const wcstring &name) const
     }
 
     // Output wrap targets.
-    for (const wcstring &wrap : complete_get_wrap_targets(name)) {
+    for (const imstring &wrap : complete_get_wrap_targets(name)) {
         out.append(L" --wraps=");
         out.append(escape_string(wrap, ESCAPE_ALL));
     }
@@ -347,7 +343,7 @@ wcstring function_properties_t::annotated_definition(const wcstring &name) const
         }
     }
 
-    const wcstring_list_t &named = this->named_arguments;
+    const imstring_list_t &named = this->named_arguments;
     if (!named.empty()) {
         append_format(out, L" --argument");
         for (const auto &name : named) {
@@ -395,7 +391,7 @@ int function_properties_t::definition_lineno() const {
     auto source_range = func_node->try_source_range();
     assert(source_range && "Function has no source range");
     uint32_t func_start = source_range->start;
-    const wcstring &source = parsed_source->src;
+    const imstring &source = parsed_source->src;
     assert(func_start <= source.size() && "function start out of bounds");
     return 1 + std::count(source.begin(), source.begin() + func_start, L'\n');
 }

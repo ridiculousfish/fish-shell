@@ -34,7 +34,7 @@ static bool is_keyword_char(wchar_t c) {
 }
 
 /// Given a token, returns the keyword it matches, or parse_keyword_t::none.
-static parse_keyword_t keyword_for_token(token_type_t tok, const wcstring &token) {
+static parse_keyword_t keyword_for_token(token_type_t tok, const imstring &token) {
     /* Only strings can be keywords */
     if (tok != token_type_t::string) {
         return parse_keyword_t::none;
@@ -102,7 +102,7 @@ static parse_token_type_t parse_token_type_from_tokenizer_token(
 /// A token stream generates a sequence of parser tokens, permitting arbitrary lookahead.
 class token_stream_t {
    public:
-    explicit token_stream_t(const wcstring &src, parse_tree_flags_t flags,
+    explicit token_stream_t(const imstring &src, parse_tree_flags_t flags,
                             std::vector<source_range_t> &comments)
         : src_(src),
           tok_(src_.c_str(), tokenizer_flags_from_parse_flags(flags)),
@@ -133,7 +133,7 @@ class token_stream_t {
     }
 
     /// Provide the orignal source code.
-    const wcstring &source() const { return src_; }
+    const imstring &source() const { return src_; }
 
    private:
     // Helper to mask our circular buffer.
@@ -203,7 +203,7 @@ class token_stream_t {
     size_t count_ = 0;
 
     // A reference to the original source.
-    const wcstring &src_;
+    const imstring &src_;
 
     // The tokenizer to generate new tokens.
     tokenizer_t tok_;
@@ -398,7 +398,7 @@ struct populator_t {
     using unique_ptr = std::unique_ptr<T>;
 
     // Construct from a source, flags, top type, and out_errors, which may be null.
-    populator_t(const wcstring &src, parse_tree_flags_t flags, type_t top_type,
+    populator_t(const imstring &src, parse_tree_flags_t flags, type_t top_type,
                 parse_error_list_t *out_errors)
         : flags_(flags),
           tokens_(src, flags, extras_.comments),
@@ -1257,7 +1257,7 @@ static void set_parents(const node_t *top) {
 }
 
 // static
-ast_t ast_t::parse_from_top(const wcstring &src, parse_tree_flags_t parse_flags,
+ast_t ast_t::parse_from_top(const imstring &src, parse_tree_flags_t parse_flags,
                             parse_error_list_t *out_errors, type_t top_type) {
     assert((top_type == type_t::job_list || top_type == type_t::freestanding_argument_list) &&
            "Invalid top type");
@@ -1288,12 +1288,12 @@ ast_t ast_t::parse_from_top(const wcstring &src, parse_tree_flags_t parse_flags,
 }
 
 // static
-ast_t ast_t::parse(const wcstring &src, parse_tree_flags_t flags, parse_error_list_t *out_errors) {
+ast_t ast_t::parse(const imstring &src, parse_tree_flags_t flags, parse_error_list_t *out_errors) {
     return parse_from_top(src, flags, out_errors, type_t::job_list);
 }
 
 // static
-ast_t ast_t::parse_argument_list(const wcstring &src, parse_tree_flags_t flags,
+ast_t ast_t::parse_argument_list(const imstring &src, parse_tree_flags_t flags,
                                  parse_error_list_t *out_errors) {
     return parse_from_top(src, flags, out_errors, type_t::freestanding_argument_list);
 }
@@ -1307,7 +1307,7 @@ static int get_depth(const node_t *node) {
     return result;
 }
 
-wcstring ast_t::dump(const wcstring &orig) const {
+wcstring ast_t::dump(const imstring &orig) const {
     wcstring result;
 
     // Return a string that repeats "| " \p amt times.

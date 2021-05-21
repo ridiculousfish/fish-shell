@@ -41,9 +41,9 @@ parse_error_code_t parse_error_from_tokenizer_error(tokenizer_error_t err) {
 }
 
 /// Returns a string description of this parse error.
-wcstring parse_error_t::describe_with_prefix(const wcstring &src, const wcstring &prefix,
+wcstring parse_error_t::describe_with_prefix(const imstring &src, const imstring &prefix,
                                              bool is_interactive, bool skip_caret) const {
-    wcstring result = prefix;
+    wcstring result = prefix.to_wcstring();
     switch (code) {
         default:
             if (skip_caret && this->text.empty()) return L"";
@@ -53,7 +53,7 @@ wcstring parse_error_t::describe_with_prefix(const wcstring &src, const wcstring
                           src.substr(this->source_start, this->source_length).c_str());
             return result;
         case parse_error_bare_variable_assignment: {
-            wcstring assignment_src = src.substr(this->source_start, this->source_length);
+            wcstring assignment_src = src.substr_wcstring(this->source_start, this->source_length);
             maybe_t<size_t> equals_pos = variable_assignment_equals_pos(assignment_src);
             assert(equals_pos);
             wcstring variable = assignment_src.substr(0, *equals_pos);
@@ -102,7 +102,7 @@ wcstring parse_error_t::describe_with_prefix(const wcstring &src, const wcstring
 
     // Append the line of text.
     if (!result.empty()) result.push_back(L'\n');
-    result.append(src, line_start, line_end - line_start);
+    result.append(src.data() + line_start, line_end - line_start);
 
     // Append the caret line. The input source may include tabs; for that reason we
     // construct a "caret line" that has tabs in corresponding positions.
@@ -205,17 +205,17 @@ wcstring parse_token_t::user_presentable_description() const {
     return token_type_user_presentable_description(type, keyword);
 }
 
-parsed_source_t::parsed_source_t(wcstring &&s, ast::ast_t &&ast)
-    : src(std::move(s)), ast(std::move(ast)) {}
+parsed_source_t::parsed_source_t(const imstring &s, ast::ast_t &&ast)
+    : src(s), ast(std::move(ast)) {}
 
 parsed_source_t::~parsed_source_t() = default;
 
-parsed_source_ref_t parse_source(wcstring &&src, parse_tree_flags_t flags,
+parsed_source_ref_t parse_source(const imstring &src, parse_tree_flags_t flags,
                                  parse_error_list_t *errors) {
     using namespace ast;
     ast_t ast = ast_t::parse(src, flags, errors);
     if (ast.errored() && !(flags & parse_flag_continue_after_error)) {
         return nullptr;
     }
-    return std::make_shared<parsed_source_t>(std::move(src), std::move(ast));
+    return std::make_shared<parsed_source_t>(src, std::move(ast));
 }

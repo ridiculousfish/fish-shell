@@ -49,10 +49,10 @@ enum {
 using complete_flags_t = int;
 
 /// std::function which accepts a completion string and returns its description.
-using description_func_t = std::function<wcstring(const wcstring &)>;
+using description_func_t = std::function<wcstring(const imstring &)>;
 
 /// Helper to return a description_func_t for a constant string.
-description_func_t const_desc(const wcstring &s);
+description_func_t const_desc(const imstring &s);
 
 class completion_t {
    private:
@@ -98,7 +98,7 @@ class completion_t {
     uint32_t rank() const { return match.rank(); }
 
     // If this completion replaces the entire token, prepend a prefix. Otherwise do nothing.
-    void prepend_token_prefix(const wcstring &prefix);
+    void prepend_token_prefix(const imstring &prefix);
 };
 
 using completion_list_t = std::vector<completion_t>;
@@ -241,7 +241,7 @@ void complete_remove(const wcstring &cmd, bool cmd_is_path, const wcstring &opti
                      complete_option_type_t type);
 
 /// Removes all completions for a given command.
-void complete_remove_all(const wcstring &cmd, bool cmd_is_path);
+void complete_remove_all(const imstring &cmd, bool cmd_is_path);
 
 /// \return all completions of the command cmd.
 class operation_context_t;
@@ -249,14 +249,14 @@ completion_list_t complete(const wcstring &cmd, completion_request_flags_t flags
                            const operation_context_t &ctx);
 
 /// Return a list of all current completions.
-wcstring complete_print(const wcstring &cmd = L"");
+wcstring complete_print(const imstring &cmd = {});
 
 /// Tests if the specified option is defined for the specified command.
-int complete_is_valid_option(const wcstring &str, const wcstring &opt,
+int complete_is_valid_option(const imstring &str, const imstring &opt,
                              wcstring_list_t *inErrorsOrNull, bool allow_autoload);
 
 /// Tests if the specified argument is valid for the specified option and command.
-bool complete_is_valid_argument(const wcstring &str, const wcstring &opt, const wcstring &arg);
+bool complete_is_valid_argument(const imstring &str, const imstring &opt, const imstring &arg);
 
 /// Create a new completion entry.
 ///
@@ -269,11 +269,11 @@ void append_completion(completion_list_t *completions, wcstring comp, wcstring d
                        string_fuzzy_match_t match = string_fuzzy_match_t::exact_match());
 
 /// Support for "wrap targets." A wrap target is a command that completes like another command.
-bool complete_add_wrapper(const wcstring &command, const wcstring &new_target);
-bool complete_remove_wrapper(const wcstring &command, const wcstring &target_to_remove);
+bool complete_add_wrapper(const imstring &command, const imstring &new_target);
+bool complete_remove_wrapper(const imstring &command, const imstring &target_to_remove);
 
 /// Returns a list of wrap targets for a given command.
-wcstring_list_t complete_get_wrap_targets(const wcstring &command);
+imstring_list_t complete_get_wrap_targets(const imstring &command);
 
 // Observes that fish_complete_path has changed.
 void complete_invalidate_path();

@@ -48,10 +48,10 @@ void path_emit_config_directory_messages(env_stack_t &vars);
 /// Returns:
 /// false if the command can not be found else true. The result
 /// should be freed with free().
-bool path_get_path(const wcstring &cmd, wcstring *out_path, const environment_t &vars);
+bool path_get_path(const imstring &cmd, wcstring *out_path, const environment_t &vars);
 
 /// Return all the paths that match the given command.
-wcstring_list_t path_get_paths(const wcstring &cmd, const environment_t &vars);
+wcstring_list_t path_get_paths(const imstring &cmd, const environment_t &vars);
 
 /// Returns the full path of the specified directory, using the CDPATH variable as a list of base
 /// directories for relative paths.
@@ -64,16 +64,16 @@ wcstring_list_t path_get_paths(const wcstring &cmd, const environment_t &vars);
 /// \param wd The working directory. The working directory must end with a slash.
 /// \param vars The environment variables to use (for the CDPATH variable)
 /// \return the command, or none() if it could not be found.
-maybe_t<wcstring> path_get_cdpath(const wcstring &dir, const wcstring &wd,
+maybe_t<wcstring> path_get_cdpath(const imstring &dir, const imstring &wd,
                                   const environment_t &vars);
 
 /// Returns the given directory with all CDPATH components applied.
-wcstring_list_t path_apply_cdpath(const wcstring &dir, const wcstring &wd,
+wcstring_list_t path_apply_cdpath(const imstring &dir, const imstring &wd,
                                   const environment_t &env_vars);
 
 /// Returns the path resolved as an implicit cd command, or none() if none. This requires it to
 /// start with one of the allowed prefixes (., .., ~) and resolve to a directory.
-maybe_t<wcstring> path_as_implicit_cd(const wcstring &path, const wcstring &wd,
+maybe_t<wcstring> path_as_implicit_cd(const imstring &path, const imstring &wd,
                                       const environment_t &vars);
 
 /// Remove double slashes and trailing slashes from a path, e.g. transform foo//bar/ into foo/bar.
@@ -94,6 +94,6 @@ bool paths_are_same_file(const wcstring &path1, const wcstring &path2);
 wcstring path_apply_working_directory(const wcstring &path, const wcstring &working_directory);
 
 /// Appends a path component, with a / if necessary.
-void append_path_component(wcstring &path, const wcstring &component);
+void append_path_component(wcstring &path, const imstring &component);
 
 #endif

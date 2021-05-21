@@ -371,7 +371,7 @@ maybe_t<int> builtin_commandline(parser_t &parser, io_streams_t &streams, const 
     // transient commandline.
     const wchar_t *current_buffer = nullptr;
     size_t current_cursor_pos{0};
-    wcstring transient;
+    imstring transient;
     if (override_buffer) {
         current_buffer = override_buffer;
         current_cursor_pos = std::wcslen(current_buffer);

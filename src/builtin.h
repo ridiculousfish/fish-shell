@@ -83,9 +83,9 @@ bool builtin_exists(const wcstring &cmd);
 
 proc_status_t builtin_run(parser_t &parser, const wcstring_list_t &argv, io_streams_t &streams);
 
-wcstring_list_t builtin_get_names();
+imstring_list_t builtin_get_names();
 void builtin_get_names(completion_list_t *list);
-const wchar_t *builtin_get_desc(const wcstring &name);
+const wchar_t *builtin_get_desc(const imstring &name);
 
 wcstring builtin_help_get(parser_t &parser, const wchar_t *cmd);
 

@@ -106,7 +106,8 @@ static wcstring profiling_cmd_name_for_redirectable_block(const ast::node_t &nod
     assert(src_end >= source_range->start && "Invalid source end");
 
     // Get the source for the block, and cut it at the next statement terminator.
-    wcstring result = pstree.src.substr(source_range->start, src_end - source_range->start);
+    wcstring result =
+        pstree.src.substr_wcstring(source_range->start, src_end - source_range->start);
     result.append(L"...");
     return result;
 }
@@ -432,15 +433,15 @@ end_execution_reason_t parse_execution_context_t::run_for_statement(
     const ast::for_header_t &header, const ast::job_list_t &block_contents) {
     // Get the variable name: `for var_name in ...`. We expand the variable name. It better result
     // in just one.
-    wcstring for_var_name = header.var_name.source(get_source());
-    if (!expand_one(for_var_name, expand_flags_t{}, ctx)) {
+    wcstring for_var_name_wcs = header.var_name.source(get_source());
+    if (!expand_one(for_var_name_wcs, expand_flags_t{}, ctx)) {
         return report_error(STATUS_EXPAND_ERROR, header.var_name,
-                            FAILED_EXPANSION_VARIABLE_NAME_ERR_MSG, for_var_name.c_str());
+                            FAILED_EXPANSION_VARIABLE_NAME_ERR_MSG, for_var_name_wcs.c_str());
     }
 
-    if (!valid_var_name(for_var_name)) {
+    if (!valid_var_name(for_var_name_wcs)) {
         return report_error(STATUS_INVALID_ARGS, header.var_name, BUILTIN_ERR_VARNAME, L"for",
-                            for_var_name.c_str());
+                            for_var_name_wcs.c_str());
     }
 
     // Get the contents to iterate over.
@@ -450,6 +451,8 @@ end_execution_reason_t parse_execution_context_t::run_for_statement(
     if (ret != end_execution_reason_t::ok) {
         return ret;
     }
+
+    imstring for_var_name(std::move(for_var_name_wcs));
 
     auto var = parser->vars().get(for_var_name, ENV_DEFAULT);
     if (env_var_t::flags_for(for_var_name.c_str()) & env_var_t::flag_read_only) {
@@ -1085,8 +1088,8 @@ end_execution_reason_t parse_execution_context_t::apply_variable_assignments(
         const wcstring &source = get_source(variable_assignment);
         auto equals_pos = variable_assignment_equals_pos(source);
         assert(equals_pos);
-        const wcstring variable_name = source.substr(0, *equals_pos);
-        const wcstring expression = source.substr(*equals_pos + 1);
+        imstring variable_name = source.substr(0, *equals_pos);
+        wcstring expression = source.substr(*equals_pos + 1);
         completion_list_t expression_expanded;
         parse_error_list_t errors;
         // TODO this is mostly copied from expand_arguments_from_nodes, maybe extract to function

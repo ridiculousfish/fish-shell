@@ -428,7 +428,7 @@ ASSERT_SORTED_BY_NAME(builtin_datas);
 /// @return
 ///    Pointer to a builtin_data_t
 ///
-static const builtin_data_t *builtin_lookup(const wcstring &name) {
+static const builtin_data_t *builtin_lookup(const imstring &name) {
     return get_by_sorted_name(name.c_str(), builtin_datas);
 }
 
@@ -492,8 +492,8 @@ proc_status_t builtin_run(parser_t &parser, const wcstring_list_t &argv, io_stre
 }
 
 /// Returns a list of all builtin names.
-wcstring_list_t builtin_get_names() {
-    wcstring_list_t result;
+imstring_list_t builtin_get_names() {
+    imstring_list_t result;
     result.reserve(BUILTIN_COUNT);
     for (const auto &builtin_data : builtin_datas) {
         result.push_back(builtin_data.name);
@@ -511,7 +511,7 @@ void builtin_get_names(completion_list_t *list) {
 }
 
 /// Return a one-line description of the specified builtin.
-const wchar_t *builtin_get_desc(const wcstring &name) {
+const wchar_t *builtin_get_desc(const imstring &name) {
     const wchar_t *result = L"";
     const builtin_data_t *builtin = builtin_lookup(name);
     if (builtin) {

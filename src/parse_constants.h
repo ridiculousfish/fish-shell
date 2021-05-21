@@ -177,7 +177,7 @@ struct parse_error_t {
     wcstring describe(const wcstring &src, bool is_interactive) const;
     /// Return a string describing the error, suitable for presentation to the user, with the given
     /// prefix. If skip_caret is false, the offending line with a caret is printed as well.
-    wcstring describe_with_prefix(const wcstring &src, const wcstring &prefix, bool is_interactive,
+    wcstring describe_with_prefix(const imstring &src, const imstring &prefix, bool is_interactive,
                                   bool skip_caret) const;
 };
 typedef std::vector<parse_error_t> parse_error_list_t;

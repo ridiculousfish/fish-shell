@@ -46,7 +46,7 @@ class autoload_file_cache_t {
         autoloadable_file_t file;
         timestamp_t last_checked;
     };
-    std::unordered_map<wcstring, known_file_t> known_files_;
+    std::unordered_map<imstring, known_file_t> known_files_;
 
     /// \return the current timestamp.
     static timestamp_t current_timestamp() { return std::chrono::steady_clock::now(); }
@@ -56,7 +56,7 @@ class autoload_file_cache_t {
 
     /// Attempt to find an autoloadable file by searching our path list for a given comand.
     /// \return the file, or none() if none.
-    maybe_t<autoloadable_file_t> locate_file(const wcstring &cmd) const;
+    maybe_t<autoloadable_file_t> locate_file(const imstring &cmd) const;
 
    public:
     /// Initialize with a set of directories.
@@ -71,10 +71,10 @@ class autoload_file_cache_t {
     /// Check if a command \p cmd can be loaded.
     /// If \p allow_stale is true, allow stale entries; otherwise discard them.
     /// This returns an autoloadable file, or none() if there is no such file.
-    maybe_t<autoloadable_file_t> check(const wcstring &cmd, bool allow_stale = false);
+    maybe_t<autoloadable_file_t> check(const imstring &cmd, bool allow_stale = false);
 };
 
-maybe_t<autoloadable_file_t> autoload_file_cache_t::locate_file(const wcstring &cmd) const {
+maybe_t<autoloadable_file_t> autoload_file_cache_t::locate_file(const imstring &cmd) const {
     // If the command is empty or starts with NULL (i.e. is empty as a path)
     // we'd try to source the *directory*, which exists.
     // So instead ignore these here.
@@ -106,7 +106,7 @@ bool autoload_file_cache_t::is_fresh(timestamp_t then, timestamp_t now) {
     return seconds.count() < kAutoloadStalenessInterval;
 }
 
-maybe_t<autoloadable_file_t> autoload_file_cache_t::check(const wcstring &cmd, bool allow_stale) {
+maybe_t<autoloadable_file_t> autoload_file_cache_t::check(const imstring &cmd, bool allow_stale) {
     // Check hits.
     auto iter = known_files_.find(cmd);
     if (iter != known_files_.end()) {
@@ -142,8 +142,8 @@ maybe_t<autoloadable_file_t> autoload_file_cache_t::check(const wcstring &cmd, b
     return file;
 }
 
-autoload_t::autoload_t(wcstring env_var_name)
-    : env_var_name_(std::move(env_var_name)), cache_(make_unique<autoload_file_cache_t>()) {}
+autoload_t::autoload_t(const imstring &env_var_name)
+    : env_var_name_(env_var_name), cache_(make_unique<autoload_file_cache_t>()) {}
 
 autoload_t::autoload_t(autoload_t &&) noexcept = default;
 autoload_t::~autoload_t() = default;
@@ -153,12 +153,12 @@ void autoload_t::invalidate_cache() {
     cache_ = std::move(cache);
 }
 
-bool autoload_t::can_autoload(const wcstring &cmd) {
+bool autoload_t::can_autoload(const imstring &cmd) {
     return cache_->check(cmd, true /* allow stale */).has_value();
 }
 
-wcstring_list_t autoload_t::get_autoloaded_commands() const {
-    wcstring_list_t result;
+imstring_list_t autoload_t::get_autoloaded_commands() const {
+    imstring_list_t result;
     result.reserve(autoloaded_files_.size());
     for (const auto &kv : autoloaded_files_) {
         result.push_back(kv.first);
@@ -168,7 +168,7 @@ wcstring_list_t autoload_t::get_autoloaded_commands() const {
     return result;
 }
 
-maybe_t<wcstring> autoload_t::resolve_command(const wcstring &cmd, const environment_t &env) {
+maybe_t<wcstring> autoload_t::resolve_command(const imstring &cmd, const environment_t &env) {
     if (maybe_t<env_var_t> mvar = env.get(env_var_name_)) {
         return resolve_command(cmd, mvar->as_list());
     } else {
@@ -176,7 +176,7 @@ maybe_t<wcstring> autoload_t::resolve_command(const wcstring &cmd, const environ
     }
 }
 
-maybe_t<wcstring> autoload_t::resolve_command(const wcstring &cmd, const wcstring_list_t &paths) {
+maybe_t<wcstring> autoload_t::resolve_command(const imstring &cmd, const wcstring_list_t &paths) {
     // Are we currently in the process of autoloading this?
     if (current_autoloading_.count(cmd) > 0) return none();
 
@@ -204,7 +204,7 @@ maybe_t<wcstring> autoload_t::resolve_command(const wcstring &cmd, const wcstrin
     return std::move(mfile->path);
 }
 
-void autoload_t::perform_autoload(const wcstring &path, parser_t &parser) {
+void autoload_t::perform_autoload(const imstring &path, parser_t &parser) {
     wcstring script_source = L"source " + escape_string(path, ESCAPE_ALL);
     exec_subshell(script_source, parser, false /* do not apply exit status */);
 }

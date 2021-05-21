@@ -207,7 +207,7 @@ struct library_data_t {
     /// A stack of fake values to be returned by builtin_commandline. This is used by the completion
     /// machinery when wrapping: e.g. if `tig` wraps `git` then git completions need to see git on
     /// the command line.
-    wcstring_list_t transient_commandlines{};
+    imstring_list_t transient_commandlines{};
 
     /// A file descriptor holding the current working directory, for use in openat().
     /// This is never null and never invalid.
@@ -304,7 +304,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// \param block_type The type of block to push on the block stack, which must be either 'top'
     /// or 'subst'.
     /// \return the result of evaluation.
-    eval_res_t eval(const wcstring &cmd, const io_chain_t &io,
+    eval_res_t eval(const imstring &cmd, const io_chain_t &io,
                     const job_group_ref_t &job_group = {},
                     block_type_t block_type = block_type_t::top);
 
@@ -324,7 +324,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Evaluate line as a list of parameters, i.e. tokenize it and perform parameter expansion and
     /// cmdsubst execution on the tokens. Errors are ignored. If a parser is provided, it is used
     /// for command substitution expansion.
-    static completion_list_t expand_argument_list(const wcstring &arg_list_src,
+    static completion_list_t expand_argument_list(const imstring &arg_list_src,
                                                   expand_flags_t flags,
                                                   const operation_context_t &ctx);
 
@@ -375,9 +375,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Cover of vars().set(), which also fires any returned event handlers.
     /// \return a value like ENV_OK.
-    int set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring val);
-    int set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals);
-    int set_empty_var_and_fire(const wcstring &key, env_mode_flags_t mode);
+    int set_var_and_fire(const imstring &key, env_mode_flags_t mode, wcstring val);
+    int set_var_and_fire(const imstring &key, env_mode_flags_t mode, wcstring_list_t vals);
+    int set_empty_var_and_fire(const imstring &key, env_mode_flags_t mode);
 
     /// Pushes a new block. Returns a pointer to the block, stored in the parser. The pointer is
     /// valid until the call to pop_block().
@@ -415,7 +415,7 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Output profiling data to the given filename.
     void emit_profiling(const char *path) const;
 
-    void get_backtrace(const wcstring &src, const parse_error_list_t &errors,
+    void get_backtrace(const imstring &src, const parse_error_list_t &errors,
                        wcstring &output) const;
 
     /// Returns the file currently evaluated by the parser. This can be different than

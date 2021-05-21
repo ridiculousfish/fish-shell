@@ -37,7 +37,7 @@
 #include "wildcard.h"
 #include "wutil.h"  // IWYU pragma: keep
 
-static const wchar_t *get_highlight_var_name(highlight_role_t role) {
+static imstring get_highlight_var_name(highlight_role_t role) {
     switch (role) {
         case highlight_role_t::normal:
             return L"fish_color_normal";
@@ -149,8 +149,8 @@ static highlight_role_t get_fallback(highlight_role_t role) {
 /// Returns:
 ///     false: the filesystem is not case insensitive
 ///     true: the file system is case insensitive
-using case_sensitivity_cache_t = std::unordered_map<wcstring, bool>;
-static bool fs_is_case_insensitive(const wcstring &path, int fd,
+using case_sensitivity_cache_t = std::unordered_map<imstring, bool>;
+static bool fs_is_case_insensitive(const imstring &path, int fd,
                                    case_sensitivity_cache_t &case_sensitivity_cache) {
     bool result = false;
 #ifdef _PC_CASE_SENSITIVE

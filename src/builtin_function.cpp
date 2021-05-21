@@ -32,8 +32,8 @@ struct function_cmd_opts_t {
     bool shadow_scope = true;
     wcstring description;
     std::vector<event_description_t> events;
-    wcstring_list_t named_arguments;
-    wcstring_list_t inherit_vars;
+    imstring_list_t named_arguments;
+    imstring_list_t inherit_vars;
     wcstring_list_t wrap_targets;
 };
 }  // namespace
@@ -274,7 +274,7 @@ maybe_t<int> builtin_function(parser_t &parser, io_streams_t &streams,
     props->definition_file = parser.libdata().current_filename;
 
     // Populate inherit_vars.
-    for (const wcstring &name : opts.inherit_vars) {
+    for (const imstring &name : opts.inherit_vars) {
         if (auto var = parser.vars().get(name)) {
             props->inherit_vars[name] = var->as_list();
         }

@@ -285,7 +285,7 @@ wcstring str2wcstring(const std::string &in, size_t len);
 ///
 /// This function decodes illegal character sequences in a reversible way using the private use
 /// area.
-std::string wcs2string(const wcstring &input);
+std::string wcs2string(const imstring &input);
 std::string wcs2string(const wchar_t *in, size_t len);
 
 /// Like wcs2string, but appends to \p receiver instead of returning a new string.
@@ -467,7 +467,7 @@ ssize_t read_loop(int fd, void *buff, size_t count);
 /// \return The escaped string
 wcstring escape_string(const wchar_t *in, escape_flags_t flags,
                        escape_string_style_t style = STRING_STYLE_SCRIPT);
-wcstring escape_string(const wcstring &in, escape_flags_t flags,
+wcstring escape_string(const imstring &in, escape_flags_t flags,
                        escape_string_style_t style = STRING_STYLE_SCRIPT);
 
 /// Escape a string so that it may be inserted into a double-quoted string.
@@ -497,7 +497,7 @@ bool unescape_string_in_place(wcstring *str, unescape_flags_t escape_special);
 bool unescape_string(const wchar_t *input, wcstring *output, unescape_flags_t escape_special,
                      escape_string_style_t style = STRING_STYLE_SCRIPT);
 
-bool unescape_string(const wcstring &input, wcstring *output, unescape_flags_t escape_special,
+bool unescape_string(const imstring &input, wcstring *output, unescape_flags_t escape_special,
                      escape_string_style_t style = STRING_STYLE_SCRIPT);
 
 /// Write the given paragraph of output, redoing linebreaks to fit \p termsize.
@@ -571,9 +571,9 @@ void redirect_tty_output();
 std::string get_path_to_tmp_dir();
 
 bool valid_var_name_char(wchar_t chr);
-bool valid_var_name(const wcstring &str);
+bool valid_var_name(const imstring &str);
 bool valid_var_name(const wchar_t *str);
-bool valid_func_name(const wcstring &str);
+bool valid_func_name(const imstring &str);
 
 // Return values (`$status` values for fish scripts) for various situations.
 enum {
