@@ -211,7 +211,7 @@ maybe_t<wcstring> expand_abbreviation(const wcstring &src, const environment_t &
 
 /// \return a snapshot of all abbreviations as a map abbreviation->expansion.
 /// The abbreviations are unescaped, i.e. they may not be valid variable identifiers (#6166).
-std::map<wcstring, wcstring> get_abbreviations(const environment_t &vars);
+std::map<imstring, wcstring> get_abbreviations(const environment_t &vars);
 
 // Terrible hacks
 bool fish_xdm_login_hack_hack_hack_hack(std::vector<std::string> *cmds, int argc,

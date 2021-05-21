@@ -804,7 +804,7 @@ struct compiled_regex_t {
     pcre2_match_data *match{nullptr};
 
     // The list of named capture groups.
-    wcstring_list_t capture_group_names;
+    imstring_list_t capture_group_names;
 
     compiled_regex_t(const wchar_t *argv0, const wcstring &pattern, bool ignore_case,
                      io_streams_t &streams) {
@@ -839,7 +839,7 @@ struct compiled_regex_t {
     }
 
     /// \return the list of capture group names from \p code.
-    static wcstring_list_t get_capture_group_names(const pcre2_code *code) {
+    static imstring_list_t get_capture_group_names(const pcre2_code *code) {
         PCRE2_SPTR name_table;
         uint32_t name_entry_size;
         uint32_t name_count;
@@ -875,7 +875,7 @@ struct compiled_regex_t {
         };
 
         const auto *names = reinterpret_cast<const name_table_entry_t *>(name_table);
-        wcstring_list_t result;
+        imstring_list_t result;
         result.reserve(name_count);
         for (uint32_t i = 0; i < name_count; ++i) {
             const auto &name_entry = names[i * name_entry_size];
@@ -887,7 +887,7 @@ struct compiled_regex_t {
     /// Check if our capture group names are valid. If any are invalid then report an error to \p
     /// streams. \return true if all names are valid.
     bool validate_capture_group_names(io_streams_t &streams) {
-        for (const wcstring &name : this->capture_group_names) {
+        for (const imstring &name : this->capture_group_names) {
             if (env_var_t::flags_for(name.c_str()) & env_var_t::flag_read_only) {
                 // Modification of read-only variables is not allowed
                 streams.err.append_format(
@@ -974,7 +974,7 @@ class pcre2_matcher_t final : public string_matcher_t {
 
     class regex_importer_t {
        private:
-        std::map<wcstring, wcstring_list_t> matches_;
+        std::map<imstring, wcstring_list_t> matches_;
         env_stack_t &vars_;
         const wcstring &haystack_;
         const compiled_regex_t &regex_;
@@ -985,7 +985,7 @@ class pcre2_matcher_t final : public string_matcher_t {
         regex_importer_t(env_stack_t &vars, const wcstring &haystack, const compiled_regex_t &regex,
                          bool all_flag)
             : vars_(vars), haystack_(haystack), regex_(regex), all_flag_(all_flag) {
-            for (const wcstring &name : regex_.capture_group_names) {
+            for (const imstring &name : regex_.capture_group_names) {
                 matches_.emplace(name, wcstring_list_t{});
             }
         }
@@ -1038,7 +1038,7 @@ class pcre2_matcher_t final : public string_matcher_t {
         ~regex_importer_t() {
             if (!do_import_) return;
             for (auto &kv : matches_) {
-                const wcstring &name = kv.first;
+                const imstring &name = kv.first;
                 wcstring_list_t &value = kv.second;
                 vars_.set(name, ENV_DEFAULT, std::move(value));
             }
@@ -1119,7 +1119,7 @@ class pcre2_matcher_t final : public string_matcher_t {
     /// Override to clear our capture variables if we had no match.
     void clear_capture_vars() override {
         assert(!imported_vars && "Should not already have imported variables");
-        for (const wcstring &name : regex.capture_group_names) {
+        for (const imstring &name : regex.capture_group_names) {
             parser.vars().set_empty(name, ENV_DEFAULT);
         }
     }

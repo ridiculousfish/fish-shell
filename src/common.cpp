@@ -408,7 +408,7 @@ wcstring str2wcstring(const std::string &in, size_t len) {
     return str2wcs_internal(in.data(), len);
 }
 
-std::string wcs2string(const wcstring &input) { return wcs2string(input.data(), input.size()); }
+std::string wcs2string(const imstring &input) { return wcs2string(input.data(), input.size()); }
 
 std::string wcs2string(const wchar_t *in, size_t len) {
     if (len == 0) return std::string{};
@@ -775,7 +775,7 @@ wcstring reformat_for_screen(const wcstring &msg, const termsize_t &termsize) {
 }
 
 /// Escape a string in a fashion suitable for using as a URL. Store the result in out_str.
-static void escape_string_url(const wcstring &in, wcstring &out) {
+static void escape_string_url(const imstring &in, wcstring &out) {
     const std::string narrow = wcs2string(in);
     for (auto &c1 : narrow) {
         // This silliness is so we get the correct result whether chars are signed or unsigned.
@@ -826,7 +826,7 @@ static bool unescape_string_url(const wchar_t *in, wcstring *out) {
 }
 
 /// Escape a string in a fashion suitable for using as a fish var name. Store the result in out_str.
-static void escape_string_var(const wcstring &in, wcstring &out) {
+static void escape_string_var(const imstring &in, wcstring &out) {
     bool prev_was_hex_encoded = false;
     const std::string narrow = wcs2string(in);
     for (auto c1 : narrow) {
@@ -1064,7 +1064,7 @@ static void escape_string_script(const wchar_t *orig_in, size_t in_len, wcstring
 /// characters reserved by PCRE2 are escaped, i.e. it relies on fish's automatic escaping
 /// of subshell output in subsequent concatenation or for use as an argument.
 /// \param in is the raw string to be searched for literally when substituted in a PCRE2 expression.
-static wcstring escape_string_pcre2(const wcstring &in) {
+static wcstring escape_string_pcre2(const imstring &in) {
     wcstring out;
     out.reserve(in.size() * 1.3);  // a wild guess
 
@@ -1123,7 +1123,7 @@ wcstring escape_string(const wchar_t *in, escape_flags_t flags, escape_string_st
     return result;
 }
 
-wcstring escape_string(const wcstring &in, escape_flags_t flags, escape_string_style_t style) {
+wcstring escape_string(const imstring &in, escape_flags_t flags, escape_string_style_t style) {
     wcstring result;
 
     switch (style) {
@@ -1628,7 +1628,7 @@ bool unescape_string(const wchar_t *input, wcstring *output, unescape_flags_t es
     return success;
 }
 
-bool unescape_string(const wcstring &input, wcstring *output, unescape_flags_t escape_special,
+bool unescape_string(const imstring &input, wcstring *output, unescape_flags_t escape_special,
                      escape_string_style_t style) {
     bool success = false;
     switch (style) {
@@ -1884,7 +1884,7 @@ void redirect_tty_output() {
 bool valid_var_name_char(wchar_t chr) { return fish_iswalnum(chr) || chr == L'_'; }
 
 /// Test if the given string is a valid variable name.
-bool valid_var_name(const wcstring &str) {
+bool valid_var_name(const imstring &str) {
     // Note do not use c_str(), we want to fail on embedded nul bytes.
     return !str.empty() && std::all_of(str.begin(), str.end(), valid_var_name_char);
 }

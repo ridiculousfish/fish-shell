@@ -98,6 +98,6 @@ bool paths_are_same_file(const wcstring &path1, const wcstring &path2);
 wcstring path_apply_working_directory(const wcstring &path, const wcstring &working_directory);
 
 /// Appends a path component, with a / if necessary.
-void append_path_component(wcstring &path, const wcstring &component);
+void append_path_component(wcstring &path, const imstring &component);
 
 #endif

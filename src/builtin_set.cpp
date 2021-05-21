@@ -477,7 +477,7 @@ static int builtin_set_list(const wchar_t *cmd, set_cmd_opts_t &opts, int argc,
     UNUSED(parser);
 
     bool names_only = opts.list;
-    wcstring_list_t names = parser.vars().get_names(compute_scope(opts));
+    imstring_list_t names = parser.vars().get_names(compute_scope(opts));
     sort(names.begin(), names.end());
 
     for (const auto &key : names) {
@@ -599,7 +599,7 @@ static int builtin_set_show(const wchar_t *cmd, const set_cmd_opts_t &opts, int 
     UNUSED(opts);
     const auto &vars = parser.vars();
     if (argc == 0) {  // show all vars
-        wcstring_list_t names = parser.vars().get_names(ENV_USER);
+        imstring_list_t names = parser.vars().get_names(ENV_USER);
         sort(names.begin(), names.end());
         for (const auto &name : names) {
             if (name == L"history") continue;

@@ -104,7 +104,7 @@ parser_t &parser_t::principal_parser() {
     return *principal;
 }
 
-int parser_t::set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
+int parser_t::set_var_and_fire(const imstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
     std::vector<event_t> events;
     int res = vars().set(key, mode, std::move(vals), &events);
     for (const auto &evt : events) {
@@ -113,13 +113,13 @@ int parser_t::set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstr
     return res;
 }
 
-int parser_t::set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring val) {
+int parser_t::set_var_and_fire(const imstring &key, env_mode_flags_t mode, wcstring val) {
     wcstring_list_t vals;
     vals.push_back(std::move(val));
     return set_var_and_fire(key, mode, std::move(vals));
 }
 
-int parser_t::set_empty_var_and_fire(const wcstring &key, env_mode_flags_t mode) {
+int parser_t::set_empty_var_and_fire(const imstring &key, env_mode_flags_t mode) {
     return set_var_and_fire(key, mode, wcstring_list_t{});
 }
 

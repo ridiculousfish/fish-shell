@@ -29,11 +29,11 @@ struct function_properties_t {
     const ast::block_statement_t *func_node;
 
     /// List of all named arguments for this function.
-    wcstring_list_t named_arguments;
+    imstring_list_t named_arguments;
 
     /// Mapping of all variables that were inherited from the function definition scope to their
     /// values.
-    std::map<wcstring, wcstring_list_t> inherit_vars;
+    std::map<imstring, wcstring_list_t> inherit_vars;
 
     /// Set to true if invoking this function shadows the variables of the underlying function.
     bool shadow_scope{true};
@@ -42,45 +42,45 @@ struct function_properties_t {
 using function_properties_ref_t = std::shared_ptr<const function_properties_t>;
 
 /// Add a function.
-void function_add(wcstring name, wcstring description, function_properties_ref_t props,
+void function_add(const imstring &name, wcstring description, function_properties_ref_t props,
                   const wchar_t *filename);
 
 /// Remove the function with the specified name.
-void function_remove(const wcstring &name);
+void function_remove(const imstring &name);
 
 /// Returns the properties for a function, or nullptr if none. This does not trigger autoloading.
-function_properties_ref_t function_get_properties(const wcstring &name);
+function_properties_ref_t function_get_properties(const imstring &name);
 
 /// Returns by reference the definition of the function with the name \c name. Returns true if
 /// successful, false if no function with the given name exists.
 /// This does not trigger autoloading.
-bool function_get_definition(const wcstring &name, wcstring &out_definition);
+bool function_get_definition(const imstring &name, wcstring &out_definition);
 
 /// Returns by reference the description of the function with the name \c name. Returns true if the
 /// function exists and has a nonempty description, false if it does not.
 /// This does not trigger autoloading.
-bool function_get_desc(const wcstring &name, wcstring &out_desc);
+bool function_get_desc(const imstring &name, wcstring &out_desc);
 
 /// Sets the description of the function with the name \c name.
-void function_set_desc(const wcstring &name, const wcstring &desc, parser_t &parser);
+void function_set_desc(const imstring &name, const imstring &desc, parser_t &parser);
 
 /// Returns true if the function with the name name exists.
 /// This may autoload.
-int function_exists(const wcstring &cmd, parser_t &parser);
+int function_exists(const imstring &cmd, parser_t &parser);
 
 /// Attempts to load a function if not yet loaded. This is used by the completion machinery.
-void function_load(const wcstring &cmd, parser_t &parser);
+void function_load(const imstring &cmd, parser_t &parser);
 
 /// Returns true if the function with the name name exists, without triggering autoload.
-int function_exists_no_autoload(const wcstring &cmd);
+int function_exists_no_autoload(const imstring &cmd);
 
 /// Returns all function names.
 ///
 /// \param get_hidden whether to include hidden functions, i.e. ones starting with an underscore.
-wcstring_list_t function_get_names(int get_hidden);
+imstring_list_t function_get_names(bool get_hidden);
 
 /// Returns true if the function was autoloaded.
-bool function_is_autoloaded(const wcstring &name);
+bool function_is_autoloaded(const imstring &name);
 
 /// Returns tha absolute path of the file where the specified function was defined. Returns 0 if the
 /// file was defined on the commandline.
@@ -89,18 +89,18 @@ bool function_is_autoloaded(const wcstring &name);
 /// defined.
 ///
 /// This returns an intern'd string.
-const wchar_t *function_get_definition_file(const wcstring &name);
+const wchar_t *function_get_definition_file(const imstring &name);
 
 /// Returns the linenumber where the definition of the specified function started.
 /// This does not trigger autoloading.
-int function_get_definition_lineno(const wcstring &name);
+int function_get_definition_lineno(const imstring &name);
 
 /// Creates a new function using the same definition as the specified function. Returns true if copy
 /// is successful.
-bool function_copy(const wcstring &name, const wcstring &new_name);
+bool function_copy(const imstring &name, const imstring &new_name);
 
 /// Observes that fish_function_path has changed.
 void function_invalidate_path();
 
-wcstring functions_def(const wcstring &name);
+wcstring functions_def(const imstring &name);
 #endif

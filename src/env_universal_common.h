@@ -17,13 +17,13 @@
 /// Callback data, reflecting a change in universal variables.
 struct callback_data_t {
     // The name of the variable.
-    wcstring key;
+    imstring key;
 
     // The value of the variable, or none if it is erased.
     maybe_t<wcstring> val;
 
     /// Construct from a key and maybe a value.
-    callback_data_t(wcstring k, maybe_t<wcstring> v) : key(std::move(k)), val(std::move(v)) {}
+    callback_data_t(imstring k, maybe_t<wcstring> v) : key(std::move(k)), val(std::move(v)) {}
 
     /// \return whether this callback represents an erased variable.
     bool is_erase() const { return !val.has_value(); }
@@ -44,19 +44,19 @@ class env_universal_t {
     env_universal_t() = default;
 
     // Get the value of the variable with the specified name.
-    maybe_t<env_var_t> get(const wcstring &name) const;
+    maybe_t<env_var_t> get(const imstring &name) const;
 
     // \return flags from the variable with the given name.
-    maybe_t<env_var_t::env_var_flags_t> get_flags(const wcstring &name) const;
+    maybe_t<env_var_t::env_var_flags_t> get_flags(const imstring &name) const;
 
     // Sets a variable.
-    void set(const wcstring &key, const env_var_t &var);
+    void set(const imstring &key, const env_var_t &var);
 
     // Removes a variable. Returns true if it was found, false if not.
-    bool remove(const wcstring &key);
+    bool remove(const imstring &key);
 
     // Gets variable names.
-    wcstring_list_t get_names(bool show_exported, bool show_unexported) const;
+    imstring_list_t get_names(bool show_exported, bool show_unexported) const;
 
     /// Get a view on the universal variable table.
     const var_table_t &get_table() const { return vars; }
@@ -100,7 +100,7 @@ class env_universal_t {
 
     // Keys that have been modified, and need to be written. A value here that is not present in
     // vars indicates a deleted value.
-    std::unordered_set<wcstring> modified;
+    std::unordered_set<imstring> modified;
 
     // A generation count which is incremented every time an exported variable is modified.
     uint64_t export_generation{1};

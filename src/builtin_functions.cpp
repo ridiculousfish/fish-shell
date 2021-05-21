@@ -279,14 +279,14 @@ maybe_t<int> builtin_functions(parser_t &parser, io_streams_t &streams, const wc
     }
 
     if (opts.list || argc == optind) {
-        wcstring_list_t names = function_get_names(opts.show_hidden);
+        imstring_list_t names = function_get_names(opts.show_hidden);
         std::sort(names.begin(), names.end());
         bool is_screen = !streams.out_is_redirected && isatty(STDOUT_FILENO);
         if (is_screen) {
             wcstring buff;
             for (const auto &name : names) {
-                buff.append(name);
-                buff.append(L", ");
+                buff += name;
+                buff += L", ";
             }
             if (names.size() > 0) {
                 // Trim trailing ", "

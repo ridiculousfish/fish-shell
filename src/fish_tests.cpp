@@ -1967,13 +1967,13 @@ static void test_escape_sequences() {
 class test_lru_t : public lru_cache_t<test_lru_t, int> {
    public:
     static constexpr size_t test_capacity = 16;
-    using value_type = std::pair<wcstring, int>;
+    using value_type = std::pair<imstring, int>;
 
     test_lru_t() : lru_cache_t<test_lru_t, int>(test_capacity) {}
 
     std::vector<value_type> evicted;
 
-    void entry_was_evicted(const wcstring &key, int val) { evicted.push_back({key, val}); }
+    void entry_was_evicted(const imstring &key, int val) { evicted.push_back({key, val}); }
 
     std::vector<value_type> values() const {
         std::vector<value_type> result;
@@ -1996,8 +1996,8 @@ static void test_lru() {
     say(L"Testing LRU cache");
 
     test_lru_t cache;
-    std::vector<std::pair<wcstring, int>> expected_evicted;
-    std::vector<std::pair<wcstring, int>> expected_values;
+    std::vector<std::pair<imstring, int>> expected_evicted;
+    std::vector<std::pair<imstring, int>> expected_values;
     int total_nodes = 20;
     for (int i = 0; i < total_nodes; i++) {
         do_test(cache.size() == size_t(std::min(i, 16)));
@@ -2045,9 +2045,9 @@ static void test_lru() {
 
 /// An environment built around an std::map.
 struct test_environment_t : public environment_t {
-    std::map<wcstring, wcstring> vars;
+    std::map<imstring, wcstring> vars;
 
-    virtual maybe_t<env_var_t> get(const wcstring &key,
+    virtual maybe_t<env_var_t> get(const imstring &key,
                                    env_mode_flags_t mode = ENV_DEFAULT) const override {
         UNUSED(mode);
         auto iter = vars.find(key);
@@ -2057,9 +2057,9 @@ struct test_environment_t : public environment_t {
         return none();
     }
 
-    wcstring_list_t get_names(int flags) const override {
+    imstring_list_t get_names(int flags) const override {
         UNUSED(flags);
-        wcstring_list_t result;
+        imstring_list_t result;
         for (const auto &kv : vars) {
             result.push_back(kv.first);
         }
@@ -2069,7 +2069,7 @@ struct test_environment_t : public environment_t {
 
 /// A test environment that knows about PWD.
 struct pwd_environment_t : public test_environment_t {
-    virtual maybe_t<env_var_t> get(const wcstring &key,
+    virtual maybe_t<env_var_t> get(const imstring &key,
                                    env_mode_flags_t mode = ENV_DEFAULT) const override {
         if (key == L"PWD") {
             return env_var_t{wgetcwd(), 0};
@@ -2077,7 +2077,7 @@ struct pwd_environment_t : public test_environment_t {
         return test_environment_t::get(key, mode);
     }
 
-    wcstring_list_t get_names(int flags) const override {
+    imstring_list_t get_names(int flags) const override {
         auto res = test_environment_t::get_names(flags);
         res.clear();
         if (std::count(res.begin(), res.end(), L"PWD") == 0) {
@@ -3067,10 +3067,10 @@ struct autoload_tester_t {
         do_test(autoload.resolve_command(L"file1", paths));
         do_test(!autoload.resolve_command(L"file1", paths));
         do_test(autoload.autoload_in_progress(L"file1"));
-        do_test(autoload.get_autoloaded_commands() == wcstring_list_t{L"file1"});
+        do_test(autoload.get_autoloaded_commands() == imstring_list_t{L"file1"});
         autoload.mark_autoload_finished(L"file1");
         do_test(!autoload.autoload_in_progress(L"file1"));
-        do_test(autoload.get_autoloaded_commands() == wcstring_list_t{L"file1"});
+        do_test(autoload.get_autoloaded_commands() == imstring_list_t{L"file1"});
 
         do_test(!autoload.resolve_command(L"file1", paths));
         do_test(!autoload.resolve_command(L"nothing", paths));
@@ -3078,7 +3078,7 @@ struct autoload_tester_t {
         do_test(!autoload.resolve_command(L"file2", paths));
         autoload.mark_autoload_finished(L"file2");
         do_test(!autoload.resolve_command(L"file2", paths));
-        do_test((autoload.get_autoloaded_commands() == wcstring_list_t{L"file1", L"file2"}));
+        do_test((autoload.get_autoloaded_commands() == imstring_list_t{L"file1", L"file2"}));
 
         autoload.clear();
         do_test(autoload.resolve_command(L"file1", paths));
@@ -3109,13 +3109,13 @@ static void test_complete() {
     say(L"Testing complete");
 
     struct test_complete_vars_t : environment_t {
-        wcstring_list_t get_names(int flags) const override {
+        imstring_list_t get_names(int flags) const override {
             UNUSED(flags);
             return {L"Foo1", L"Foo2",  L"Foo3",   L"Bar1",   L"Bar2",
                     L"Bar3", L"alpha", L"ALPHA!", L"gamma1", L"GAMMA2"};
         }
 
-        maybe_t<env_var_t> get(const wcstring &key,
+        maybe_t<env_var_t> get(const imstring &key,
                                env_mode_flags_t mode = ENV_DEFAULT) const override {
             UNUSED(mode);
             if (key == L"PWD") {
@@ -3827,7 +3827,7 @@ static int test_universal_helper(int x) {
     env_universal_t uvars;
     uvars.initialize_at_path(callbacks, UVARS_TEST_PATH);
     for (int j = 0; j < UVARS_PER_THREAD; j++) {
-        const wcstring key = format_string(L"key_%d_%d", x, j);
+        const imstring key = format_string(L"key_%d_%d", x, j);
         const wcstring val = format_string(L"val_%d_%d", x, j);
         uvars.set(key, env_var_t{val, 0});
         bool synced = uvars.sync(callbacks);
@@ -3860,7 +3860,7 @@ static void test_universal() {
     uvars.initialize_at_path(callbacks, UVARS_TEST_PATH);
     for (int i = 0; i < threads; i++) {
         for (int j = 0; j < UVARS_PER_THREAD; j++) {
-            const wcstring key = format_string(L"key_%d_%d", i, j);
+            imstring key = format_string(L"key_%d_%d", i, j);
             maybe_t<env_var_t> expected_val;
             if (j == 0) {
                 expected_val = none();

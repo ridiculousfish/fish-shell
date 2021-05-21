@@ -27,13 +27,13 @@ struct autoload_tester_t;
 /// it.
 class autoload_t {
     /// The environment variable whose paths we observe.
-    const wcstring env_var_name_;
+    const imstring env_var_name_;
 
     /// A map from command to the files we have autoloaded.
-    std::unordered_map<wcstring, file_id_t> autoloaded_files_;
+    std::unordered_map<imstring, file_id_t> autoloaded_files_;
 
     /// The list of commands that we are currently autoloading.
-    std::unordered_set<wcstring> current_autoloading_;
+    std::unordered_set<imstring> current_autoloading_;
 
     /// The autoload cache.
     /// This is a unique_ptr because want to change it if the value of our environment variable
@@ -46,13 +46,13 @@ class autoload_t {
 
     /// Like resolve_autoload(), but accepts the paths directly.
     /// This is exposed for testing.
-    maybe_t<wcstring> resolve_command(const wcstring &cmd, const wcstring_list_t &paths);
+    maybe_t<wcstring> resolve_command(const imstring &cmd, const wcstring_list_t &paths);
 
     friend autoload_tester_t;
 
    public:
     /// Construct an autoloader that loads from the paths given by \p env_var_name.
-    explicit autoload_t(wcstring env_var_name);
+    explicit autoload_t(const imstring &env_var_name);
 
     autoload_t(autoload_t &&);
     ~autoload_t();
@@ -65,32 +65,32 @@ class autoload_t {
     /// After returning a path, the command is marked in-progress until the caller calls
     /// mark_autoload_finished() with the same command. Note this does not actually execute any
     /// code; it is the caller's responsibility to load the file.
-    maybe_t<wcstring> resolve_command(const wcstring &cmd, const environment_t &env);
+    maybe_t<wcstring> resolve_command(const imstring &cmd, const environment_t &env);
 
     /// Helper to actually perform an autoload.
     /// This is a static function because it executes fish script, and so must be called without
     /// holding any particular locks.
-    static void perform_autoload(const wcstring &path, parser_t &parser);
+    static void perform_autoload(const imstring &path, parser_t &parser);
 
     /// Mark that a command previously returned from path_to_autoload is finished autoloading.
-    void mark_autoload_finished(const wcstring &cmd) {
+    void mark_autoload_finished(const imstring &cmd) {
         size_t amt = current_autoloading_.erase(cmd);
         assert(amt > 0 && "cmd was not being autoloaded");
         (void)amt;
     }
 
     /// \return whether a command is currently being autoloaded.
-    bool autoload_in_progress(const wcstring &cmd) const {
+    bool autoload_in_progress(const imstring &cmd) const {
         return current_autoloading_.count(cmd) > 0;
     }
 
     /// \return whether a command could potentially be autoloaded.
     /// This does not actually mark the command as being autoloaded.
-    bool can_autoload(const wcstring &cmd);
+    bool can_autoload(const imstring &cmd);
 
     /// \return the names of all commands that have been autoloaded. Note this includes "in-flight"
     /// commands.
-    wcstring_list_t get_autoloaded_commands() const;
+    imstring_list_t get_autoloaded_commands() const;
 
     /// Mark that all autoloaded files have been forgotten.
     /// Future calls to path_to_autoload() will return previously-returned paths.

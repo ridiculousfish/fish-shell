@@ -201,7 +201,7 @@ void event_add_handler(std::shared_ptr<event_handler_t> eh) {
     s_event_handlers.acquire()->push_back(std::move(eh));
 }
 
-void event_remove_function_handlers(const wcstring &name) {
+void event_remove_function_handlers(const imstring &name) {
     auto handlers = s_event_handlers.acquire();
     auto begin = handlers->begin(), end = handlers->end();
     handlers->erase(std::remove_if(begin, end,
@@ -211,7 +211,7 @@ void event_remove_function_handlers(const wcstring &name) {
                     end);
 }
 
-event_handler_list_t event_get_function_handlers(const wcstring &name) {
+event_handler_list_t event_get_function_handlers(const imstring &name) {
     auto handlers = s_event_handlers.acquire();
     event_handler_list_t result;
     for (const shared_ptr<event_handler_t> &eh : *handlers) {
@@ -297,7 +297,7 @@ static void event_fire_internal(parser_t &parser, const event_t &event) {
         // Construct a buffer to evaluate, starting with the function name and then all the
         // arguments.
         wcstring buffer = handler->function_name;
-        for (const wcstring &arg : event.arguments) {
+        for (const imstring &arg : event.arguments) {
             buffer.push_back(L' ');
             buffer.append(escape_string(arg, ESCAPE_ALL));
         }
@@ -480,12 +480,10 @@ void event_print(io_streams_t &streams, const wcstring &type_filter) {
     }
 }
 
-void event_fire_generic(parser_t &parser, const wchar_t *name, const wcstring_list_t *args) {
-    assert(name && "Null name");
-
+void event_fire_generic(parser_t &parser, const imstring &name, const imstring_list_t &args) {
     event_t ev(event_type_t::generic);
     ev.desc.str_param1 = name;
-    if (args) ev.arguments = *args;
+    ev.arguments = args;
     event_fire(parser, ev);
 }
 
@@ -508,7 +506,7 @@ event_description_t event_description_t::generic(wcstring str) {
 }
 
 // static
-event_t event_t::variable(wcstring name, wcstring_list_t args) {
+event_t event_t::variable(const imstring &name, imstring_list_t args) {
     event_t evt{event_type_t::variable};
     evt.desc.str_param1 = std::move(name);
     evt.arguments = std::move(args);

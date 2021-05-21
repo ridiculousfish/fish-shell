@@ -283,7 +283,7 @@ wcstring path_apply_working_directory(const wcstring &path, const wcstring &work
 static void maybe_issue_path_warning(const wcstring &which_dir, const wcstring &custom_error_msg,
                                      bool using_xdg, const wcstring &xdg_var, const wcstring &path,
                                      int saved_errno, env_stack_t &vars) {
-    wcstring warning_var_name = L"_FISH_WARNED_" + which_dir;
+    imstring warning_var_name = L"_FISH_WARNED_" + which_dir;
     if (vars.get(warning_var_name, ENV_GLOBAL | ENV_EXPORT)) {
         return;
     }
@@ -343,7 +343,7 @@ struct base_directory_t {
 /// Attempt to get a base directory, creating it if necessary. If a variable named \p xdg_var is
 /// set, use that directory; otherwise use the path \p non_xdg_homepath rooted in $HOME. \return the
 /// result; see the base_directory_t fields.
-static base_directory_t make_base_directory(const wcstring &xdg_var,
+static base_directory_t make_base_directory(const imstring &xdg_var,
                                             const wchar_t *non_xdg_homepath) {
     // The vars we fetch must be exported. Allowing them to be universal doesn't make sense and
     // allowing that creates a lock inversion that deadlocks the shell since we're called before
@@ -504,9 +504,9 @@ bool paths_are_same_file(const wcstring &path1, const wcstring &path2) {
     return false;
 }
 
-void append_path_component(wcstring &path, const wcstring &component) {
+void append_path_component(wcstring &path, const imstring &component) {
     if (path.empty() || component.empty()) {
-        path.append(component);
+        path += component;
     } else {
         size_t path_len = path.size();
         bool path_slash = path.at(path_len - 1) == L'/';
@@ -518,6 +518,6 @@ void append_path_component(wcstring &path, const wcstring &component) {
             // Too many slashes.
             path.erase(path_len - 1, 1);
         }
-        path.append(component);
+        path += component;
     }
 }

@@ -21,19 +21,19 @@
 
 /// Wide character version of opendir(). Note that opendir() is guaranteed to set close-on-exec by
 /// POSIX (hooray).
-DIR *wopendir(const wcstring &name);
+DIR *wopendir(const imstring &name);
 
 /// Wide character version of stat().
-int wstat(const wcstring &file_name, struct stat *buf);
+int wstat(const imstring &file_name, struct stat *buf);
 
 /// Wide character version of lstat().
-int lwstat(const wcstring &file_name, struct stat *buf);
+int lwstat(const imstring &file_name, struct stat *buf);
 
 /// Wide character version of access().
-int waccess(const wcstring &file_name, int mode);
+int waccess(const imstring &file_name, int mode);
 
 /// Wide character version of unlink().
-int wunlink(const wcstring &file_name);
+int wunlink(const imstring &file_name);
 
 /// Wide character version of perror().
 void wperror(const wchar_t *s);
@@ -49,24 +49,24 @@ wcstring wgetcwd();
 
 /// Wide character version of realpath function.
 /// \returns the canonicalized path, or none if the path is invalid.
-maybe_t<wcstring> wrealpath(const wcstring &pathname);
+maybe_t<wcstring> wrealpath(const imstring &pathname);
 
 /// Given an input path, "normalize" it:
 /// 1. Collapse multiple /s into a single /, except maybe at the beginning.
 /// 2. .. goes up a level.
 /// 3. Remove /./ in the middle.
-wcstring normalize_path(const wcstring &path, bool allow_leading_double_slashes = true);
+wcstring normalize_path(const imstring &path, bool allow_leading_double_slashes = true);
 
 /// Given an input path \p path and a working directory \p wd, do a "normalizing join" in a way
 /// appropriate for cd. That is, return effectively wd + path while resolving leading ../s from
 /// path. The intent here is to allow 'cd' out of a directory which may no longer exist, without
 /// allowing 'cd' into a directory that may not exist; see #5341.
-wcstring path_normalize_for_cd(const wcstring &wd, const wcstring &path);
+wcstring path_normalize_for_cd(const imstring &wd, const imstring &path);
 
 /// Wide character version of readdir().
 bool wreaddir(DIR *dir, wcstring &out_name);
-bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, wcstring &out_name,
-                        bool *out_is_dir);
+
+bool wreaddir_resolving(DIR *dir, const imstring &dir_path, wcstring &out_name, bool *out_is_dir);
 
 /// Like wreaddir, but skip items that are known to not be directories. If this requires a stat
 /// (i.e. the file is a symlink), then return it. Note that this does not guarantee that everything
@@ -84,13 +84,13 @@ std::wstring wbasename(std::wstring path);
 /// gettext function, wgettext takes care of setting the correct domain, etc. using the textdomain
 /// and bindtextdomain functions. This should probably be moved out of wgettext, so that wgettext
 /// will be nothing more than a wrapper around gettext, like all other functions in this file.
-const wcstring &wgettext(const wchar_t *in);
+const imstring &wgettext(const imstring &in);
 
 /// Wide character version of mkdir.
-int wmkdir(const wcstring &name, int mode);
+int wmkdir(const imstring &name, int mode);
 
 /// Wide character version of rename.
-int wrename(const wcstring &oldName, const wcstring &newv);
+int wrename(const imstring &oldName, const imstring &newv);
 
 /// Write a wide string to a file descriptor. This avoids doing any additional allocation.
 /// This does NOT retry on EINTR or EAGAIN, it simply returns.
@@ -99,7 +99,7 @@ int wrename(const wcstring &oldName, const wcstring &newv);
 ssize_t wwrite_to_fd(const wchar_t *input, size_t len, int fd);
 
 /// Variant of above that accepts a wcstring.
-inline ssize_t wwrite_to_fd(const wcstring &s, int fd) {
+inline ssize_t wwrite_to_fd(const imstring &s, int fd) {
     return wwrite_to_fd(s.c_str(), s.size(), fd);
 }
 
@@ -120,7 +120,7 @@ int fish_iswalnum(wint_t wc);
 int fish_iswgraph(wint_t wc);
 
 int fish_wcswidth(const wchar_t *str);
-int fish_wcswidth(const wcstring &str);
+int fish_wcswidth(const imstring &str);
 
 // returns an immortal locale_t corresponding to the C locale.
 locale_t fish_c_locale();
@@ -164,7 +164,7 @@ struct dir_t {
     DIR *dir;
     bool valid() const;
     bool read(wcstring &name) const;
-    dir_t(const wcstring &path);
+    dir_t(const imstring &path);
     ~dir_t();
 };
 
@@ -184,7 +184,7 @@ struct hash<file_id_t> {
 #endif
 
 file_id_t file_id_for_fd(int fd);
-file_id_t file_id_for_path(const wcstring &path);
+file_id_t file_id_for_path(const imstring &path);
 file_id_t file_id_for_path(const std::string &path);
 
 extern const file_id_t kInvalidFileID;

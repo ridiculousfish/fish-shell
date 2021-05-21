@@ -18,13 +18,13 @@ using completion_list_t = std::vector<completion_t>;
 /// Data structure to describe a builtin.
 struct builtin_data_t {
     // Name of the builtin.
-    const wchar_t *name;
+    imstring name;
     // Function pointer to the builtin implementation.
     maybe_t<int> (*func)(parser_t &parser, io_streams_t &streams, const wchar_t **argv);
     // Description of what the builtin does.
-    const wchar_t *desc;
+    imstring desc;
 
-    bool operator<(const wcstring &) const;
+    bool operator<(const imstring &) const;
     bool operator<(const builtin_data_t *) const;
 };
 
@@ -86,9 +86,9 @@ bool builtin_exists(const wcstring &cmd);
 
 proc_status_t builtin_run(parser_t &parser, const wcstring_list_t &argv, io_streams_t &streams);
 
-wcstring_list_t builtin_get_names();
+imstring_list_t builtin_get_names();
 void builtin_get_names(completion_list_t *list);
-const wchar_t *builtin_get_desc(const wcstring &name);
+const wchar_t *builtin_get_desc(const imstring &name);
 
 wcstring builtin_help_get(parser_t &parser, const wchar_t *cmd);
 

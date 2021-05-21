@@ -163,9 +163,9 @@ static wcstring full_escape(const wcstring &in) {
 }
 
 /// Converts input to UTF-8 and appends it to receiver, using storage as temp storage.
-static bool append_utf8(const wcstring &input, std::string *receiver, std::string *storage) {
+static bool append_utf8(const imstring &input, std::string *receiver, std::string *storage) {
     bool result = false;
-    if (wchar_to_utf8_string(input, storage)) {
+    if (wchar_to_utf8_string(input.to_wcstring(), storage)) {
         receiver->append(*storage);
         result = true;
     }
@@ -174,7 +174,7 @@ static bool append_utf8(const wcstring &input, std::string *receiver, std::strin
 
 /// Creates a file entry like "SET fish_color_cwd:FF0". Appends the result to *result (as UTF8).
 /// Returns true on success. storage may be used for temporary storage, to avoid allocations.
-static bool append_file_entry(env_var_t::env_var_flags_t flags, const wcstring &key_in,
+static bool append_file_entry(env_var_t::env_var_flags_t flags, const imstring &key_in,
                               const wcstring &val_in, std::string *result, std::string *storage) {
     namespace f3 = fish3_uvars;
     assert(storage != nullptr);
@@ -252,13 +252,13 @@ static wcstring encode_serialized(const wcstring_list_t &vals) {
     return join_strings(vals, UVAR_ARRAY_SEP);
 }
 
-maybe_t<env_var_t> env_universal_t::get(const wcstring &name) const {
+maybe_t<env_var_t> env_universal_t::get(const imstring &name) const {
     auto where = vars.find(name);
     if (where != vars.end()) return where->second;
     return none();
 }
 
-maybe_t<env_var_t::env_var_flags_t> env_universal_t::get_flags(const wcstring &name) const {
+maybe_t<env_var_t::env_var_flags_t> env_universal_t::get_flags(const imstring &name) const {
     auto where = vars.find(name);
     if (where != vars.end()) {
         return where->second.get_flags();
@@ -266,7 +266,7 @@ maybe_t<env_var_t::env_var_flags_t> env_universal_t::get_flags(const wcstring &n
     return none();
 }
 
-void env_universal_t::set(const wcstring &key, const env_var_t &var) {
+void env_universal_t::set(const imstring &key, const env_var_t &var) {
     bool new_entry = vars.count(key) == 0;
     env_var_t &entry = vars[key];
     if (new_entry || entry != var) {
@@ -276,7 +276,7 @@ void env_universal_t::set(const wcstring &key, const env_var_t &var) {
     }
 }
 
-bool env_universal_t::remove(const wcstring &key) {
+bool env_universal_t::remove(const imstring &key) {
     auto iter = this->vars.find(key);
     if (iter != this->vars.end()) {
         if (iter->second.exports()) export_generation += 1;
@@ -287,10 +287,10 @@ bool env_universal_t::remove(const wcstring &key) {
     return false;
 }
 
-wcstring_list_t env_universal_t::get_names(bool show_exported, bool show_unexported) const {
-    wcstring_list_t result;
+imstring_list_t env_universal_t::get_names(bool show_exported, bool show_unexported) const {
+    imstring_list_t result;
     for (const auto &kv : vars) {
-        const wcstring &key = kv.first;
+        const imstring &key = kv.first;
         const env_var_t &var = kv.second;
         if ((var.exports() && show_exported) || (!var.exports() && show_unexported)) {
             result.push_back(key);
@@ -305,7 +305,7 @@ void env_universal_t::generate_callbacks_and_update_exports(const var_table_t &n
                                                             callback_data_list_t &callbacks) {
     // Construct callbacks for erased values.
     for (const auto &kv : this->vars) {
-        const wcstring &key = kv.first;
+        const imstring &key = kv.first;
         // Skip modified values.
         if (this->modified.count(key)) {
             continue;
@@ -320,7 +320,7 @@ void env_universal_t::generate_callbacks_and_update_exports(const var_table_t &n
 
     // Construct callbacks for newly inserted or changed values.
     for (const auto &kv : new_vars) {
-        const wcstring &key = kv.first;
+        const imstring &key = kv.first;
 
         // Skip modified values.
         if (this->modified.find(key) != this->modified.end()) {
@@ -418,7 +418,7 @@ std::string env_universal_t::serialize_with_vars(const var_table_t &vars) {
 
     // Preserve legacy behavior by sorting the values first
     using env_pair_t =
-        std::pair<std::reference_wrapper<const wcstring>, std::reference_wrapper<const env_var_t>>;
+        std::pair<std::reference_wrapper<const imstring>, std::reference_wrapper<const env_var_t>>;
     std::vector<env_pair_t> cloned(vars.begin(), vars.end());
     std::sort(cloned.begin(), cloned.end(), [](const env_pair_t &p1, const env_pair_t &p2) {
         return p1.first.get() < p2.first.get();
@@ -427,7 +427,7 @@ std::string env_universal_t::serialize_with_vars(const var_table_t &vars) {
     for (const auto &kv : cloned) {
         // Append the entry. Note that append_file_entry may fail, but that only affects one
         // variable; soldier on.
-        const wcstring &key = kv.first;
+        const imstring &key = kv.first;
         const env_var_t &var = kv.second;
         append_file_entry(var.get_flags(), key, encode_serialized(var.as_list()), &contents,
                           &storage);
@@ -841,7 +841,7 @@ bool env_universal_t::populate_1_variable(const wchar_t *input, env_var_t::env_v
     // Parse out the key and write into the map.
     storage->assign(str, colon - str);
     const wcstring &key = *storage;
-    (*vars)[key] = std::move(var);
+    (*vars)[imstring(key)] = std::move(var);
     return true;
 }
 

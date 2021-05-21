@@ -11,28 +11,28 @@
 #include "expand.h"
 
 /// Test if a string prefixes another. Returns true if a is a prefix of b.
-bool string_prefixes_string(const wcstring &proposed_prefix, const wcstring &value);
-bool string_prefixes_string(const wchar_t *proposed_prefix, const wcstring &value);
+bool string_prefixes_string(const imstring &proposed_prefix, const imstring &value);
+bool string_prefixes_string(const wchar_t *proposed_prefix, const imstring &value);
 bool string_prefixes_string(const wchar_t *proposed_prefix, const wchar_t *value);
 bool string_prefixes_string(const char *proposed_prefix, const std::string &value);
 bool string_prefixes_string(const char *proposed_prefix, const char *value);
 
 /// Test if a string is a suffix of another.
-bool string_suffixes_string(const wcstring &proposed_suffix, const wcstring &value);
-bool string_suffixes_string(const wchar_t *proposed_suffix, const wcstring &value);
-bool string_suffixes_string_case_insensitive(const wcstring &proposed_suffix,
-                                             const wcstring &value);
+bool string_suffixes_string(const imstring &proposed_suffix, const imstring &value);
+bool string_suffixes_string(const wchar_t *proposed_suffix, const imstring &value);
+bool string_suffixes_string_case_insensitive(const imstring &proposed_suffix,
+                                             const imstring &value);
 
 /// Test if a string prefixes another without regard to case. Returns true if a is a prefix of b.
-bool string_prefixes_string_case_insensitive(const wcstring &proposed_prefix,
-                                             const wcstring &value);
+bool string_prefixes_string_case_insensitive(const imstring &proposed_prefix,
+                                             const imstring &value);
 
 /// Case-insensitive string search, modeled after std::string::find().
 /// \param fuzzy indicates this is being used for fuzzy matching and case insensitivity is
 /// expanded to include symbolic characters (#3584).
 /// \return the offset of the first case-insensitive matching instance of `needle` within
 /// `haystack`, or `string::npos()` if no results were found.
-size_t ifind(const wcstring &haystack, const wcstring &needle, bool fuzzy = false);
+size_t ifind(const imstring &haystack, const imstring &needle, bool fuzzy = false);
 size_t ifind(const std::string &haystack, const std::string &needle, bool fuzzy = false);
 
 /// A lightweight value-type describing how closely a string fuzzy-matches another string.
@@ -101,8 +101,8 @@ struct string_fuzzy_match_t {
     /// Try creating a fuzzy match for \p string against \p match_against.
     /// \p string is something like "foo" and \p match_against is like "FooBar".
     /// If \p anchor_start is set, then only exact and prefix matches are permitted.
-    static maybe_t<string_fuzzy_match_t> try_create(const wcstring &string,
-                                                    const wcstring &match_against,
+    static maybe_t<string_fuzzy_match_t> try_create(const imstring &string,
+                                                    const imstring &match_against,
                                                     bool anchor_start);
 
     /// \return a rank for filtering matches.
@@ -111,14 +111,14 @@ struct string_fuzzy_match_t {
 };
 
 /// Cover over string_fuzzy_match_t::try_create().
-inline maybe_t<string_fuzzy_match_t> string_fuzzy_match_string(const wcstring &string,
-                                                               const wcstring &match_against,
+inline maybe_t<string_fuzzy_match_t> string_fuzzy_match_string(const imstring &string,
+                                                               const imstring &match_against,
                                                                bool anchor_start = false) {
     return string_fuzzy_match_t::try_create(string, match_against, anchor_start);
 }
 
 /// Split a string by a separator character.
-wcstring_list_t split_string(const wcstring &val, wchar_t sep);
+wcstring_list_t split_string(const imstring &val, wchar_t sep);
 
 /// Split a string by runs of any of the separator characters provided in \p seps.
 /// Note the delimiters are the characters in \p seps, not \p seps itself.
@@ -127,7 +127,7 @@ wcstring_list_t split_string(const wcstring &val, wchar_t sep);
 /// the last output is the the remainder of the input, including leading delimiters,
 /// except for the first. This is historical behavior.
 /// Example: split_string_tok(" a  b   c ", " ", 3) -> {"a", "b", "  c  "}
-wcstring_list_t split_string_tok(const wcstring &val, const wcstring &seps,
+wcstring_list_t split_string_tok(const imstring &val, const imstring &seps,
                                  size_t max_results = std::numeric_limits<size_t>::max());
 
 /// Join a list of strings by a separator character.

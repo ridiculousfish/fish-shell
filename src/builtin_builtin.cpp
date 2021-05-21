@@ -86,7 +86,7 @@ maybe_t<int> builtin_builtin(parser_t &parser, io_streams_t &streams, const wcha
     }
 
     if (opts.query) {
-        wcstring_list_t names = builtin_get_names();
+        imstring_list_t names = builtin_get_names();
         retval = STATUS_CMD_ERROR;
         for (int i = optind; i < argc; i++) {
             if (contains(names, argv[i])) {
@@ -98,7 +98,7 @@ maybe_t<int> builtin_builtin(parser_t &parser, io_streams_t &streams, const wcha
     }
 
     if (opts.list_names) {
-        wcstring_list_t names = builtin_get_names();
+        imstring_list_t names = builtin_get_names();
         std::sort(names.begin(), names.end());
 
         for (const auto &name : names) {

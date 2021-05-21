@@ -125,7 +125,7 @@ struct token_info_t {
 };
 
 const token_info_t *token_for_string(const wcstring &str) {
-    static const std::map<wcstring, const token_info_t> token_infos = {
+    static const std::map<imstring, const token_info_t> token_infos = {
         {L"", {test_unknown, 0}},
         {L"!", {test_bang, 0}},
         {L"-b", {test_filetype_b, UNARY_PRIMARY}},

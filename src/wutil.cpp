@@ -34,9 +34,9 @@ using cstring = std::string;
 const file_id_t kInvalidFileID{};
 
 /// Map used as cache by wgettext.
-static owning_lock<std::unordered_map<wcstring, wcstring>> wgettext_map;
+static owning_lock<std::unordered_map<imstring, imstring>> wgettext_map;
 
-bool wreaddir_resolving(DIR *dir, const wcstring &dir_path, wcstring &out_name, bool *out_is_dir) {
+bool wreaddir_resolving(DIR *dir, const imstring &dir_path, wcstring &out_name, bool *out_is_dir) {
     struct dirent *result = readdir(dir);
     if (!result) {
         out_name.clear();
@@ -133,12 +133,12 @@ wcstring wgetcwd() {
     return wcstring();
 }
 
-DIR *wopendir(const wcstring &name) {
+DIR *wopendir(const imstring &name) {
     const cstring tmp = wcs2string(name);
     return opendir(tmp.c_str());
 }
 
-dir_t::dir_t(const wcstring &path) {
+dir_t::dir_t(const imstring &path) {
     const cstring tmp = wcs2string(path);
     this->dir = opendir(tmp.c_str());
 }
@@ -154,22 +154,22 @@ bool dir_t::valid() const { return this->dir != nullptr; }
 
 bool dir_t::read(wcstring &name) const { return wreaddir(this->dir, name); }
 
-int wstat(const wcstring &file_name, struct stat *buf) {
+int wstat(const imstring &file_name, struct stat *buf) {
     const cstring tmp = wcs2string(file_name);
     return stat(tmp.c_str(), buf);
 }
 
-int lwstat(const wcstring &file_name, struct stat *buf) {
+int lwstat(const imstring &file_name, struct stat *buf) {
     const cstring tmp = wcs2string(file_name);
     return lstat(tmp.c_str(), buf);
 }
 
-int waccess(const wcstring &file_name, int mode) {
+int waccess(const imstring &file_name, int mode) {
     const cstring tmp = wcs2string(file_name);
     return access(tmp.c_str(), mode);
 }
 
-int wunlink(const wcstring &file_name) {
+int wunlink(const imstring &file_name) {
     const cstring tmp = wcs2string(file_name);
     return unlink(tmp.c_str());
 }
@@ -264,7 +264,7 @@ void safe_perror(const char *message) {
 
 /// Wide character realpath. The last path component does not need to be valid. If an error occurs,
 /// wrealpath() returns none() and errno is likely set.
-maybe_t<wcstring> wrealpath(const wcstring &pathname) {
+maybe_t<wcstring> wrealpath(const imstring &pathname) {
     if (pathname.empty()) return none();
 
     cstring real_path;
@@ -315,7 +315,7 @@ maybe_t<wcstring> wrealpath(const wcstring &pathname) {
     return str2wcstring(real_path);
 }
 
-wcstring normalize_path(const wcstring &path, bool allow_leading_double_slashes) {
+wcstring normalize_path(const imstring &path, bool allow_leading_double_slashes) {
     // Count the leading slashes.
     const wchar_t sep = L'/';
     size_t leading_slashes = 0;
@@ -349,17 +349,17 @@ wcstring normalize_path(const wcstring &path, bool allow_leading_double_slashes)
     return result;
 }
 
-wcstring path_normalize_for_cd(const wcstring &wd, const wcstring &path) {
+wcstring path_normalize_for_cd(const imstring &wd, const imstring &path) {
     // Fast paths.
     const wchar_t sep = L'/';
     assert(!wd.empty() && wd.front() == sep && wd.back() == sep &&
            "Invalid working directory, it must start and end with /");
     if (path.empty()) {
-        return wd;
+        return wd.to_wcstring();
     } else if (path.front() == sep) {
-        return path;
+        return path.to_wcstring();
     } else if (path.front() != L'.') {
-        return wd + path;
+        return wd.to_wcstring() + path;
     }
 
     // Split our strings by the sep.
@@ -453,32 +453,34 @@ static void wgettext_init_if_necessary() {
     std::call_once(s_wgettext_init, wgettext_really_init);
 }
 
-const wcstring &wgettext(const wchar_t *in) {
+const imstring &wgettext(const imstring &key) {
     // Preserve errno across this since this is often used in printing error messages.
     int err = errno;
-    wcstring key = in;
 
     wgettext_init_if_necessary();
     auto wmap = wgettext_map.acquire();
-    wcstring &val = (*wmap)[key];
-    if (val.empty()) {
+    auto pair = wmap->insert({key, imstring()});
+    imstring &value = pair.first->second;
+    bool inserted = pair.second;
+    if (inserted) {
+        // We inserted the key, set the value.
         cstring mbs_in = wcs2string(key);
         char *out = fish_gettext(mbs_in.c_str());
-        val = format_string(L"%s", out);
+        value = format_string(L"%s", out);
     }
     errno = err;
 
     // The returned string is stored in the map.
     // TODO: If we want to shrink the map, this would be a problem.
-    return val;
+    return value;
 }
 
-int wmkdir(const wcstring &name, int mode) {
+int wmkdir(const imstring &name, int mode) {
     cstring name_narrow = wcs2string(name);
     return mkdir(name_narrow.c_str(), mode);
 }
 
-int wrename(const wcstring &old, const wcstring &newv) {
+int wrename(const imstring &old, const imstring &newv) {
     cstring old_narrow = wcs2string(old);
     cstring new_narrow = wcs2string(newv);
     return rename(old_narrow.c_str(), new_narrow.c_str());
@@ -566,7 +568,7 @@ int fish_wcswidth(const wchar_t *str) { return fish_wcswidth(str, std::wcslen(st
 /// Convenience variants on fish_wcwswidth().
 ///
 /// See fallback.h for the normal definitions.
-int fish_wcswidth(const wcstring &str) { return fish_wcswidth(str.c_str(), str.size()); }
+int fish_wcswidth(const imstring &str) { return fish_wcswidth(str.c_str(), str.size()); }
 
 locale_t fish_c_locale() {
     static const locale_t loc = newlocale(LC_ALL_MASK, "C", nullptr);
@@ -764,7 +766,7 @@ file_id_t file_id_for_fd(int fd) {
     return result;
 }
 
-file_id_t file_id_for_path(const wcstring &path) {
+file_id_t file_id_for_path(const imstring &path) {
     file_id_t result = kInvalidFileID;
     struct stat buf = {};
     if (0 == wstat(path, &buf)) {

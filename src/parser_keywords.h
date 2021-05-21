@@ -10,7 +10,7 @@
 ///
 /// \param cmd The command name to test
 /// \return 1 of the command parameter is a command, 0 otherwise
-bool parser_keywords_is_subcommand(const wcstring &cmd);
+bool parser_keywords_is_subcommand(const imstring &cmd);
 
 /// Tests if the specified command is a reserved word, i.e. if it is the name of one of the builtin
 /// functions that change the block or command scope, like 'for', 'end' or 'command' or 'exec'.
@@ -18,13 +18,13 @@ bool parser_keywords_is_subcommand(const wcstring &cmd);
 ///
 /// \param word The command name to test
 /// \return 1 of the command parameter is a command, 0 otherwise
-bool parser_keywords_is_reserved(const wcstring &word);
+bool parser_keywords_is_reserved(const imstring &word);
 
 /// Test if the specified string is command that opens a new block.
-bool parser_keywords_is_block(const wcstring &word);
+bool parser_keywords_is_block(const imstring &word);
 
 /// Check if the specified command is one of the builtins that cannot have arguments, any followin
 /// argument is interpreted as a new command.
-bool parser_keywords_skip_arguments(const wcstring &cmd);
+bool parser_keywords_skip_arguments(const imstring &cmd);
 
 #endif

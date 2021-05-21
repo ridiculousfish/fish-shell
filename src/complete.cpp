@@ -131,7 +131,7 @@ class completion_entry_t {
     option_list_t options;
 
     /// Command string.
-    const wcstring cmd;
+    const imstring cmd;
     /// True if command is a path.
     const bool cmd_is_path;
     /// Order for when this completion was created. This aids in outputting completions sorted by
@@ -145,18 +145,15 @@ class completion_entry_t {
     void add_option(const complete_entry_opt_t &opt);
     bool remove_option(const wcstring &option, complete_option_type_t type);
 
-    completion_entry_t(wcstring c, bool type)
-        : cmd(std::move(c)), cmd_is_path(type), order(++k_complete_order) {}
+    completion_entry_t(const imstring &c, bool type)
+        : cmd(c), cmd_is_path(type), order(++k_complete_order) {}
 };
 
 /// Set of all completion entries.
 namespace std {
 template <>
 struct hash<completion_entry_t> {
-    size_t operator()(const completion_entry_t &c) const {
-        std::hash<wcstring> hasher;
-        return hasher(wcstring(c.cmd));
-    }
+    size_t operator()(const completion_entry_t &c) const { return c.cmd.hash(); }
 };
 template <>
 struct equal_to<completion_entry_t> {
@@ -169,7 +166,7 @@ using completion_entry_set_t = std::unordered_set<completion_entry_t>;
 static owning_lock<completion_entry_set_t> s_completion_set;
 
 /// Completion "wrapper" support. The map goes from wrapping-command to wrapped-command-list.
-using wrapper_map_t = std::unordered_map<wcstring, wcstring_list_t>;
+using wrapper_map_t = std::unordered_map<imstring, wcstring_list_t>;
 static owning_lock<wrapper_map_t> wrapper_map;
 
 /// Comparison function to sort completions by their order field.
@@ -183,7 +180,7 @@ void completion_entry_t::add_option(const complete_entry_opt_t &opt) { options.p
 const option_list_t &completion_entry_t::get_options() const { return options; }
 
 description_func_t const_desc(const wcstring &s) {
-    return [=](const wcstring &ignored) {
+    return [=](const imstring &ignored) {
         UNUSED(ignored);
         return s;
     };
@@ -230,9 +227,9 @@ bool completion_t::is_naturally_less_than(const completion_t &a, const completio
     return natural_compare_completions(a, b);
 }
 
-void completion_t::prepend_token_prefix(const wcstring &prefix) {
+void completion_t::prepend_token_prefix(const imstring &prefix) {
     if (this->flags & COMPLETE_REPLACES_TOKEN) {
-        this->completion.insert(0, prefix);
+        this->completion.insert(0, prefix.c_str(), prefix.size());
     }
 }
 
@@ -356,7 +353,7 @@ class completer_t {
 
     /// Table of completions conditions that have already been tested and the corresponding test
     /// results.
-    using condition_cache_t = std::unordered_map<wcstring, bool>;
+    using condition_cache_t = std::unordered_map<imstring, bool>;
     condition_cache_t condition_cache;
 
     enum complete_type_t { COMPLETE_DEFAULT, COMPLETE_AUTOSUGGEST };
@@ -382,7 +379,7 @@ class completer_t {
     void complete_cmd(const wcstring &str);
 
     /// Attempt to complete an abbreviation for the given string.
-    void complete_abbr(const wcstring &cmd);
+    void complete_abbr(const imstring &cmd);
 
     void complete_from_args(const wcstring &str, const wcstring &args, const wcstring &desc,
                             complete_flags_t flags);
@@ -393,7 +390,7 @@ class completer_t {
 
     bool condition_test(const wcstring &condition);
 
-    void complete_strings(const wcstring &wc_escaped, const description_func_t &desc_func,
+    void complete_strings(const imstring &wc_escaped, const description_func_t &desc_func,
                           const completion_list_t &possible_comp, complete_flags_t flags);
 
     expand_flags_t expand_flags() const {
@@ -564,7 +561,7 @@ void complete_remove(const wcstring &cmd, bool cmd_is_path, const wcstring &opti
     }
 }
 
-void complete_remove_all(const wcstring &cmd, bool cmd_is_path) {
+void complete_remove_all(const imstring &cmd, bool cmd_is_path) {
     auto completion_set = s_completion_set.acquire();
     completion_entry_t tmp_entry(cmd, cmd_is_path);
     completion_set->erase(tmp_entry);
@@ -612,9 +609,9 @@ static void parse_cmd_string(const wcstring &str, wcstring *path, wcstring *cmd,
 ///    the list of possible completions to iterate over
 /// @param  flags
 ///    The flags
-void completer_t::complete_strings(const wcstring &wc_escaped, const description_func_t &desc_func,
+void completer_t::complete_strings(const imstring &wc_escaped, const description_func_t &desc_func,
                                    const completion_list_t &possible_comp, complete_flags_t flags) {
-    wcstring tmp = wc_escaped;
+    wcstring tmp = wc_escaped.to_wcstring();
     if (!expand_one(tmp,
                     this->expand_flags() | expand_flag::skip_cmdsubst | expand_flag::skip_wildcards,
                     ctx))
@@ -715,7 +712,7 @@ void completer_t::complete_cmd_desc(const wcstring &str) {
 }
 
 /// Returns a description for the specified function, or an empty string if none.
-static wcstring complete_function_desc(const wcstring &fn) {
+static wcstring complete_function_desc(const imstring &fn) {
     wcstring result;
     function_get_desc(fn, result);
     return result;
@@ -753,10 +750,10 @@ void completer_t::complete_cmd(const wcstring &str_cmd) {
 
     if (str_cmd.empty() || (str_cmd.find(L'/') == wcstring::npos && str_cmd.at(0) != L'~')) {
         bool include_hidden = !str_cmd.empty() && str_cmd.at(0) == L'_';
-        wcstring_list_t names = function_get_names(include_hidden);
-        for (wcstring &name : names) {
+        imstring_list_t names = function_get_names(include_hidden);
+        for (const imstring &name : names) {
             // Append all known matching functions
-            append_completion(&possible_comp, std::move(name));
+            append_completion(&possible_comp, name.to_wcstring());
         }
 
         this->complete_strings(str_cmd, complete_function_desc, possible_comp, 0);
@@ -769,15 +766,15 @@ void completer_t::complete_cmd(const wcstring &str_cmd) {
     }
 }
 
-void completer_t::complete_abbr(const wcstring &cmd) {
-    std::map<wcstring, wcstring> abbrs = get_abbreviations(ctx.vars);
+void completer_t::complete_abbr(const imstring &cmd) {
+    std::map<imstring, wcstring> abbrs = get_abbreviations(ctx.vars);
     completion_list_t possible_comp;
     possible_comp.reserve(abbrs.size());
     for (const auto &kv : abbrs) {
-        possible_comp.emplace_back(kv.first);
+        possible_comp.emplace_back(kv.first.to_wcstring());
     }
 
-    auto desc_func = [&](const wcstring &key) {
+    auto desc_func = [&](const imstring &key) {
         auto iter = abbrs.find(key);
         assert(iter != abbrs.end() && "Abbreviation not found");
         return format_string(ABBR_DESC, iter->second.c_str());
@@ -1228,7 +1225,7 @@ bool completer_t::complete_variable(const wcstring &str, size_t start_offset) {
     size_t varlen = str.length() - start_offset;
     bool res = false;
 
-    for (const wcstring &env_name : ctx.vars.get_names(0)) {
+    for (const imstring &env_name : ctx.vars.get_names(0)) {
         bool anchor_start = !fuzzy();
         maybe_t<string_fuzzy_match_t> match =
             string_fuzzy_match_string(var, env_name, anchor_start);
@@ -1242,7 +1239,7 @@ bool completer_t::complete_variable(const wcstring &str, size_t start_offset) {
             comp.append(env_name.c_str() + varlen);
         } else {
             comp.append(whole_var, start_offset);
-            comp.append(env_name);
+            comp.append(env_name.c_str());
             flags = COMPLETE_REPLACES_TOKEN | COMPLETE_DONT_ESCAPE;
         }
 
@@ -1416,7 +1413,7 @@ cleanup_t completer_t::apply_var_assignments(const wcstring_list_t &var_assignme
     for (const wcstring &var_assign : var_assignments) {
         maybe_t<size_t> equals_pos = variable_assignment_equals_pos(var_assign);
         assert(equals_pos && "All variable assignments should have equals position");
-        const wcstring variable_name = var_assign.substr(0, *equals_pos);
+        const imstring variable_name = var_assign.substr(0, *equals_pos);
         const wcstring expression = var_assign.substr(*equals_pos + 1);
 
         completion_list_t expression_expanded;
@@ -1776,7 +1773,7 @@ completion_list_t complete(const wcstring &cmd_with_subcmds, completion_request_
 
 /// Print the short switch \c opt, and the argument \c arg to the specified
 /// wcstring, but only if \c argument isn't an empty string.
-static void append_switch(wcstring &out, wchar_t opt, const wcstring &arg) {
+static void append_switch(wcstring &out, wchar_t opt, const imstring &arg) {
     if (arg.empty()) return;
     append_format(out, L" -%lc %ls", opt, escape_string(arg, ESCAPE_ALL).c_str());
 }
@@ -1789,7 +1786,7 @@ static void append_switch(wcstring &out, const wcstring &opt) {
     append_format(out, L" --%ls", opt.c_str());
 }
 
-static wcstring completion2string(const complete_entry_opt_t &o, const wcstring &cmd,
+static wcstring completion2string(const complete_entry_opt_t &o, const imstring &cmd,
                                   bool is_path) {
     wcstring out;
     out.append(L"complete");
@@ -1858,7 +1855,7 @@ wcstring complete_print(const wcstring &cmd) {
     // Append wraps.
     auto locked_wrappers = wrapper_map.acquire();
     for (const auto &entry : *locked_wrappers) {
-        const wcstring &src = entry.first;
+        const imstring &src = entry.first;
         if (!cmd.empty() && src != cmd) continue;
         for (const wcstring &target : entry.second) {
             out.append(L"complete ");
@@ -1874,8 +1871,8 @@ void complete_invalidate_path() {
     // TODO: here we unload all completions for commands that are loaded by the autoloader. We also
     // unload any completions that the user may specified on the command line. We should in
     // principle track those completions loaded by the autoloader alone.
-    wcstring_list_t cmds = completion_autoloader.acquire()->get_autoloaded_commands();
-    for (const wcstring &cmd : cmds) {
+    imstring_list_t cmds = completion_autoloader.acquire()->get_autoloaded_commands();
+    for (const imstring &cmd : cmds) {
         complete_remove_all(cmd, false /* not a path */);
     }
 }
@@ -1921,7 +1918,7 @@ bool complete_remove_wrapper(const wcstring &command, const wcstring &target_to_
     return result;
 }
 
-wcstring_list_t complete_get_wrap_targets(const wcstring &command) {
+wcstring_list_t complete_get_wrap_targets(const imstring &command) {
     if (command.empty()) {
         return {};
     }

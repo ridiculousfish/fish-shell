@@ -2701,8 +2701,8 @@ static int read_i(parser_t &parser) {
             data->update_buff_pos(&data->command_line, 0);
             data->command_line.clear();
             data->command_line_changed(&data->command_line);
-            wcstring_list_t argv{command};
-            event_fire_generic(parser, L"fish_preexec", &argv);
+            imstring_list_t argv{command};
+            event_fire_generic(parser, L"fish_preexec", argv);
             auto eval_res = reader_run_command(parser, command);
             signal_clear_cancel();
             if (!eval_res.no_status) {
@@ -2713,7 +2713,7 @@ static int read_i(parser_t &parser) {
             data->exit_loop_requested |= parser.libdata().exit_current_script;
             parser.libdata().exit_current_script = false;
 
-            event_fire_generic(parser, L"fish_postexec", &argv);
+            event_fire_generic(parser, L"fish_postexec", argv);
             // Allow any pending history items to be returned in the history array.
             if (data->history) {
                 data->history->resolve_pending();
@@ -3301,8 +3301,7 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
             } else {
                 // Result must be some combination including an error. The error message will
                 // already be printed, all we need to do is repaint.
-                wcstring_list_t argv(1, el->text());
-                event_fire_generic(parser(), L"fish_posterror", &argv);
+                event_fire_generic(parser(), L"fish_posterror", imstring_list_t{el->text()});
                 s_reset_abandoning_line(&screen, termsize_last().width);
             }
             break;

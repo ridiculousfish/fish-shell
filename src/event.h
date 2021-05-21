@@ -73,7 +73,7 @@ struct event_description_t {
     ///
     /// variable: Variable name for variable-type events.
     /// param: The parameter describing this generic event.
-    wcstring str_param1{};
+    imstring str_param1{};
 
     explicit event_description_t(event_type_t t) : type(t) {}
     static event_description_t signal(int sig);
@@ -101,12 +101,12 @@ struct event_t {
     event_description_t desc;
 
     /// Arguments to any handler.
-    wcstring_list_t arguments{};
+    imstring_list_t arguments{};
 
     explicit event_t(event_type_t t) : desc(t) {}
 
     /// Create an event_type_t::variable event.
-    static event_t variable(wcstring name, wcstring_list_t args);
+    static event_t variable(const imstring &name, imstring_list_t args);
 
     /// Create a PROCESS_EXIT event.
     static event_t process_exit(pid_t pid, int status);
@@ -125,10 +125,10 @@ class parser_t;
 void event_add_handler(std::shared_ptr<event_handler_t> eh);
 
 /// Remove all events for the given function name.
-void event_remove_function_handlers(const wcstring &name);
+void event_remove_function_handlers(const imstring &name);
 
 /// Return all event handlers for the given function.
-event_handler_list_t event_get_function_handlers(const wcstring &name);
+event_handler_list_t event_get_function_handlers(const imstring &name);
 
 /// Returns whether an event listener is registered for the given signal. This is safe to call from
 /// a signal handler.
@@ -150,7 +150,6 @@ void event_print(io_streams_t &streams, const wcstring &type_filter);
 wcstring event_get_desc(const parser_t &parser, const event_t &e);
 
 /// Fire a generic event with the specified name.
-void event_fire_generic(parser_t &parser, const wchar_t *name,
-                        const wcstring_list_t *args = nullptr);
+void event_fire_generic(parser_t &parser, const imstring &name, const imstring_list_t &args = {});
 
 #endif

@@ -45,7 +45,7 @@ enum class wildcard_result_t {
     cancel,    /// Expansion was cancelled (e.g. control-C).
     overflow,  /// Expansion produced too many results.
 };
-wildcard_result_t wildcard_expand_string(const wcstring &wc, const wcstring &working_directory,
+wildcard_result_t wildcard_expand_string(const imstring &wc, const imstring &working_directory,
                                          expand_flags_t flags,
                                          const cancel_checker_t &cancel_checker,
                                          completion_receiver_t *output);
@@ -58,15 +58,15 @@ wildcard_result_t wildcard_expand_string(const wcstring &wc, const wcstring &wor
 /// files and are not matched
 ///
 /// \return true if the wildcard matched
-bool wildcard_match(const wcstring &str, const wcstring &wc,
+bool wildcard_match(const imstring &str, const imstring &wc,
                     bool leading_dots_fail_to_match = false);
 
 /// Check if the specified string contains wildcards.
-bool wildcard_has(const wcstring &, bool internal);
+bool wildcard_has(const imstring &, bool internal);
 bool wildcard_has(const wchar_t *, bool internal);
 
 /// Test wildcard completion.
-wildcard_result_t wildcard_complete(const wcstring &str, const wchar_t *wc,
+wildcard_result_t wildcard_complete(const imstring &str, const wchar_t *wc,
                                     const description_func_t &desc_func, completion_receiver_t *out,
                                     expand_flags_t expand_flags, complete_flags_t flags);
 

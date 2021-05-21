@@ -36,7 +36,7 @@ class lru_cache_t {
         lru_node_t(lru_node_t &&) = default;
 
         // Our key in the map. This is owned by the map itself.
-        const wcstring *key = nullptr;
+        const imstring *key = nullptr;
 
         // The value from the client
         Contents value;
@@ -51,7 +51,7 @@ class lru_cache_t {
     // All of our nodes.
     // Note that our linked list contains pointers to these nodes in the map.
     // We are dependent on the iterator-noninvalidation guarantees of std::unordered_map.
-    std::unordered_map<wcstring, lru_node_t> node_map;
+    std::unordered_map<imstring, lru_node_t> node_map;
 
     // Head of the linked list
     // The list is circular!
@@ -87,7 +87,7 @@ class lru_cache_t {
 
         // Pull out our key and value
         // Note we copy the key in case the map needs it to erase the node
-        wcstring key = *node->key;
+        imstring key = *node->key;
         Contents value(std::move(node->value));
 
         // Remove us from the map. This deallocates node!
@@ -95,7 +95,7 @@ class lru_cache_t {
 
         // Tell ourselves what we did
         Derived *dthis = static_cast<Derived *>(this);
-        dthis->entry_was_evicted(std::move(key), std::move(value));
+        dthis->entry_was_evicted(key, std::move(value));
     }
 
     // Evicts the last node
@@ -106,7 +106,7 @@ class lru_cache_t {
 
     // CRTP callback for when a node is evicted.
     // Clients can implement this
-    void entry_was_evicted(wcstring key, Contents value) {
+    void entry_was_evicted(const imstring &key, Contents value) {
         UNUSED(key);
         UNUSED(value);
     }
@@ -181,7 +181,7 @@ class lru_cache_t {
 
     // Returns the value for a given key, or NULL.
     // This counts as a "use" and so promotes the node
-    Contents *get(const wcstring &key) {
+    Contents *get(const imstring &key) {
         auto where = this->node_map.find(key);
         if (where == this->node_map.end()) {
             // not found
@@ -192,7 +192,7 @@ class lru_cache_t {
     }
 
     // Evicts the node for a given key, returning true if a node was evicted.
-    bool evict_node(const wcstring &key) {
+    bool evict_node(const imstring &key) {
         auto where = this->node_map.find(key);
         if (where == this->node_map.end()) return false;
         evict_node(&where->second);
@@ -201,8 +201,8 @@ class lru_cache_t {
 
     // Adds a node under the given key. Returns true if the node was added, false if the node was
     // not because a node with that key is already in the set.
-    bool insert(wcstring key, Contents value) {
-        if (!this->insert_no_eviction(std::move(key), std::move(value))) {
+    bool insert(const imstring &key, Contents value) {
+        if (!this->insert_no_eviction(key, std::move(value))) {
             return false;
         }
 
@@ -214,9 +214,9 @@ class lru_cache_t {
 
     // Adds a node under the given key without triggering eviction. Returns true if the node was
     // added, false if the node was not because a node with that key is already in the set.
-    bool insert_no_eviction(wcstring &&key, Contents &&value) {
+    bool insert_no_eviction(const imstring &key, Contents &&value) {
         // Try inserting; return false if it was already in the set.
-        auto iter_inserted = this->node_map.emplace(std::move(key), lru_node_t(std::move(value)));
+        auto iter_inserted = this->node_map.emplace(key, lru_node_t(std::move(value)));
         if (!iter_inserted.second) {
             // already present - so promote it
             promote_node(&iter_inserted.first->second);
@@ -275,7 +275,7 @@ class lru_cache_t {
         const lru_link_t *node;
 
        public:
-        typedef std::pair<const wcstring &, const Contents &> value_type;
+        typedef std::pair<const imstring &, const Contents &> value_type;
 
         explicit iterator(const lru_link_t *val) : node(val) {}
         void operator++() { node = node->prev; }

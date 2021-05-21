@@ -607,7 +607,7 @@ static block_t *function_prepare_environment(parser_t &parser, wcstring_list_t a
     // 3. argv
 
     size_t idx = 0;
-    for (const wcstring &named_arg : props.named_arguments) {
+    for (const imstring &named_arg : props.named_arguments) {
         if (idx < argv.size()) {
             vars.set_one(named_arg, ENV_LOCAL | ENV_USER, argv.at(idx));
         } else {

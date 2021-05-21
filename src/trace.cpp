@@ -6,7 +6,7 @@
 #include "flog.h"
 #include "parser.h"
 
-static const wcstring VAR_fish_trace = L"fish_trace";
+static const imstring VAR_fish_trace = L"fish_trace";
 
 bool trace_enabled(const parser_t &parser) {
     const auto &ld = parser.libdata();

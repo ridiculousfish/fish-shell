@@ -80,12 +80,10 @@
 #include "wgetopt.h"
 #include "wutil.h"  // IWYU pragma: keep
 
-bool builtin_data_t::operator<(const wcstring &other) const {
-    return std::wcscmp(this->name, other.c_str()) < 0;
-}
+bool builtin_data_t::operator<(const imstring &other) const { return this->name < other; }
 
 bool builtin_data_t::operator<(const builtin_data_t *other) const {
-    return std::wcscmp(this->name, other->name) < 0;
+    return this->name < other->name;
 }
 
 /// Counts the number of arguments in the specified null-terminated array
@@ -428,7 +426,7 @@ static const builtin_data_t builtin_datas[] = {
 /// @return
 ///    Pointer to a builtin_data_t
 ///
-static const builtin_data_t *builtin_lookup(const wcstring &name) {
+static const builtin_data_t *builtin_lookup(const imstring &name) {
     const builtin_data_t *array_end = builtin_datas + BUILTIN_COUNT;
     const builtin_data_t *found = std::lower_bound(builtin_datas, array_end, name);
     if (found != array_end && name == found->name) {
@@ -440,9 +438,9 @@ static const builtin_data_t *builtin_lookup(const wcstring &name) {
 /// Initialize builtin data.
 void builtin_init() {
     for (size_t i = 0; i < BUILTIN_COUNT; i++) {
-        const wchar_t *name = builtin_datas[i].name;
-        intern_static(name);
-        assert((i == 0 || std::wcscmp(builtin_datas[i - 1].name, name) < 0) &&
+        const imstring &name = builtin_datas[i].name;
+        intern_static(name.c_str());
+        assert((i == 0 || builtin_datas[i - 1].name < name) &&
                "builtins are not sorted alphabetically");
     }
 }
@@ -500,8 +498,8 @@ proc_status_t builtin_run(parser_t &parser, const wcstring_list_t &argv, io_stre
 }
 
 /// Returns a list of all builtin names.
-wcstring_list_t builtin_get_names() {
-    wcstring_list_t result;
+imstring_list_t builtin_get_names() {
+    imstring_list_t result;
     result.reserve(BUILTIN_COUNT);
     for (const auto &builtin_data : builtin_datas) {
         result.push_back(builtin_data.name);
@@ -514,16 +512,16 @@ void builtin_get_names(completion_list_t *list) {
     assert(list != nullptr);
     list->reserve(list->size() + BUILTIN_COUNT);
     for (const auto &builtin_data : builtin_datas) {
-        append_completion(list, builtin_data.name);
+        append_completion(list, builtin_data.name.to_wcstring());
     }
 }
 
 /// Return a one-line description of the specified builtin.
-const wchar_t *builtin_get_desc(const wcstring &name) {
+const wchar_t *builtin_get_desc(const imstring &name) {
     const wchar_t *result = L"";
     const builtin_data_t *builtin = builtin_lookup(name);
     if (builtin) {
-        result = _(builtin->desc);
+        result = _(builtin->desc.c_str());
     }
     return result;
 }
