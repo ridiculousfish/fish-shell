@@ -75,6 +75,9 @@ else()
   set(FISH_IN_TREE_BUILD FALSE)
 endif()
 
+# Pull in string_view-lite.
+include_directories("${CMAKE_CURRENT_LIST_DIR}/3rdparty/string-view-lite/include/")
+
 # NetBSD does weird things with finding libraries,
 # making the tests fail by failing to find pcre.
 #
