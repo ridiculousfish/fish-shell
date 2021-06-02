@@ -21,6 +21,7 @@
 
 #include "fallback.h"  // IWYU pragma: keep
 #include "maybe.h"
+#include "strings.h"
 
 // Create a generic define for all BSD platforms
 #if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
@@ -48,10 +49,6 @@
 #ifdef __SANITIZE_THREAD__
 #define FISH_TSAN_WORKAROUNDS 1
 #endif
-
-// Common string type.
-typedef std::wstring wcstring;
-typedef std::vector<wcstring> wcstring_list_t;
 
 struct termsize_t;
 
@@ -217,10 +214,6 @@ extern const wchar_t *program_name;
 
 /// Set to false if it's been determined we can't trust the last modified timestamp on the tty.
 extern const bool has_working_tty_timestamps;
-
-/// A global, empty string. This is useful for functions which wish to return a reference to an
-/// empty string.
-extern const wcstring g_empty_string;
 
 // Pause for input, then exit the program. If supported, print a backtrace first.
 // The `return` will never be run  but silences oclint warnings. Especially when this is called
