@@ -1,6 +1,8 @@
 // Various bug and feature tests. Compiled and run by make test.
 #include "config.h"  // IWYU pragma: keep
 
+#include "fish_tests.h"
+
 // IWYU pragma: no_include <cstring>
 // IWYU pragma: no_include <cstddef>
 #include <errno.h>
@@ -93,10 +95,7 @@ static int s_test_run_count = 0;
         err(L"Non-zero result on line %d: %s", __LINE__, command); \
     }
 
-// Indicate if we should test the given function. Either we test everything (all arguments) or we
-// run only tests that have a prefix in s_arguments.
-// If \p default_on is set, then allow no args to run this test by default.
-static bool should_test_function(const char *func_name, bool default_on = true) {
+bool should_test_function(const char *func_name, bool default_on) {
     bool result = false;
     if (!s_arguments || !s_arguments[0]) {
         // No args, test if defaulted on.
@@ -125,7 +124,7 @@ static bool should_test_function(const char *func_name, bool default_on = true) 
 static int err_count = 0;
 
 /// Print formatted output.
-static void say(const wchar_t *fmt, ...) {
+void say(const wchar_t *fmt, ...) {
     va_list va;
     va_start(va, fmt);
     std::vfwprintf(stdout, fmt, va);
@@ -134,7 +133,7 @@ static void say(const wchar_t *fmt, ...) {
 }
 
 /// Print formatted error string.
-static void err(const wchar_t *blah, ...) {
+void err(const wchar_t *blah, ...) {
     va_list va;
     va_start(va, blah);
     err_count++;
@@ -205,36 +204,6 @@ wcstring get_overlong_path() {
     }
     return longpath;
 }
-
-// The odd formulation of these macros is to avoid "multiple unary operator" warnings from oclint
-// were we to use the more natural "if (!(e)) err(..." form. We have to do this because the rules
-// for the C preprocessor make it practically impossible to embed a comment in the body of a macro.
-#define do_test(e)                                             \
-    do {                                                       \
-        if (e) {                                               \
-            ;                                                  \
-        } else {                                               \
-            err(L"Test failed on line %lu: %s", __LINE__, #e); \
-        }                                                      \
-    } while (0)
-
-#define do_test_from(e, from)                                                   \
-    do {                                                                        \
-        if (e) {                                                                \
-            ;                                                                   \
-        } else {                                                                \
-            err(L"Test failed on line %lu (from %lu): %s", __LINE__, from, #e); \
-        }                                                                       \
-    } while (0)
-
-#define do_test1(e, msg)                                           \
-    do {                                                           \
-        if (e) {                                                   \
-            ;                                                      \
-        } else {                                                   \
-            err(L"Test failed on line %lu: %ls", __LINE__, (msg)); \
-        }                                                          \
-    } while (0)
 
 /// Test that the fish functions for converting strings to numbers work.
 static void test_str_to_num() {
@@ -6531,6 +6500,9 @@ void termsize_tester_t::test() {
     do_test(ts2.updating(parser) == *stubby_termsize);
 }
 
+// From fish_string_view_tests.cpp.
+void test_string_view();
+
 /// Main test.
 int main(int argc, char **argv) {
     UNUSED(argc);
@@ -6662,6 +6634,7 @@ int main(int argc, char **argv) {
     }
     if (should_test_function("history_formats")) history_tests_t::test_history_formats();
     if (should_test_function("string")) test_string();
+    if (should_test_function("string_view")) test_string_view();
     if (should_test_function("illegal_command_exit_code")) test_illegal_command_exit_code();
     if (should_test_function("maybe")) test_maybe();
     if (should_test_function("layout_cache")) test_layout_cache();
