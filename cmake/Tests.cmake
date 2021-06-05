@@ -48,7 +48,8 @@ cmake_policy(POP)
 
 # Build the low-level tests code
 add_executable(fish_tests EXCLUDE_FROM_ALL
-               src/fish_tests.cpp)
+               src/fish_tests.cpp
+               src/fish_string_view_tests.cpp)
 fish_link_deps_and_sign(fish_tests)
 
 # The "test" directory.
