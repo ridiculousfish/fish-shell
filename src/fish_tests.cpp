@@ -601,58 +601,59 @@ static void test_convert_nulls() {
 }
 
 static void test_imstring() {
+    using tag_t = imstring::repr_tag_t;
     // Verify correct copying logic.
     imstring s1{L"alpha"};
-    do_test(s1.get_backing_type() == imstring::literal);
+    do_test(s1.get_backing_type() == tag_t::literal);
 
     imstring s2{L"alpha"};
-    do_test(s2.get_backing_type() == imstring::literal);
+    do_test(s2.get_backing_type() == tag_t::literal);
 
     const wchar_t *cstr = L"cstr";
     imstring s3 = cstr;
-    do_test(s3.get_backing_type() == imstring::unowned);
+    do_test(s3.get_backing_type() == tag_t::unowned);
     do_test(s3.c_str() == cstr);
     imstring s3c = s3;
-    do_test(s3c.get_backing_type() == imstring::owned);
+    do_test(s3c.get_backing_type() == tag_t::shared);
     do_test(s3c.c_str() != cstr);
     do_test(s3c.c_str() == wcstring(cstr));
 
     wchar_t local[] = L"abcdefg\0\0";
     imstring s4 = local;
-    do_test(s4.get_backing_type() == imstring::unowned);
+    do_test(s4.get_backing_type() == tag_t::unowned);
     do_test(s4.c_str() == local);
     imstring s4c = s4;
-    do_test(s4c.get_backing_type() == imstring::owned);
+    do_test(s4c.get_backing_type() == tag_t::shared);
     do_test(s4c.c_str() != local);
 
     imstring s5 = L"i am literal"_im;
-    do_test(s5.get_backing_type() == imstring::literal);
+    do_test(s5.get_backing_type() == tag_t::literal);
     do_test(s5.c_str() == wcstring(L"i am literal"));
     imstring s5c = s5;
     do_test(s5c.c_str() == s5.c_str());  // should be same pointers
 
     imstring s6 = L"literal"_im;
     s6 = wcstring(L"ownership transfer");
-    do_test(s6.get_backing_type() == imstring::owned);
+    do_test(s6.get_backing_type() == tag_t::shared);
     imstring s6c = s6;
-    do_test(s6c.get_backing_type() == imstring::owned);
+    do_test(s6c.get_backing_type() == tag_t::shared);
     do_test(s6c.c_str() == s6.c_str());  // should be same pointers
 
     imstring s7 = local;
-    do_test(s7.get_backing_type() == imstring::unowned);
+    do_test(s7.get_backing_type() == tag_t::unowned);
     s7.clear();
-    do_test(s7.get_backing_type() == imstring::literal);
+    do_test(s7.get_backing_type() == tag_t::literal);
     do_test(s7.empty());
 
     const wchar_t *clocalptr = local;
     imstring s8{clocalptr};
-    do_test(s8.get_backing_type() == imstring::unowned);
+    do_test(s8.get_backing_type() == tag_t::unowned);
     do_test(s8.size() == wcslen(local));
 
     // When constructing from a mutable pointer, we copy it.
     wchar_t *localptr = local;
     imstring s9{localptr};
-    do_test(s9.get_backing_type() == imstring::owned);
+    do_test(s9.get_backing_type() == tag_t::shared);
     do_test(s9.size() == wcslen(local));
 }
 
