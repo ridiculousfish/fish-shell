@@ -10,13 +10,14 @@
 #include "nonstd/string_view.hpp"
 
 // static
-inline imstring::shared_repr_t imstring::make_shared_repr(std::wstring &&str) {
-    return shared_repr_t{repr_tag_t::shared, std::make_shared<std::wstring>(std::move(str))};
+inline imstring::sharedstr_repr_t imstring::make_sharedstr_repr(std::wstring &&str) {
+    return sharedstr_repr_t{repr_tag_t::sharedstr,
+                            std::make_shared<const std::wstring>(std::move(str))};
 }
 
 // static
-inline imstring::shared_repr_t imstring::make_shared_repr(const wchar_t *ptr, size_t len) {
-    return shared_repr_t{repr_tag_t::shared, std::make_shared<std::wstring>(ptr, len)};
+inline imstring::sharedstr_repr_t imstring::make_shared_repr(const wchar_t *ptr, size_t len) {
+    return sharedstr_repr_t{repr_tag_t::sharedstr, std::make_shared<const std::wstring>(ptr, len)};
 }
 
 // static
@@ -41,8 +42,8 @@ void imstring::repr_t::destroy() {
         case repr_tag_t::inlined:
             inlined().~inlined_repr_t();
             break;
-        case repr_tag_t::shared:
-            shared().~shared_repr_t();
+        case repr_tag_t::sharedstr:
+            sharedstr().~sharedstr_repr_t();
             break;
     }
 }
@@ -56,7 +57,7 @@ imstring::imstring(wcstring &&rhs) {
     if (len <= inlined_repr_t::kInlineCharCount) {
         repr_.set(make_inlined_repr(rhs.c_str(), rhs.size()));
     } else {
-        repr_.set(make_shared_repr(std::move(rhs)));
+        repr_.set(make_sharedstr_repr(std::move(rhs)));
     }
 }
 
@@ -82,8 +83,8 @@ void imstring::set_or_copy_from(const imstring &rhs) {
         case repr_tag_t::inlined:
             this->repr_.set(rhs.repr_.inlined());
             break;
-        case repr_tag_t::shared:
-            this->repr_.set(rhs.repr_.shared());
+        case repr_tag_t::sharedstr:
+            this->repr_.set(rhs.repr_.sharedstr());
             break;
     }
 }

@@ -232,10 +232,10 @@ class imstring {
 
     /// Our possible representations.
     enum class repr_tag_t : uint8_t {
-        literal,  // we are backed by a string literal
-        inlined,  // we are backed by inlined storage
-        unowned,  // we are backed by a transient string; copy it when we are copied or moved
-        shared,   // we are backed by a shared_ptr<const wcstring>
+        literal,    // we are backed by a string literal
+        inlined,    // we are backed by inlined storage
+        unowned,    // we are backed by a transient string; copy it when we are copied or moved
+        sharedstr,  // we are backed by a shared_ptr<const wcstring>
     };
     repr_tag_t get_backing_type() const { return repr_.tag(); }
 
@@ -263,9 +263,9 @@ class imstring {
         const wchar_t *ptr;
         size_t len;
     };
-    struct shared_repr_t {
+    struct sharedstr_repr_t {
         repr_tag_t tag;
-        std::shared_ptr<std::wstring> ptr;
+        std::shared_ptr<const std::wstring> ptr;
     };
 
     // Helper function for creating an empty literal representation.
@@ -274,8 +274,8 @@ class imstring {
     }
 
     /// Helper function for making a shared and owned representation.
-    static inline shared_repr_t make_shared_repr(const wchar_t *ptr, size_t len);
-    static inline shared_repr_t make_shared_repr(std::wstring &&str);
+    static inline sharedstr_repr_t make_shared_repr(const wchar_t *ptr, size_t len);
+    static inline sharedstr_repr_t make_sharedstr_repr(std::wstring &&str);
     static inline inlined_repr_t make_inlined_repr(const wchar_t *ptr, size_t len);
 
     union repr_t {
@@ -287,7 +287,7 @@ class imstring {
         explicit constexpr repr_t(literal_repr_t v) : literal_(v) {}
         explicit constexpr repr_t(unowned_repr_t v) : unowned_(v) {}
         explicit constexpr repr_t(const inlined_repr_t &v) : inlined_(v) {}
-        explicit repr_t(shared_repr_t &&v) : shared_(std::move(v)) {}
+        explicit repr_t(sharedstr_repr_t &&v) : sharedstr_(std::move(v)) {}
 
         // Assert that our tag is what we expect.
         void check_tag(repr_tag_t tag) const { assert(tag == tag_.tag && "Wrong tag"); }
@@ -307,8 +307,8 @@ class imstring {
                     return inlined().storage;
                 case repr_tag_t::unowned:
                     return unowned().ptr;
-                case repr_tag_t::shared:
-                    return shared().ptr->data();
+                case repr_tag_t::sharedstr:
+                    return sharedstr().ptr->data();
             }
         }
 
@@ -321,8 +321,8 @@ class imstring {
                     return inlined().len;
                 case repr_tag_t::unowned:
                     return unowned().len;
-                case repr_tag_t::shared:
-                    return shared().ptr->length();
+                case repr_tag_t::sharedstr:
+                    return sharedstr().ptr->length();
             }
         }
 
@@ -357,13 +357,13 @@ class imstring {
             return inlined_;
         }
 
-        shared_repr_t &shared() {
-            check_tag(repr_tag_t::shared);
-            return shared_;
+        sharedstr_repr_t &sharedstr() {
+            check_tag(repr_tag_t::sharedstr);
+            return sharedstr_;
         }
-        const shared_repr_t &shared() const {
-            check_tag(repr_tag_t::shared);
-            return shared_;
+        const sharedstr_repr_t &sharedstr() const {
+            check_tag(repr_tag_t::sharedstr);
+            return sharedstr_;
         }
 
         // Set from our three representations.
@@ -377,9 +377,9 @@ class imstring {
             new (&unowned_) unowned_repr_t(v);
         }
 
-        void set(shared_repr_t v) {
+        void set(sharedstr_repr_t v) {
             destroy();
-            new (&shared_) shared_repr_t(std::move(v));
+            new (&sharedstr_) sharedstr_repr_t(std::move(v));
         }
 
         void set(const inlined_repr_t &v) {
@@ -403,7 +403,7 @@ class imstring {
         literal_repr_t literal_;
         unowned_repr_t unowned_;
         inlined_repr_t inlined_;
-        shared_repr_t shared_;
+        sharedstr_repr_t sharedstr_;
         struct {
             repr_tag_t tag;
         } tag_;

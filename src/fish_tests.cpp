@@ -623,7 +623,7 @@ static void test_imstring() {
     do_test(s4.get_backing_type() == tag_t::unowned);
     do_test(s4.c_str() == local);
     imstring s4c = s4;
-    do_test(s4c.get_backing_type() == tag_t::shared);
+    do_test(s4c.get_backing_type() == tag_t::sharedstr);
     do_test(s4c.c_str() != local);
 
     imstring s5 = L"i am literal"_im;
@@ -634,9 +634,9 @@ static void test_imstring() {
 
     imstring s6 = L"literal"_im;
     s6 = wcstring(L"ownership transfer");
-    do_test(s6.get_backing_type() == tag_t::shared);
+    do_test(s6.get_backing_type() == tag_t::sharedstr);
     imstring s6c = s6;
-    do_test(s6c.get_backing_type() == tag_t::shared);
+    do_test(s6c.get_backing_type() == tag_t::sharedstr);
     do_test(s6c.c_str() == s6.c_str());  // should be same pointers
 
     imstring s7 = local;
@@ -653,7 +653,7 @@ static void test_imstring() {
     // When constructing from a mutable pointer, we copy it.
     wchar_t *localptr = local;
     imstring s9{localptr};
-    do_test(s9.get_backing_type() == tag_t::shared);
+    do_test(s9.get_backing_type() == tag_t::sharedstr);
     do_test(s9.size() == wcslen(local));
 }
 
