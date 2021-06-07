@@ -233,6 +233,7 @@ class imstring {
     /// Our possible representations.
     enum class repr_tag_t : uint8_t {
         literal,  // we are backed by a string literal
+        inlined,  // we are backed by inlined storage
         unowned,  // we are backed by a transient string; copy it when we are copied or moved
         shared,   // we are backed by a shared_ptr<const wcstring>
     };
@@ -248,6 +249,14 @@ class imstring {
         repr_tag_t tag;
         const wchar_t *ptr;
         size_t len;
+    };
+    struct inlined_repr_t {
+        // we may store up to 4 bytes inline, plus nul term.
+        // The intent here is to be 24 bytes long.
+        static constexpr size_t kInlineCharCount = 4;
+        repr_tag_t tag;
+        uint8_t len;
+        wchar_t storage[kInlineCharCount + 1];
     };
     struct unowned_repr_t {
         repr_tag_t tag;
@@ -267,6 +276,7 @@ class imstring {
     /// Helper function for making a shared and owned representation.
     static inline shared_repr_t make_shared_repr(const wchar_t *ptr, size_t len);
     static inline shared_repr_t make_shared_repr(std::wstring &&str);
+    static inline inlined_repr_t make_inlined_repr(const wchar_t *ptr, size_t len);
 
     union repr_t {
        public:
@@ -276,6 +286,7 @@ class imstring {
         // Construct from our different representations.
         explicit constexpr repr_t(literal_repr_t v) : literal_(v) {}
         explicit constexpr repr_t(unowned_repr_t v) : unowned_(v) {}
+        explicit constexpr repr_t(const inlined_repr_t &v) : inlined_(v) {}
         explicit repr_t(shared_repr_t &&v) : shared_(std::move(v)) {}
 
         // Assert that our tag is what we expect.
@@ -292,6 +303,8 @@ class imstring {
             switch (tag()) {
                 case repr_tag_t::literal:
                     return literal().ptr;
+                case repr_tag_t::inlined:
+                    return inlined().storage;
                 case repr_tag_t::unowned:
                     return unowned().ptr;
                 case repr_tag_t::shared:
@@ -304,6 +317,8 @@ class imstring {
             switch (tag()) {
                 case repr_tag_t::literal:
                     return literal().len;
+                case repr_tag_t::inlined:
+                    return inlined().len;
                 case repr_tag_t::unowned:
                     return unowned().len;
                 case repr_tag_t::shared:
@@ -332,6 +347,16 @@ class imstring {
             return unowned_;
         }
 
+        inlined_repr_t &inlined() {
+            check_tag(repr_tag_t::inlined);
+            return inlined_;
+        }
+
+        const inlined_repr_t &inlined() const {
+            check_tag(repr_tag_t::inlined);
+            return inlined_;
+        }
+
         shared_repr_t &shared() {
             check_tag(repr_tag_t::shared);
             return shared_;
@@ -357,6 +382,11 @@ class imstring {
             new (&shared_) shared_repr_t(std::move(v));
         }
 
+        void set(const inlined_repr_t &v) {
+            destroy();
+            new (&inlined_) inlined_repr_t(v);
+        }
+
         // We have our own move and copy logic.
         repr_t(const repr_t &);
         repr_t &operator=(const repr_t &);
@@ -372,6 +402,7 @@ class imstring {
 
         literal_repr_t literal_;
         unowned_repr_t unowned_;
+        inlined_repr_t inlined_;
         shared_repr_t shared_;
         struct {
             repr_tag_t tag;

@@ -614,7 +614,7 @@ static void test_imstring() {
     do_test(s3.get_backing_type() == tag_t::unowned);
     do_test(s3.c_str() == cstr);
     imstring s3c = s3;
-    do_test(s3c.get_backing_type() == tag_t::shared);
+    do_test(s3c.get_backing_type() == tag_t::inlined);
     do_test(s3c.c_str() != cstr);
     do_test(s3c.c_str() == wcstring(cstr));
 

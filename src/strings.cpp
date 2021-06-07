@@ -15,8 +15,19 @@ inline imstring::shared_repr_t imstring::make_shared_repr(std::wstring &&str) {
 }
 
 // static
-imstring::shared_repr_t imstring::make_shared_repr(const wchar_t *ptr, size_t len) {
+inline imstring::shared_repr_t imstring::make_shared_repr(const wchar_t *ptr, size_t len) {
     return shared_repr_t{repr_tag_t::shared, std::make_shared<std::wstring>(ptr, len)};
+}
+
+// static
+inline imstring::inlined_repr_t imstring::make_inlined_repr(const wchar_t *ptr, size_t len) {
+    assert(len <= inlined_repr_t::kInlineCharCount && "length is too big");
+    inlined_repr_t repr;
+    repr.tag = repr_tag_t::inlined;
+    repr.len = static_cast<uint8_t>(len);
+    // +1 for nul term
+    std::uninitialized_copy_n(ptr, len + 1, &repr.storage[0]);
+    return repr;
 }
 
 void imstring::repr_t::destroy() {
@@ -26,6 +37,9 @@ void imstring::repr_t::destroy() {
             break;
         case repr_tag_t::unowned:
             unowned().~unowned_repr_t();
+            break;
+        case repr_tag_t::inlined:
+            inlined().~inlined_repr_t();
             break;
         case repr_tag_t::shared:
             shared().~shared_repr_t();
@@ -37,7 +51,14 @@ imstring::repr_t::~repr_t() { this->destroy(); }
 
 imstring::imstring(const imstring &rhs) { set_or_copy_from(rhs); }
 
-imstring::imstring(wcstring &&rhs) : repr_(make_shared_repr(std::move(rhs))) {}
+imstring::imstring(wcstring &&rhs) {
+    size_t len = rhs.size();
+    if (len <= inlined_repr_t::kInlineCharCount) {
+        repr_.set(make_inlined_repr(rhs.c_str(), rhs.size()));
+    } else {
+        repr_.set(make_shared_repr(std::move(rhs)));
+    }
+}
 
 imstring &imstring::operator=(const imstring &rhs) {
     if (this != &rhs) {
@@ -52,7 +73,14 @@ void imstring::set_or_copy_from(const imstring &rhs) {
             this->repr_.set(rhs.repr_.literal());
             break;
         case repr_tag_t::unowned:
-            this->repr_.set(make_shared_repr(rhs.data(), rhs.size()));
+            if (rhs.size() <= inlined_repr_t::kInlineCharCount) {
+                this->repr_.set(make_inlined_repr(rhs.c_str(), rhs.size()));
+            } else {
+                this->repr_.set(make_shared_repr(rhs.c_str(), rhs.size()));
+            }
+            break;
+        case repr_tag_t::inlined:
+            this->repr_.set(rhs.repr_.inlined());
             break;
         case repr_tag_t::shared:
             this->repr_.set(rhs.repr_.shared());
