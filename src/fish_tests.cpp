@@ -623,7 +623,7 @@ static void test_imstring() {
     do_test(s4.get_backing_type() == tag_t::unowned);
     do_test(s4.c_str() == local);
     imstring s4c = s4;
-    do_test(s4c.get_backing_type() == tag_t::sharedstr);
+    do_test(s4c.get_backing_type() == tag_t::sharedarr);
     do_test(s4c.c_str() != local);
 
     imstring s5 = L"i am literal"_im;

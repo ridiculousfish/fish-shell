@@ -236,6 +236,7 @@ class imstring {
         inlined,    // we are backed by inlined storage
         unowned,    // we are backed by a transient string; copy it when we are copied or moved
         sharedstr,  // we are backed by a shared_ptr<const wcstring>
+        sharedarr,  // we are backed by a shared_ptr<wchar_t[]>
     };
     repr_tag_t get_backing_type() const { return repr_.tag(); }
 
@@ -244,6 +245,61 @@ class imstring {
    private:
     // Set this equal to another string, perhaps copying it.
     void set_or_copy_from(const imstring &rhs);
+
+    // Copy from a ptr, using the best representation.
+    void set_from_ptr(const wchar_t *ptr, size_t len);
+
+    // A simple intrusive shared_ptr implementation.
+    template <typename T>
+    struct intrusive_shared_ptr_t {
+        intrusive_shared_ptr_t() = default;
+
+        // Construct, taking ownership.
+        explicit intrusive_shared_ptr_t(T *ptr) : ptr_(ptr) {
+            increment();
+        }
+
+        ~intrusive_shared_ptr_t() {
+            decrement();
+        }
+
+        T *operator->() { return ptr_; }
+        const T *operator->() const { return ptr_; }
+
+        intrusive_shared_ptr_t(const intrusive_shared_ptr_t &rhs) : intrusive_shared_ptr_t(rhs.ptr_) {}
+        void operator=(const intrusive_shared_ptr_t &) = delete;
+
+        intrusive_shared_ptr_t(intrusive_shared_ptr_t &&rhs) : ptr_{} {
+            std::swap(rhs.ptr_, this->ptr_);
+        }
+        void operator=(intrusive_shared_ptr_t &&rhs) {
+            std::swap(rhs.ptr_, this->ptr_);
+        }
+
+       private:
+        // Increment the reference count of our pointer.
+        void increment() {
+            if (! ptr_) return;
+                uint32_t rc = 1 + ptr_->rc.fetch_add(1, std::memory_order_relaxed);
+                assert(rc > 0 && "Refcount overflow");
+                (void)rc;
+
+        }
+
+        // Decrement the reference count of our pointer, and delete it if it reaches zero.
+        void decrement() {
+            if (! ptr_) return;
+            uint32_t oldrc = ptr_->rc.fetch_sub(1, std::memory_order_relaxed);
+            assert(oldrc > 0 && "Refcount underflow");
+            if (oldrc == 1) {
+                // decremented to 0
+                ptr_->delete_self();
+            }
+        }
+
+        // Our pointed-to value.
+        T * ptr_{};
+    };
 
     struct literal_repr_t {
         repr_tag_t tag;
@@ -267,16 +323,29 @@ class imstring {
         repr_tag_t tag;
         std::shared_ptr<const std::wstring> ptr;
     };
+    struct sharedarr_repr_t {
+        repr_tag_t tag;
+        uint32_t len;
+        struct storage_t {
+            std::atomic<uint32_t> rc;
+            wchar_t chars[1];
+
+            void delete_self() {
+                free(this);
+            }
+        };
+        intrusive_shared_ptr_t<storage_t> ptr;
+    };
 
     // Helper function for creating an empty literal representation.
     static constexpr inline literal_repr_t empty_literal() {
         return literal_repr_t{repr_tag_t::literal, L"", 0};
     }
 
-    /// Helper function for making a shared and owned representation.
-    static inline sharedstr_repr_t make_shared_repr(const wchar_t *ptr, size_t len);
+    /// Helper function for making a shared and owned representation
     static inline sharedstr_repr_t make_sharedstr_repr(std::wstring &&str);
     static inline inlined_repr_t make_inlined_repr(const wchar_t *ptr, size_t len);
+    static inline sharedarr_repr_t make_sharedarr_repr(const wchar_t *ptr, size_t len);
 
     union repr_t {
        public:
@@ -309,6 +378,8 @@ class imstring {
                     return unowned().ptr;
                 case repr_tag_t::sharedstr:
                     return sharedstr().ptr->data();
+                case repr_tag_t::sharedarr:
+                    return sharedarr().ptr->chars;
             }
         }
 
@@ -323,6 +394,8 @@ class imstring {
                     return unowned().len;
                 case repr_tag_t::sharedstr:
                     return sharedstr().ptr->length();
+                case repr_tag_t::sharedarr:
+                    return sharedarr().len;
             }
         }
 
@@ -366,6 +439,15 @@ class imstring {
             return sharedstr_;
         }
 
+        sharedarr_repr_t &sharedarr() {
+            check_tag(repr_tag_t::sharedarr);
+            return sharedarr_;
+        }
+        const sharedarr_repr_t &sharedarr() const {
+            check_tag(repr_tag_t::sharedarr);
+            return sharedarr_;
+        }
+
         // Set from our three representations.
         void set(literal_repr_t v) {
             destroy();
@@ -377,14 +459,19 @@ class imstring {
             new (&unowned_) unowned_repr_t(v);
         }
 
+        void set(const inlined_repr_t &v) {
+            destroy();
+            new (&inlined_) inlined_repr_t(v);
+        }
+
         void set(sharedstr_repr_t v) {
             destroy();
             new (&sharedstr_) sharedstr_repr_t(std::move(v));
         }
 
-        void set(const inlined_repr_t &v) {
+        void set(sharedarr_repr_t v) {
             destroy();
-            new (&inlined_) inlined_repr_t(v);
+            new (&sharedarr_) sharedarr_repr_t(std::move(v));
         }
 
         // We have our own move and copy logic.
@@ -404,6 +491,7 @@ class imstring {
         unowned_repr_t unowned_;
         inlined_repr_t inlined_;
         sharedstr_repr_t sharedstr_;
+        sharedarr_repr_t sharedarr_;
         struct {
             repr_tag_t tag;
         } tag_;

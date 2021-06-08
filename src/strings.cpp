@@ -5,19 +5,24 @@
 #include "strings.h"
 
 #include "common.h"
+#include "flog.h"
 
 #define nssv_CONFIG_NO_EXCEPTIONS 1
 #include "nonstd/string_view.hpp"
+
+// The maximum number of chars we can store in our shared_arr.
+// This is intended to simplify malloc calculations. Note this is on order 1 billion.
+// -1 is for nul terminator.
+static constexpr size_t kMaxSharedArrCharCount =
+    (std::numeric_limits<uint32_t>::max() / sizeof(wchar_t)) - 1;
+
+// The threshold for adopting a string instead of copying its characters to a new allocation.
+static constexpr size_t kStringAdoptionThreshold = 24;
 
 // static
 inline imstring::sharedstr_repr_t imstring::make_sharedstr_repr(std::wstring &&str) {
     return sharedstr_repr_t{repr_tag_t::sharedstr,
                             std::make_shared<const std::wstring>(std::move(str))};
-}
-
-// static
-inline imstring::sharedstr_repr_t imstring::make_shared_repr(const wchar_t *ptr, size_t len) {
-    return sharedstr_repr_t{repr_tag_t::sharedstr, std::make_shared<const std::wstring>(ptr, len)};
 }
 
 // static
@@ -28,6 +33,29 @@ inline imstring::inlined_repr_t imstring::make_inlined_repr(const wchar_t *ptr, 
     repr.len = static_cast<uint8_t>(len);
     // +1 for nul term
     std::uninitialized_copy_n(ptr, len + 1, &repr.storage[0]);
+    return repr;
+}
+
+// static
+inline imstring::sharedarr_repr_t imstring::make_sharedarr_repr(const wchar_t *ptr, size_t len) {
+    using storage_t = sharedarr_repr_t::storage_t;
+    assert(len <= kMaxSharedArrCharCount && "Length too big");
+    // Sadly no make_shared with arrays in C++11.
+    // We use malloc/free explicitly.
+    // Note storage_t has chars of size 1; we need this 1 for our nul terminator.
+    size_t mem_size = sizeof(storage_t) + len * sizeof(wchar_t);
+    storage_t *storage = static_cast<storage_t *>(malloc(mem_size));
+    if (!storage) {
+        FLOGF(error, "malloc(%lu) failed", (unsigned long)mem_size);
+        abort();
+    }
+    storage->rc = 0;
+    // +1 for nul terminator.
+    std::uninitialized_copy_n(ptr, len + 1, storage->chars);
+    sharedarr_repr_t repr;
+    repr.tag = repr_tag_t::sharedarr;
+    repr.len = static_cast<uint32_t>(len);
+    repr.ptr = intrusive_shared_ptr_t<storage_t>(storage);
     return repr;
 }
 
@@ -45,6 +73,9 @@ void imstring::repr_t::destroy() {
         case repr_tag_t::sharedstr:
             sharedstr().~sharedstr_repr_t();
             break;
+        case repr_tag_t::sharedarr:
+            sharedarr().~sharedarr_repr_t();
+            break;
     }
 }
 
@@ -56,6 +87,8 @@ imstring::imstring(wcstring &&rhs) {
     size_t len = rhs.size();
     if (len <= inlined_repr_t::kInlineCharCount) {
         repr_.set(make_inlined_repr(rhs.c_str(), rhs.size()));
+    } else if (len < kStringAdoptionThreshold) {
+        repr_.set(make_sharedarr_repr(rhs.c_str(), rhs.size()));
     } else {
         repr_.set(make_sharedstr_repr(std::move(rhs)));
     }
@@ -76,8 +109,10 @@ void imstring::set_or_copy_from(const imstring &rhs) {
         case repr_tag_t::unowned:
             if (rhs.size() <= inlined_repr_t::kInlineCharCount) {
                 this->repr_.set(make_inlined_repr(rhs.c_str(), rhs.size()));
+            } else if (rhs.size() <= kMaxSharedArrCharCount) {
+                this->repr_.set(make_sharedarr_repr(rhs.c_str(), rhs.size()));
             } else {
-                this->repr_.set(make_shared_repr(rhs.c_str(), rhs.size()));
+                this->repr_.set(make_sharedstr_repr(rhs.to_wcstring()));
             }
             break;
         case repr_tag_t::inlined:
@@ -86,15 +121,27 @@ void imstring::set_or_copy_from(const imstring &rhs) {
         case repr_tag_t::sharedstr:
             this->repr_.set(rhs.repr_.sharedstr());
             break;
+        case repr_tag_t::sharedarr:
+            this->repr_.set(rhs.repr_.sharedarr());
+            break;
+    }
+}
+
+void imstring::set_from_ptr(const wchar_t *ptr, size_t len) {
+    if (len <= inlined_repr_t::kInlineCharCount) {
+        this->repr_.set(make_inlined_repr(ptr, len));
+    } else if (len <= kMaxSharedArrCharCount) {
+        this->repr_.set(make_sharedarr_repr(ptr, len));
+    } else {
+        this->repr_.set(make_sharedstr_repr(wcstring(ptr, len)));
     }
 }
 
 imstring imstring::substr(size_t pos, size_t count) const {
-    // TODO: this can be made more efficient in some cases.
     assert(pos <= size() && "Position out of bounds");
     size_t eff_count = std::min(count, size() - pos);
-    imstring result;
-    result.repr_.set(make_shared_repr(this->data() + pos, eff_count));
+    imstring result{};
+    result.set_from_ptr(this->data() + pos, eff_count);
     return result;
 }
 
