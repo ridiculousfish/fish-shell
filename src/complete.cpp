@@ -166,7 +166,7 @@ using completion_entry_set_t = std::unordered_set<completion_entry_t>;
 static owning_lock<completion_entry_set_t> s_completion_set;
 
 /// Completion "wrapper" support. The map goes from wrapping-command to wrapped-command-list.
-using wrapper_map_t = std::unordered_map<imstring, wcstring_list_t>;
+using wrapper_map_t = std::unordered_map<imstring, imstring_list_t>;
 static owning_lock<wrapper_map_t> wrapper_map;
 
 /// Comparison function to sort completions by their order field.
@@ -179,10 +179,10 @@ void completion_entry_t::add_option(const complete_entry_opt_t &opt) { options.p
 
 const option_list_t &completion_entry_t::get_options() const { return options; }
 
-description_func_t const_desc(const wcstring &s) {
+description_func_t const_desc(const imstring &s) {
     return [=](const imstring &ignored) {
         UNUSED(ignored);
-        return s;
+        return s.to_wcstring();
     };
 }
 
@@ -370,25 +370,25 @@ class completer_t {
     bool try_complete_variable(const wcstring &str);
     bool try_complete_user(const wcstring &str);
 
-    bool complete_param_for_command(const wcstring &cmd_orig, const wcstring &popt,
-                                    const wcstring &str, bool use_switches, bool *out_do_file);
+    bool complete_param_for_command(const imstring &cmd_orig, const imstring &popt,
+                                    const imstring &str, bool use_switches, bool *out_do_file);
 
-    void complete_param_expand(const wcstring &str, bool do_file,
+    void complete_param_expand(const imstring &str, bool do_file,
                                bool handle_as_special_cd = false);
 
-    void complete_cmd(const wcstring &str);
+    void complete_cmd(const imstring &str);
 
     /// Attempt to complete an abbreviation for the given string.
     void complete_abbr(const imstring &cmd);
 
-    void complete_from_args(const wcstring &str, const wcstring &args, const wcstring &desc,
+    void complete_from_args(const imstring &str, const imstring &args, const imstring &desc,
                             complete_flags_t flags);
 
-    void complete_cmd_desc(const wcstring &str);
+    void complete_cmd_desc(const imstring &str);
 
-    bool complete_variable(const wcstring &str, size_t start_offset);
+    bool complete_variable(const imstring &str, size_t start_offset);
 
-    bool condition_test(const wcstring &condition);
+    bool condition_test(const imstring &condition);
 
     void complete_strings(const imstring &wc_escaped, const description_func_t &desc_func,
                           const completion_list_t &possible_comp, complete_flags_t flags);
@@ -432,9 +432,9 @@ class completer_t {
         std::set<wcstring> visited_wrapped_commands{};
     };
 
-    void complete_custom(const wcstring &cmd, const wcstring &cmdline, custom_arg_data_t *ad);
+    void complete_custom(const imstring &cmd, const imstring &cmdline, custom_arg_data_t *ad);
 
-    void walk_wrap_chain(const wcstring &cmd, const wcstring &cmdline, source_range_t cmdrange,
+    void walk_wrap_chain(const imstring &cmd, const imstring &cmdline, source_range_t cmdrange,
                          custom_arg_data_t *ad);
 
     cleanup_t apply_var_assignments(const wcstring_list_t &var_assignments);
@@ -467,7 +467,7 @@ void append_completion(completion_list_t *completions, wcstring comp, wcstring d
 /// Test if the specified script returns zero. The result is cached, so that if multiple completions
 /// use the same condition, it needs only be evaluated once. condition_cache_clear must be called
 /// after a completion run to make sure that there are no stale completions.
-bool completer_t::condition_test(const wcstring &condition) {
+bool completer_t::condition_test(const imstring &condition) {
     if (condition.empty()) {
         // std::fwprintf( stderr, L"No condition specified\n" );
         return true;
@@ -568,7 +568,7 @@ void complete_remove_all(const imstring &cmd, bool cmd_is_path) {
 }
 
 /// Find the full path and commandname from a command string 'str'.
-static void parse_cmd_string(const wcstring &str, wcstring *path, wcstring *cmd,
+static void parse_cmd_string(const imstring &str, wcstring *path, wcstring *cmd,
                              const environment_t &vars) {
     bool found = path_get_path(str, path, vars);
     // If the command was not found, 'path' is the empty string.
@@ -582,9 +582,9 @@ static void parse_cmd_string(const wcstring &str, wcstring *path, wcstring *cmd,
     // Make sure the path is not included in the command.
     size_t last_slash = str.find_last_of(L'/');
     if (last_slash != wcstring::npos) {
-        *cmd = str.substr(last_slash + 1);
+        *cmd = str.substr_wcstring(last_slash + 1);
     } else {
-        *cmd = str;
+        *cmd = str.to_wcstring();
     }
 }
 
@@ -630,7 +630,7 @@ void completer_t::complete_strings(const imstring &wc_escaped, const description
 
 /// If command to complete is short enough, substitute the description with the whatis information
 /// for the executable.
-void completer_t::complete_cmd_desc(const wcstring &str) {
+void completer_t::complete_cmd_desc(const imstring &str) {
     ASSERT_IS_MAIN_THREAD();
     if (!ctx.parser) return;
 
@@ -638,9 +638,9 @@ void completer_t::complete_cmd_desc(const wcstring &str) {
     size_t pos = str.find_last_of(L'/');
     if (pos != std::string::npos) {
         if (pos + 1 > str.length()) return;
-        cmd = wcstring(str, pos + 1);
+        cmd = str.substr_wcstring(pos + 1);
     } else {
-        cmd = str;
+        cmd = str.to_wcstring();
     }
 
     // Using apropos with a single-character search term produces far to many results - require at
@@ -722,12 +722,12 @@ static wcstring complete_function_desc(const imstring &fn) {
 /// using an absolute path, functions, builtins and directories for implicit cd commands.
 ///
 /// \param str_cmd the command string to find completions for
-void completer_t::complete_cmd(const wcstring &str_cmd) {
+void completer_t::complete_cmd(const imstring &str_cmd) {
     completion_list_t possible_comp;
 
     // Append all possible executables
     expand_result_t result =
-        expand_string(str_cmd, &this->completions,
+        expand_string(str_cmd.to_wcstring(), &this->completions,
                       this->expand_flags() | expand_flag::special_for_command |
                           expand_flag::for_completions | expand_flag::executables_only,
                       ctx);
@@ -743,7 +743,7 @@ void completer_t::complete_cmd(const wcstring &str_cmd) {
     expand_result_t ignore =
         // Append all matching directories
         expand_string(
-            str_cmd, &this->completions,
+            str_cmd.to_wcstring(), &this->completions,
             this->expand_flags() | expand_flag::for_completions | expand_flag::directories_only,
             ctx);
     UNUSED(ignore);
@@ -797,8 +797,8 @@ void completer_t::complete_abbr(const imstring &cmd) {
 /// @param  flags
 ///    The flags
 ///
-void completer_t::complete_from_args(const wcstring &str, const wcstring &args,
-                                     const wcstring &desc, complete_flags_t flags) {
+void completer_t::complete_from_args(const imstring &str, const imstring &args,
+                                     const imstring &desc, complete_flags_t flags) {
     bool is_autosuggest = (this->type() == COMPLETE_AUTOSUGGEST);
 
     bool saved_interactive = false;
@@ -877,7 +877,7 @@ static const wchar_t *param_match2(const complete_entry_opt_t *e, const wchar_t 
 /// Returns the position of the last option character (e.g. the position of z which is 2).
 /// Everything after that is assumed to be part of the parameter.
 /// Returns wcstring::npos if there is no valid short option.
-static size_t short_option_pos(const wcstring &arg, const option_list_t &options) {
+static size_t short_option_pos(const imstring &arg, const option_list_t &options) {
     if (arg.size() <= 1 || leading_dash_count(arg.c_str()) != 1) {
         return wcstring::npos;
     }
@@ -931,8 +931,8 @@ static void complete_load(const wcstring &name) {
 ///   echo hello world <tab> -> ("echo", "world", "")
 ///   echo hello world<tab> -> ("echo", "hello", "world")
 ///
-bool completer_t::complete_param_for_command(const wcstring &cmd_orig, const wcstring &popt,
-                                             const wcstring &str, bool use_switches,
+bool completer_t::complete_param_for_command(const imstring &cmd_orig, const imstring &popt,
+                                             const imstring &str, bool use_switches,
                                              bool *out_do_file) {
     bool use_common = true, use_files = true, has_force = false;
 
@@ -1155,7 +1155,7 @@ bool completer_t::complete_param_for_command(const wcstring &cmd_orig, const wcs
 }
 
 /// Perform generic (not command-specific) expansions on the specified string.
-void completer_t::complete_param_expand(const wcstring &str, bool do_file,
+void completer_t::complete_param_expand(const imstring &str, bool do_file,
                                         bool handle_as_special_cd) {
     if (ctx.check_cancel()) return;
     expand_flags_t flags =
@@ -1189,7 +1189,7 @@ void completer_t::complete_param_expand(const wcstring &str, bool do_file,
         // FIXME: This just cuts the token,
         // so any quoting or braces gets lost.
         // See #4954.
-        const wcstring sep_string = wcstring(str, sep_index + 1);
+        const wcstring sep_string = str.substr_wcstring(sep_index + 1);
         completion_list_t local_completions;
         if (expand_string(sep_string, &local_completions, flags, ctx) == expand_result_t::error) {
             FLOGF(complete, L"Error while expanding string '%ls'", sep_string.c_str());
@@ -1197,7 +1197,7 @@ void completer_t::complete_param_expand(const wcstring &str, bool do_file,
 
         // Any COMPLETE_REPLACES_TOKEN will also stomp the separator. We need to "repair" them by
         // inserting our separator and prefix.
-        const wcstring prefix_with_sep = wcstring(str, 0, sep_index + 1);
+        const wcstring prefix_with_sep = str.substr_wcstring(0, sep_index + 1);
         for (completion_t &comp : local_completions) {
             comp.prepend_token_prefix(prefix_with_sep);
         }
@@ -1211,7 +1211,8 @@ void completer_t::complete_param_expand(const wcstring &str, bool do_file,
         // consider relaxing this if there was a preceding double-dash argument.
         if (string_prefixes_string(L"-", str)) flags.clear(expand_flag::fuzzy_match);
 
-        if (expand_string(str, &this->completions, flags, ctx) == expand_result_t::error) {
+        if (expand_string(str.to_wcstring(), &this->completions, flags, ctx) ==
+            expand_result_t::error) {
             FLOGF(complete, L"Error while expanding string '%ls'", str.c_str());
         }
     }
@@ -1219,7 +1220,7 @@ void completer_t::complete_param_expand(const wcstring &str, bool do_file,
 
 /// Complete the specified string as an environment variable.
 /// \return true if this was a variable, so we should stop completion.
-bool completer_t::complete_variable(const wcstring &str, size_t start_offset) {
+bool completer_t::complete_variable(const imstring &str, size_t start_offset) {
     const wchar_t *const whole_var = str.c_str();
     const wchar_t *var = &whole_var[start_offset];
     size_t varlen = str.length() - start_offset;
@@ -1433,7 +1434,7 @@ cleanup_t completer_t::apply_var_assignments(const wcstring_list_t &var_assignme
 }
 
 // Complete a command by invoking user-specified completions.
-void completer_t::complete_custom(const wcstring &cmd, const wcstring &cmdline,
+void completer_t::complete_custom(const imstring &cmd, const imstring &cmdline,
                                   custom_arg_data_t *ad) {
     if (ctx.check_cancel()) return;
 
@@ -1465,7 +1466,7 @@ void completer_t::complete_custom(const wcstring &cmd, const wcstring &cmdline,
 // cmdline and the command's range in it is given by \p cmdrange. Note: the command range
 // may have a different length than the command itself, because the command is unescaped (i.e.
 // quotes removed).
-void completer_t::walk_wrap_chain(const wcstring &cmd, const wcstring &cmdline,
+void completer_t::walk_wrap_chain(const imstring &cmd, const imstring &cmdline,
                                   source_range_t cmdrange, custom_arg_data_t *ad) {
     // Limit our recursion depth. This prevents cycles in the wrap chain graph from overflowing.
     if (ad->wrap_depth > 24) return;
@@ -1474,10 +1475,10 @@ void completer_t::walk_wrap_chain(const wcstring &cmd, const wcstring &cmdline,
     // Extract command from the command line and invoke the receiver with it.
     complete_custom(cmd, cmdline, ad);
 
-    wcstring_list_t targets = complete_get_wrap_targets(cmd);
+    imstring_list_t targets = complete_get_wrap_targets(cmd);
     scoped_push<size_t> saved_depth(&ad->wrap_depth, ad->wrap_depth + 1);
 
-    for (const wcstring &wt : targets) {
+    for (const imstring &wt : targets) {
         // We may append to the variable assignment list; ensure we restore it.
         const size_t saved_var_count = ad->var_assignments->size();
         cleanup_t restore_vars([=] {
@@ -1508,8 +1509,8 @@ void completer_t::walk_wrap_chain(const wcstring &cmd, const wcstring &cmdline,
         }
 
         // Construct a fake command line containing the wrap target.
-        wcstring faux_commandline = cmdline;
-        faux_commandline.replace(cmdrange.start, cmdrange.length, wt);
+        wcstring faux_commandline = cmdline.to_wcstring();
+        faux_commandline.replace(cmdrange.start, cmdrange.length, wt.data(), wt.size());
 
         // Recurse with our new command and command line.
         source_range_t faux_source_range{uint32_t(cmdrange.start + wrapped_command_offset_in_wt),
@@ -1777,12 +1778,12 @@ static void append_switch(wcstring &out, wchar_t opt, const imstring &arg) {
     if (arg.empty()) return;
     append_format(out, L" -%lc %ls", opt, escape_string(arg, ESCAPE_ALL).c_str());
 }
-static void append_switch(wcstring &out, const wcstring &opt, const wcstring &arg) {
+static void append_switch(wcstring &out, const imstring &opt, const imstring &arg) {
     if (arg.empty()) return;
     append_format(out, L" --%ls %ls", opt.c_str(), escape_string(arg, ESCAPE_ALL).c_str());
 }
 static void append_switch(wcstring &out, wchar_t opt) { append_format(out, L" -%lc", opt); }
-static void append_switch(wcstring &out, const wcstring &opt) {
+static void append_switch(wcstring &out, const imstring &opt) {
     append_format(out, L" --%ls", opt.c_str());
 }
 
@@ -1833,7 +1834,7 @@ static wcstring completion2string(const complete_entry_opt_t &o, const imstring 
 }
 
 /// Use by the bare `complete`, loaded completions are printed out as commands
-wcstring complete_print(const wcstring &cmd) {
+wcstring complete_print(const imstring &cmd) {
     wcstring out;
     out.reserve(40);  // just a guess
     auto completion_set = s_completion_set.acquire();
@@ -1857,7 +1858,7 @@ wcstring complete_print(const wcstring &cmd) {
     for (const auto &entry : *locked_wrappers) {
         const imstring &src = entry.first;
         if (!cmd.empty() && src != cmd) continue;
-        for (const wcstring &target : entry.second) {
+        for (const imstring &target : entry.second) {
             out.append(L"complete ");
             out.append(escape_string(src, ESCAPE_ALL));
             append_switch(out, L"wraps", target);
@@ -1878,7 +1879,7 @@ void complete_invalidate_path() {
 }
 
 /// Add a new target that wraps a command. Example: __fish_XYZ (function) wraps XYZ (target).
-bool complete_add_wrapper(const wcstring &command, const wcstring &new_target) {
+bool complete_add_wrapper(const imstring &command, const imstring &new_target) {
     if (command.empty() || new_target.empty()) {
         return false;
     }
@@ -1890,7 +1891,7 @@ bool complete_add_wrapper(const wcstring &command, const wcstring &new_target) {
 
     auto locked_map = wrapper_map.acquire();
     wrapper_map_t &wraps = *locked_map;
-    wcstring_list_t *targets = &wraps[command];
+    imstring_list_t *targets = &wraps[command];
     // If it's already present, we do nothing.
     if (!contains(*targets, new_target)) {
         targets->push_back(new_target);
@@ -1898,7 +1899,7 @@ bool complete_add_wrapper(const wcstring &command, const wcstring &new_target) {
     return true;
 }
 
-bool complete_remove_wrapper(const wcstring &command, const wcstring &target_to_remove) {
+bool complete_remove_wrapper(const imstring &command, const imstring &target_to_remove) {
     if (command.empty() || target_to_remove.empty()) {
         return false;
     }
@@ -1908,7 +1909,7 @@ bool complete_remove_wrapper(const wcstring &command, const wcstring &target_to_
     bool result = false;
     auto current_targets_iter = wraps.find(command);
     if (current_targets_iter != wraps.end()) {
-        wcstring_list_t *targets = &current_targets_iter->second;
+        imstring_list_t *targets = &current_targets_iter->second;
         auto where = std::find(targets->begin(), targets->end(), target_to_remove);
         if (where != targets->end()) {
             targets->erase(where);
@@ -1918,7 +1919,7 @@ bool complete_remove_wrapper(const wcstring &command, const wcstring &target_to_
     return result;
 }
 
-wcstring_list_t complete_get_wrap_targets(const imstring &command) {
+imstring_list_t complete_get_wrap_targets(const imstring &command) {
     if (command.empty()) {
         return {};
     }

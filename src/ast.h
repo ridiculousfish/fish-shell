@@ -282,13 +282,13 @@ struct node_t {
     }
 
     /// \return the source code for this node, or none if unsourced.
-    maybe_t<wcstring> try_source(const wcstring &orig) const {
-        if (auto r = try_source_range()) return orig.substr(r->start, r->length);
+    maybe_t<wcstring> try_source(const imstring &orig) const {
+        if (auto r = try_source_range()) return orig.substr_wcstring(r->start, r->length);
         return none();
     }
 
     /// \return the source code for this node, or an empty string if unsourced.
-    wcstring source(const wcstring &orig) const {
+    wcstring source(const imstring &orig) const {
         wcstring res{};
         if (auto s = try_source(orig)) res = s.acquire();
         return res;
@@ -296,9 +296,9 @@ struct node_t {
 
     /// \return the source code for this node, or an empty string if unsourced.
     /// This uses \p storage to reduce allocations.
-    const wcstring &source(const wcstring &orig, wcstring *storage) const {
+    const wcstring &source(const imstring &orig, wcstring *storage) const {
         if (auto r = try_source_range()) {
-            storage->assign(orig, r->start, r->length);
+            storage->assign(orig.data() + r->start, r->length);
         } else {
             storage->clear();
         }
@@ -966,11 +966,11 @@ class ast_t {
     /// Construct an ast by parsing \p src as a job list.
     /// The ast attempts to produce \p type as the result.
     /// \p type may only be job_list or freestanding_argument_list.
-    static ast_t parse(const wcstring &src, parse_tree_flags_t flags = parse_flag_none,
+    static ast_t parse(const imstring &src, parse_tree_flags_t flags = parse_flag_none,
                        parse_error_list_t *out_errors = nullptr);
 
     /// Like parse(), but constructs a freestanding_argument_list.
-    static ast_t parse_argument_list(const wcstring &src,
+    static ast_t parse_argument_list(const imstring &src,
                                      parse_tree_flags_t flags = parse_flag_none,
                                      parse_error_list_t *out_errors = nullptr);
 
@@ -985,7 +985,7 @@ class ast_t {
 
     /// \return a textual representation of the tree.
     /// Pass the original source as \p orig.
-    wcstring dump(const wcstring &orig) const;
+    wcstring dump(const imstring &orig) const;
 
     /// Extra source ranges.
     /// These are only generated if the corresponding flags are set.
@@ -1043,7 +1043,7 @@ class ast_t {
     ast_t() = default;
 
     // Shared parsing code that takes the top type.
-    static ast_t parse_from_top(const wcstring &src, parse_tree_flags_t parse_flags,
+    static ast_t parse_from_top(const imstring &src, parse_tree_flags_t parse_flags,
                                 parse_error_list_t *out_errors, type_t top);
 
     // The top node.

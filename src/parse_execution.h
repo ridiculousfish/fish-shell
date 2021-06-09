@@ -165,7 +165,7 @@ class parse_execution_context_t {
     int get_current_source_offset() const;
 
     /// Returns the source string.
-    const wcstring &get_source() const { return pstree->src; }
+    const imstring &get_source() const { return pstree->src; }
 
     /// Return the parsed ast.
     const ast::ast_t &ast() const { return pstree->ast; }

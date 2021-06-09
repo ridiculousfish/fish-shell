@@ -293,7 +293,7 @@ void parser_t::emit_profiling(const char *path) const {
     }
 }
 
-completion_list_t parser_t::expand_argument_list(const wcstring &arg_list_src,
+completion_list_t parser_t::expand_argument_list(const imstring &arg_list_src,
                                                  expand_flags_t eflags,
                                                  const operation_context_t &ctx) {
     // Parse the string as an argument list.
@@ -599,11 +599,11 @@ profile_item_t *parser_t::create_profile_item() {
     return nullptr;
 }
 
-eval_res_t parser_t::eval(const wcstring &cmd, const io_chain_t &io,
+eval_res_t parser_t::eval(const imstring &cmd, const io_chain_t &io,
                           const job_group_ref_t &job_group, enum block_type_t block_type) {
     // Parse the source into a tree, if we can.
     parse_error_list_t error_list;
-    if (parsed_source_ref_t ps = parse_source(wcstring{cmd}, parse_flag_none, &error_list)) {
+    if (parsed_source_ref_t ps = parse_source(cmd, parse_flag_none, &error_list)) {
         return this->eval(ps, io, job_group, block_type);
     } else {
         // Get a backtrace. This includes the message.
@@ -727,7 +727,7 @@ template eval_res_t parser_t::eval_node(const parsed_source_ref_t &, const ast::
 template eval_res_t parser_t::eval_node(const parsed_source_ref_t &, const ast::job_list_t &,
                                         const io_chain_t &, const job_group_ref_t &, block_type_t);
 
-void parser_t::get_backtrace(const wcstring &src, const parse_error_list_t &errors,
+void parser_t::get_backtrace(const imstring &src, const parse_error_list_t &errors,
                              wcstring &output) const {
     if (!errors.empty()) {
         const parse_error_t &err = errors.at(0);

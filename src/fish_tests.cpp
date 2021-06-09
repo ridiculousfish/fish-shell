@@ -149,14 +149,25 @@ void err(const wchar_t *blah, ...) {
     std::fwprintf(stdout, L"\n");
 }
 
-/// Joins a wcstring_list_t via commas.
+/// Joins a list via commas.
+static wcstring comma_join(const imstring_list_t &lst) {
+    wcstring result;
+    bool first = true;
+    for (const auto &str : lst) {
+        if (!first) result.push_back(L',');
+        result += str;
+        first = false;
+    }
+    return result;
+}
+
 static wcstring comma_join(const wcstring_list_t &lst) {
     wcstring result;
-    for (size_t i = 0; i < lst.size(); i++) {
-        if (i > 0) {
-            result.push_back(L',');
-        }
-        result.append(lst.at(i));
+    bool first = true;
+    for (const auto &str : lst) {
+        if (!first) result.push_back(L',');
+        result += str;
+        first = false;
     }
     return result;
 }

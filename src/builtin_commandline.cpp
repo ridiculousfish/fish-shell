@@ -151,7 +151,7 @@ maybe_t<int> builtin_commandline(parser_t &parser, io_streams_t &streams, const 
     const wchar_t *begin = nullptr, *end = nullptr;
 
     const auto &ld = parser.libdata();
-    wcstring transient_commandline;
+    imstring transient_commandline;
     if (!ld.transient_commandlines.empty()) {
         transient_commandline = ld.transient_commandlines.back();
         current_buffer = transient_commandline.c_str();

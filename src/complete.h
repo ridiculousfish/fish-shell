@@ -52,7 +52,7 @@ typedef int complete_flags_t;
 using description_func_t = std::function<wcstring(const imstring &)>;
 
 /// Helper to return a description_func_t for a constant string.
-description_func_t const_desc(const wcstring &s);
+description_func_t const_desc(const imstring &s);
 
 class completion_t {
    private:
@@ -249,14 +249,14 @@ completion_list_t complete(const wcstring &cmd, completion_request_flags_t flags
                            const operation_context_t &ctx);
 
 /// Return a list of all current completions.
-wcstring complete_print(const wcstring &cmd = L"");
+wcstring complete_print(const imstring &cmd = {});
 
 /// Tests if the specified option is defined for the specified command.
-int complete_is_valid_option(const wcstring &str, const wcstring &opt,
+int complete_is_valid_option(const imstring &str, const imstring &opt,
                              wcstring_list_t *inErrorsOrNull, bool allow_autoload);
 
 /// Tests if the specified argument is valid for the specified option and command.
-bool complete_is_valid_argument(const wcstring &str, const wcstring &opt, const wcstring &arg);
+bool complete_is_valid_argument(const imstring &str, const imstring &opt, const imstring &arg);
 
 /// Create a new completion entry.
 ///
@@ -269,11 +269,11 @@ void append_completion(completion_list_t *completions, wcstring comp, wcstring d
                        string_fuzzy_match_t match = string_fuzzy_match_t::exact_match());
 
 /// Support for "wrap targets." A wrap target is a command that completes like another command.
-bool complete_add_wrapper(const wcstring &command, const wcstring &new_target);
-bool complete_remove_wrapper(const wcstring &command, const wcstring &target_to_remove);
+bool complete_add_wrapper(const imstring &command, const imstring &new_target);
+bool complete_remove_wrapper(const imstring &command, const imstring &target_to_remove);
 
 /// Returns a list of wrap targets for a given command.
-wcstring_list_t complete_get_wrap_targets(const imstring &command);
+imstring_list_t complete_get_wrap_targets(const imstring &command);
 
 // Observes that fish_complete_path has changed.
 void complete_invalidate_path();

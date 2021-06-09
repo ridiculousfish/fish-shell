@@ -24,15 +24,15 @@ __warn_unused bool exec_job(parser_t &parser, const std::shared_ptr<job_t> &j,
 /// \param apply_exit_status if set, update $status within the parser, otherwise do not.
 ///
 /// \return a value appropriate for populating $status.
-int exec_subshell(const wcstring &cmd, parser_t &parser, bool apply_exit_status);
-int exec_subshell(const wcstring &cmd, parser_t &parser, wcstring_list_t &outputs,
+int exec_subshell(const imstring &cmd, parser_t &parser, bool apply_exit_status);
+int exec_subshell(const imstring &cmd, parser_t &parser, wcstring_list_t &outputs,
                   bool apply_exit_status);
 
 /// Like exec_subshell, but only returns expansion-breaking errors. That is, a zero return means
 /// "success" (even though the command may have failed), a non-zero return means that we should
 /// halt expansion. If the \p pgid is supplied, then any spawned external commands should join that
 /// pgroup.
-int exec_subshell_for_expand(const wcstring &cmd, parser_t &parser,
+int exec_subshell_for_expand(const imstring &cmd, parser_t &parser,
                              const job_group_ref_t &job_group, wcstring_list_t &outputs);
 
 /// Loops over close until the syscall was run without being interrupted.

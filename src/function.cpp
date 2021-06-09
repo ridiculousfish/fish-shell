@@ -231,7 +231,8 @@ bool function_get_definition(const imstring &name, wcstring &out_definition) {
         uint32_t body_start = header_src->start + header_src->length;
         uint32_t body_end = end_kw_src->start;
         assert(body_start <= body_end && "end keyword should come after header");
-        out_definition = wcstring(props->parsed_source->src, body_start, body_end - body_start);
+        out_definition =
+            props->parsed_source->src.substr_wcstring(body_start, body_end - body_start);
     }
     return true;
 }
@@ -353,7 +354,7 @@ wcstring functions_def(const imstring &name) {
     }
 
     // Output wrap targets.
-    for (const wcstring &wrap : complete_get_wrap_targets(name)) {
+    for (const imstring &wrap : complete_get_wrap_targets(name)) {
         out.append(L" --wraps=");
         out.append(escape_string(wrap, ESCAPE_ALL));
     }

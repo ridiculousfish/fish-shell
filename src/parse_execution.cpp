@@ -106,7 +106,8 @@ static wcstring profiling_cmd_name_for_redirectable_block(const ast::node_t &nod
     assert(src_end >= source_range->start && "Invalid source end");
 
     // Get the source for the block, and cut it at the next statement terminator.
-    wcstring result = pstree.src.substr(source_range->start, src_end - source_range->start);
+    wcstring result =
+        pstree.src.substr_wcstring(source_range->start, src_end - source_range->start);
     result.append(L"...");
     return result;
 }

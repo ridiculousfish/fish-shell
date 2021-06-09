@@ -1186,7 +1186,7 @@ static void populate_subshell_output(wcstring_list_t *lst, const separated_buffe
 /// \p break_expand is used to propagate whether the result should be "expansion breaking" in the
 /// sense that subshells used during string expansion should halt that expansion. \return the value
 /// of $status.
-static int exec_subshell_internal(const wcstring &cmd, parser_t &parser,
+static int exec_subshell_internal(const imstring &cmd, parser_t &parser,
                                   const job_group_ref_t &job_group, wcstring_list_t *lst,
                                   bool *break_expand, bool apply_exit_status, bool is_subcmd) {
     ASSERT_IS_MAIN_THREAD();
@@ -1230,7 +1230,7 @@ static int exec_subshell_internal(const wcstring &cmd, parser_t &parser,
     return eval_res.status.status_value();
 }
 
-int exec_subshell_for_expand(const wcstring &cmd, parser_t &parser,
+int exec_subshell_for_expand(const imstring &cmd, parser_t &parser,
                              const job_group_ref_t &job_group, wcstring_list_t &outputs) {
     ASSERT_IS_MAIN_THREAD();
     bool break_expand = false;
@@ -1239,13 +1239,13 @@ int exec_subshell_for_expand(const wcstring &cmd, parser_t &parser,
     return break_expand ? ret : STATUS_CMD_OK;
 }
 
-int exec_subshell(const wcstring &cmd, parser_t &parser, bool apply_exit_status) {
+int exec_subshell(const imstring &cmd, parser_t &parser, bool apply_exit_status) {
     bool break_expand = false;
     return exec_subshell_internal(cmd, parser, nullptr, nullptr, &break_expand, apply_exit_status,
                                   false);
 }
 
-int exec_subshell(const wcstring &cmd, parser_t &parser, wcstring_list_t &outputs,
+int exec_subshell(const imstring &cmd, parser_t &parser, wcstring_list_t &outputs,
                   bool apply_exit_status) {
     bool break_expand = false;
     return exec_subshell_internal(cmd, parser, nullptr, &outputs, &break_expand, apply_exit_status,

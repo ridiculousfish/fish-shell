@@ -36,7 +36,7 @@
 // we've already tested.
 const wcstring_list_t dflt_pathsv({L"/bin", L"/usr/bin", PREFIX L"/bin"});
 
-static bool path_get_path_core(const wcstring &cmd, wcstring *out_path,
+static bool path_get_path_core(const imstring &cmd, wcstring *out_path,
                                const maybe_t<env_var_t> &bin_path_var) {
     // If the command has a slash, it must be an absolute or relative path and thus we don't bother
     // looking for a matching command.
@@ -51,7 +51,7 @@ static bool path_get_path_core(const wcstring &cmd, wcstring *out_path,
             return false;
         }
         if (S_ISREG(buff.st_mode)) {
-            if (out_path) out_path->assign(cmd);
+            if (out_path) *out_path = cmd.to_wcstring();
             return true;
         }
         errno = EACCES;
@@ -90,7 +90,7 @@ static bool path_get_path_core(const wcstring &cmd, wcstring *out_path,
     return false;
 }
 
-bool path_get_path(const wcstring &cmd, wcstring *out_path, const environment_t &vars) {
+bool path_get_path(const imstring &cmd, wcstring *out_path, const environment_t &vars) {
     return path_get_path_core(cmd, out_path, vars.get(L"PATH"));
 }
 
@@ -141,7 +141,7 @@ static int path_is_remote(const wcstring &path) {
 #endif
 }
 
-wcstring_list_t path_get_paths(const wcstring &cmd, const environment_t &vars) {
+wcstring_list_t path_get_paths(const imstring &cmd, const environment_t &vars) {
     FLOGF(path, L"path_get_paths('%ls')", cmd.c_str());
     wcstring_list_t paths;
 
@@ -149,7 +149,7 @@ wcstring_list_t path_get_paths(const wcstring &cmd, const environment_t &vars) {
     // looking for matching commands in the PATH var.
     if (cmd.find(L'/') != wcstring::npos) {
         std::string narrow = wcs2string(cmd);
-        if (path_is_executable(narrow)) paths.push_back(cmd);
+        if (path_is_executable(narrow)) paths.push_back(cmd.to_wcstring());
         return paths;
     }
 
@@ -167,12 +167,12 @@ wcstring_list_t path_get_paths(const wcstring &cmd, const environment_t &vars) {
     return paths;
 }
 
-wcstring_list_t path_apply_cdpath(const wcstring &dir, const wcstring &wd,
+wcstring_list_t path_apply_cdpath(const imstring &dir, const imstring &wd,
                                   const environment_t &env_vars) {
     wcstring_list_t paths;
     if (dir.at(0) == L'/') {
         // Absolute path.
-        paths.push_back(dir);
+        paths.push_back(dir.to_wcstring());
     } else if (string_prefixes_string(L"./", dir) || string_prefixes_string(L"../", dir) ||
                dir == L"." || dir == L"..") {
         // Path is relative to the working directory.
@@ -189,14 +189,14 @@ wcstring_list_t path_apply_cdpath(const wcstring &dir, const wcstring &wd,
             if (next_path.empty()) next_path = L".";
             if (next_path == L".") {
                 // next_path is just '.', and we have a working directory, so use the wd instead.
-                next_path = wd;
+                next_path = wd.to_wcstring();
             }
 
             // We want to return an absolute path (see issue 6220)
             if (string_prefixes_string(L"./", next_path)) {
-                next_path = next_path.replace(0, 2, wd);
+                next_path = next_path.replace(0, 2, wd.data(), wd.size());
             } else if (string_prefixes_string(L"../", next_path) || next_path == L"..") {
-                next_path = next_path.insert(0, wd);
+                next_path = next_path.insert(0, wd.data(), wd.size());
             }
 
             expand_tilde(next_path, env_vars);
@@ -211,7 +211,7 @@ wcstring_list_t path_apply_cdpath(const wcstring &dir, const wcstring &wd,
     return paths;
 }
 
-maybe_t<wcstring> path_get_cdpath(const wcstring &dir, const wcstring &wd,
+maybe_t<wcstring> path_get_cdpath(const imstring &dir, const imstring &wd,
                                   const environment_t &env_vars) {
     int err = ENOENT;
     if (dir.empty()) return none();
@@ -232,9 +232,9 @@ maybe_t<wcstring> path_get_cdpath(const wcstring &dir, const wcstring &wd,
     return none();
 }
 
-maybe_t<wcstring> path_as_implicit_cd(const wcstring &path, const wcstring &wd,
+maybe_t<wcstring> path_as_implicit_cd(const imstring &path, const imstring &wd,
                                       const environment_t &vars) {
-    wcstring exp_path = path;
+    wcstring exp_path = path.to_wcstring();
     expand_tilde(exp_path, vars);
     if (string_prefixes_string(L"/", exp_path) || string_prefixes_string(L"./", exp_path) ||
         string_prefixes_string(L"../", exp_path) || string_suffixes_string(L"/", exp_path) ||
