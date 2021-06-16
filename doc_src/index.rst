@@ -87,32 +87,6 @@ For a script written in another language, just replace ``/bin/bash`` with the in
 
 This line is only needed when scripts are executed without specifying the interpreter. For functions inside fish or when executing a script with ``fish /path/to/script``, a shebang is not required (but it doesn't hurt!).
 
-Configuration
-=============
-
-To store configuration write it to a file called ``~/.config/fish/config.fish``.
-
-``.fish`` scripts in ``~/.config/fish/conf.d/`` are also automatically executed before ``config.fish``.
-
-These files are read on the startup of every shell, whether interactive and/or if they're login shells. Use ``status --is-interactive`` and ``status --is-login`` to discriminate.
-
-Examples:
----------
-
-To add ``~/linux/bin`` to PATH variable when using a login shell, add this to ``~/.config/fish/config.fish`` file::
-
-    if status --is-login
-        set -gx PATH $PATH ~/linux/bin
-    end
-
-This is just an exmaple; using :ref:`fish_add_path <cmd-fish_add_path>` e.g. ``fish_add_path ~/linux/bin`` which only adds the path if it isn't included yet is easier.
-
-To run commands on exit, use an :ref:`event handler <event>` that is triggered by the exit of the shell::
-
-    function on_exit --on-event fish_exit
-        echo fish is now exiting
-    end
-
 .. _more-help:
 
 Resources
@@ -138,6 +112,7 @@ Other help pages
    interactive
    language
    commands
+   configuration
    fish_for_bash_users
    tutorial
    completions
