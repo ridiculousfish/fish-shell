@@ -459,6 +459,10 @@ void fish_setlocale();
 /// \return the number of bytes read, or 0 on EOF. On EAGAIN, returns -1 if nothing was read.
 long read_blocked(int fd, void *buf, size_t count);
 
+/// Read until EOF, returning the contents as a std::string by reference.
+/// \return 0 on success, -1 on error, in which case errno will be set.
+int read_all(int fd, std::string *out_str);
+
 /// Loop a write request while failure is non-critical. Return -1 and set errno in case of critical
 /// error.
 ssize_t write_loop(int fd, const char *buff, size_t count);

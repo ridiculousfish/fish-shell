@@ -49,6 +49,7 @@
 #include "common.h"
 #include "complete.h"
 #include "env.h"
+#include "env_universal_common.h"
 #include "event.h"
 #include "exec.h"
 #include "expand.h"
@@ -2808,6 +2809,10 @@ static int read_i(parser_t &parser) {
             // Allow any pending history items to be returned in the history array.
             if (data->history) {
                 data->history->resolve_pending();
+            }
+            // Maybe rerun the auto-config.
+            if (config_universal_t::shared().check_file_changed()) {
+                config_universal_t::shared().run_config(parser);
             }
 
             bool already_warned = data->did_warn_for_bg_jobs;

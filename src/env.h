@@ -168,6 +168,9 @@ class env_var_t {
     static env_var_flags_t flags_for(const wchar_t *name);
     static std::shared_ptr<const wcstring_list_t> empty_list();
 
+    /// \return whether a variable with the given name should automatically become a pathvar.
+    static bool should_auto_pathvar(const wcstring &name);
+
     env_var_t &operator=(const env_var_t &) = default;
     env_var_t &operator=(env_var_t &&) = default;
 

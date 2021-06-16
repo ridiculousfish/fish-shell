@@ -31,11 +31,96 @@ struct callback_data_t {
 
 using callback_data_list_t = std::vector<callback_data_t>;
 
+class operation_context_t;
+class parser_t;
+struct source_range_t;
+
 // List of fish universal variable formats.
 // This is exposed for testing.
 enum class uvar_format_t { fish_2_x, fish_3_0, future };
 
 bool get_hostname_identifier(wcstring &result);
+
+/// Support for universal config.
+class config_universal_t {
+   public:
+    /// \return the singleton shared config with the default uconf path.
+    static config_universal_t &shared();
+
+    // Check if the file has changed. If so, update our file id and return true.
+    // Otherwise return false.
+    bool check_file_changed();
+
+    /// Write config to the path.
+    /// We have a list of variable names and an environment containing their values, stored in the
+    /// context. For each name, if the corresponding variable is set, then add or update it in the
+    /// config. If it is not set, then the variable is erased; remove it from the config.
+    /// \return true on success, false on error, in which case a message will have been printed.
+    /// If this is cancelled, return false without printing an error.
+    /// If the file was found to be different than when we last saved it, set \p
+    /// out_external_changes to true.
+    bool update(const wcstring_list_t &var_names, const operation_context_t &ctx,
+                bool *out_external_changes = nullptr);
+
+    /// Run the config file as script, using the given \p parser.
+    void run_config(parser_t &parser);
+
+   private:
+    /// Construct with an explicit path, for tests.
+    explicit config_universal_t(wcstring path);
+
+    /// Try to read the file at our path, returning its contents by reference.
+    /// \return true on success, false on failure, in which case errno will be set.
+    /// If the file does not exist, this returns success, and an empty string.
+    bool try_read(wcstring *contents) const;
+
+    // Try reading from an fd.
+    // \return true on success, false on error, in which case an error will have been printed.
+    bool try_read_from_fd(int fd, wcstring *contents) const;
+
+    /// Modify the source according to the variable names.
+    /// \return true if successful; on error an error will be printed.
+    bool modify_source(wcstring *source, const wcstring_list_t &var_names,
+                       const operation_context_t &ctx) const;
+
+    // Given that we have a buffer \p source, replace or append a 'set' command according to \p
+    // range. If the range is non-empty, replace that range; otherwise append to the end.
+    void insert_set_var(wcstring *source, const wcstring &name, const source_range_t &range,
+                        const environment_t &vars) const;
+
+    /// \return a string for setting a variable, or an empty string if the variable should be
+    /// deleted.
+    wcstring make_set_var_command(const wcstring &name, const environment_t &vars) const;
+
+    // Try opening our file, perhaps acquiring an flock-style lock.
+    // The caller has no way of knowing if the lock was successful, but it will be removed on close.
+    // \return an invalid file on error, in which case errno will be set.
+    autoclose_fd_t try_open_and_lock() const;
+
+    // Open a temporary file in \p dir.
+    // On failure, an invalid fd is returned and an error is printed.
+    autoclose_fd_t create_temp_file(const wcstring &dir, wcstring *out_path) const;
+
+    // Write a string to a file, in UTF-8 form.
+    // Prints an error on failure.
+    bool write_to_file(const wcstring &source, const autoclose_fd_t &fd) const;
+
+    // Given that we are about to move a file identified by \p newfd into place, perform necessary
+    // tweaks. This cannot fail.
+    void tweak_new_file(const wcstring &path, const autoclose_fd_t &newfd) const;
+
+    // Move file \p src to \p dst.
+    // Prints an error on failure.
+    bool replace_file(const wcstring &src, const wcstring &dst) const;
+
+    // Path that we read from and write to.
+    const wcstring path_;
+
+    // Our last seen file ID.
+    file_id_t file_id_{kInvalidFileID};
+
+    friend struct config_universal_tests_t;
+};
 
 /// Class representing universal variables.
 class env_universal_t {

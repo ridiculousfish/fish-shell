@@ -90,7 +90,7 @@ set(FISH_SRCS
     src/builtin_builtin.cpp src/builtin_cd.cpp src/builtin_command.cpp
     src/builtin_commandline.cpp src/builtin_complete.cpp src/builtin_contains.cpp
     src/builtin_disown.cpp src/builtin_echo.cpp src/builtin_emit.cpp
-    src/builtin_eval.cpp src/builtin_exit.cpp src/builtin_fg.cpp
+    src/builtin_eval.cpp src/builtin_exit.cpp src/builtin_fg.cpp src/builtin_fish_sync.cpp
     src/builtin_function.cpp src/builtin_functions.cpp src/builtin_history.cpp
     src/builtin_jobs.cpp src/builtin_math.cpp src/builtin_printf.cpp
     src/builtin_pwd.cpp src/builtin_random.cpp src/builtin_read.cpp

@@ -22,6 +22,7 @@
 
 #include "common.h"
 #include "env.h"
+#include "env_universal_common.h"
 #include "event.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "global_safety.h"
@@ -347,6 +348,11 @@ void inputter_t::select_interrupted() /* override */ {
         return;
     }
     this->push_front(char_event_t{char_event_type_t::check_exit});
+}
+
+void inputter_t::universal_config_changed() /* override */ {
+    // The universal config file has changed; we will re-execute it.
+    config_universal_t::shared().run_config(*this->parser_);
 }
 
 void inputter_t::function_push_arg(wchar_t arg) { input_function_args_.push_back(arg); }

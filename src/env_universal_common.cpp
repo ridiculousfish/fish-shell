@@ -38,11 +38,14 @@
 #include <type_traits>
 #include <utility>
 
+#include "ast.h"
 #include "common.h"
 #include "env.h"
 #include "env_universal_common.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "flog.h"
+#include "operation_context.h"
+#include "parser.h"
 #include "path.h"
 #include "signal.h"
 #include "utf8.h"
@@ -69,6 +72,10 @@
 /// Version for fish 3.0
 #define UVARS_VERSION_3_0 "3.0"
 
+/// Small note about not editing the uconfig manually. Inserted at the top of the file.
+static const wchar_t *const UCONF_MESSAGE =
+    L"# This file contains fish script managed with fish_sync.\n";
+
 // Maximum file size we'll read.
 static constexpr size_t k_max_read_size = 16 * 1024 * 1024;
 
@@ -92,6 +99,7 @@ constexpr const char *PATH = "--path";
 /// The different types of messages found in the fishd file.
 enum class uvar_message_type_t { set, set_export };
 
+static bool flock_file(int fd);
 static wcstring get_machine_identifier();
 
 /// return a list of paths where the uvars file has been historically stored.
@@ -113,6 +121,424 @@ static maybe_t<wcstring> default_vars_path_directory() {
     wcstring path;
     if (!path_get_config(path)) return none();
     return path;
+}
+
+/// \return the default universal config path, or an empty string on failure.
+static wcstring default_uconf_path() {
+    if (auto path = default_vars_path_directory()) {
+        path->append(L"/config.auto.fish");
+        return path.acquire();
+    }
+    return wcstring{};
+}
+
+// static
+config_universal_t &config_universal_t::shared() {
+    static config_universal_t s_observer{default_uconf_path()};
+    return s_observer;
+}
+
+config_universal_t::config_universal_t(wcstring path) : path_(std::move(path)) {}
+
+bool config_universal_t::try_read(wcstring *contents) const {
+    contents->clear();
+    if (path_.empty()) {
+        // Here we could not get the default variable path.
+        return false;
+    }
+    autoclose_fd_t fd(wopen_cloexec(path_, O_RDONLY));
+    if (fd.valid()) {
+        return try_read_from_fd(fd.fd(), contents);
+    } else if (errno == ENOENT) {
+        // Leave the string empty.
+        return true;
+    } else {
+        wperror(L"open");
+        return false;
+    }
+}
+
+bool config_universal_t::try_read_from_fd(int fd, wcstring *contents) const {
+    assert(contents && "Null contents");
+    contents->clear();
+
+    // Read until the end.
+    std::string narrow;
+    if (read_all(fd, &narrow) != 0) {
+        wperror(L"read");
+        return false;
+    }
+
+    // Convert from UTF8.
+    if (!narrow.empty() && !utf8_to_wchar(narrow.data(), narrow.size(), contents, 0)) {
+        FLOGF(error, L"Invalid UTF-8 for universal config file");
+        return false;
+    }
+    return true;
+}
+
+/// \return true if a decorated statement is of the form 'set var_name ...'.
+static bool is_set_var_statement(const ast::statement_t &statement, const wcstring &src,
+                                 const wcstring &name, const operation_context_t &ctx) {
+    // Note this is very coarse, it does not try to expand anything.
+    using namespace ast;
+    const decorated_statement_t *dstat = statement.contents->try_as<decorated_statement_t>();
+    bool is_set =
+        dstat && dstat->command.source_range().length == 3 && dstat->command.source(src) == L"set";
+    if (!is_set) return false;
+
+    // Decide how we will expand each argument.
+    // We want to support e.g. variables with spaces in them.
+    // We have to decide what should match the name. Of course we should not expand cmdsubs. Should
+    // we expand variables? It seems safer not to.
+    const expand_flags_t arg_expand_flags{expand_flag::skip_cmdsubst, expand_flag::skip_wildcards,
+                                          expand_flag::skip_variables};
+
+    // Go through the argument list. Look for the first non-flag argument.
+    bool matched_name = false;
+    for (const argument_or_redirection_t &arg : dstat->args_or_redirs) {
+        if (arg.is_argument()) {
+            wcstring arg_src = arg.argument().source(src);
+            if (!expand_one(arg_src, arg_expand_flags, ctx)) continue;
+
+            // Skip dashed arguments.
+            if (string_prefixes_string(L"-", arg_src)) continue;
+
+            // We have the first undashed argument to 'set'. Is it our name?
+            matched_name = (arg_src == name);
+            break;
+        }
+    }
+    return matched_name;
+}
+
+bool config_universal_t::update(const wcstring_list_t &var_names, const operation_context_t &ctx,
+                                bool *out_external_changes) {
+    if (out_external_changes) *out_external_changes = false;
+
+    autoclose_fd_t fd = try_open_and_lock();
+    if (!fd.valid()) return false;
+
+    wcstring source;
+    if (!try_read_from_fd(fd.fd(), &source)) return false;
+    if (!modify_source(&source, var_names, ctx)) return false;
+
+    // Resolve symlinks.
+    wcstring real_path;
+    if (auto maybe_real_path = wrealpath(path_)) {
+        real_path = maybe_real_path.acquire();
+    } else {
+        real_path = path_;
+    }
+
+    // Write to a temporary file in the same directory as the (resolved) path.
+    wcstring private_file_path;
+    autoclose_fd_t private_fd = create_temp_file(wdirname(real_path), &private_file_path);
+    if (!private_fd.valid()) return false;
+    if (!write_to_file(source, private_fd)) return false;
+
+    // Update our new file's props.
+    tweak_new_file(real_path, private_fd);
+
+    // Apply new file. Moving it into place will tweak the ctime of the previous file, so grab that first.
+    file_id_t prev_file_id = file_id_for_fd(fd);
+    if (!replace_file(private_file_path, real_path)) return false;
+    fd.close();
+
+    // Did we see changes that were not our own?
+    // If not, record the new file ID.
+    bool external_changes = (prev_file_id != file_id_);
+    if (out_external_changes) *out_external_changes = external_changes;
+    if (!external_changes) file_id_ = file_id_for_fd(private_fd);
+
+    return true;
+}
+
+bool config_universal_t::check_file_changed() {
+    file_id_t file = file_id_for_path(path_);
+    if (file != file_id_) {
+        file_id_ = file;
+        return true;
+    }
+    return false;
+}
+
+void config_universal_t::run_config(parser_t &parser) {
+    if (waccess(path_, R_OK) != 0) {
+        FLOGF(config, L"not sourcing %ls (not readable or does not exist)",
+              path_.c_str());
+        return;
+    }
+    FLOGF(config, L"sourcing %ls", path_.c_str());
+
+    const wcstring cmd = L"builtin source " + escape_string(path_, ESCAPE_ALL);
+    parser.eval(cmd, io_chain_t());
+}
+
+bool config_universal_t::write_to_file(const wcstring &source, const autoclose_fd_t &fd) const {
+    assert(fd.valid() && "Invalid fd");
+    std::string utf8;
+    if (source.size() > 0 && !wchar_to_utf8_string(source, &utf8)) {
+        // Unclear if this can ever happen.
+        FLOGF(error, "wchar_to_utf8_string failed");
+        return false;
+    }
+
+    if (write_loop(fd.fd(), utf8.data(), utf8.size()) < 0) {
+        const char *error = std::strerror(errno);
+        FLOGF(error, _(L"Unable to write to universal config file '%ls': %s"), path_.c_str(),
+              error);
+        return false;
+    }
+    return true;
+}
+
+void config_universal_t::tweak_new_file(const wcstring &path, const autoclose_fd_t &newfd) const {
+    // Ensure we maintain ownership and permissions.
+    struct stat sbuf;
+    if (wstat(path, &sbuf) >= 0) {
+        if (fchown(newfd.fd(), sbuf.st_uid, sbuf.st_gid) == -1)
+            FLOGF(uconf_file, L"universal config fchown() failed");
+        if (fchmod(newfd.fd(), sbuf.st_mode) == -1)
+            FLOGF(uconf_file, L"universal config fchmod() failed");
+    }
+
+    // Linux by default stores the mtime with low precision, low enough that updates that occur
+    // in quick succession may result in the same mtime (even the nanoseconds field). So
+    // manually set the mtime of the new file to a high-precision clock. Note that this is only
+    // necessary because Linux aggressively reuses inodes, causing the ABA problem; on other
+    // platforms we tend to notice the file has changed due to a different inode (or file size!)
+    //
+    // It's probably worth finding a simpler solution to this. The tests ran into this, but it's
+    // unlikely to affect users.
+#if HAVE_CLOCK_GETTIME && HAVE_FUTIMENS
+    struct timespec times[2] = {};
+    times[0].tv_nsec = UTIME_OMIT;  // don't change ctime
+    if (0 == clock_gettime(CLOCK_REALTIME, &times[1])) {
+        futimens(newfd.fd(), times);
+    }
+#endif
+}
+
+bool config_universal_t::replace_file(const wcstring &src, const wcstring &dst) const {
+    int ret = wrename(src, dst);
+    if (ret != 0) {
+        const char *error = std::strerror(errno);
+        FLOGF(error, _(L"Unable to rename file from '%ls' to '%ls': %s"), src.c_str(), dst.c_str(),
+              error);
+    }
+    return ret == 0;
+}
+
+autoclose_fd_t config_universal_t::create_temp_file(const wcstring &dir, wcstring *out_path) const {
+    // Create and open a temporary file for writing within the given directory. Try to create a
+    // temporary file, up to 10 times. We don't use mkstemps because we want to open it CLO_EXEC.
+    // This should almost always succeed on the first try.
+    assert(!string_suffixes_string(L"/", dir));  //!OCLINT(multiple unary operator)
+    int saved_errno = 0;
+    const wcstring tmp_name_template = dir + L"/config.auto.XXXXXX";
+    autoclose_fd_t result;
+    std::string narrow_str;
+    for (size_t attempt = 0; attempt < 10 && !result.valid(); attempt++) {
+        narrow_str = wcs2string(tmp_name_template);
+        result.reset(fish_mkstemp_cloexec(&narrow_str[0]));
+        saved_errno = errno;
+    }
+    *out_path = str2wcstring(narrow_str);
+    if (!result.valid()) {
+        const char *error = std::strerror(saved_errno);
+        FLOGF(error, _(L"Unable to open temporary file '%ls': %s"), out_path->c_str(), error);
+    }
+    return result;
+}
+
+bool config_universal_t::modify_source(wcstring *source, const wcstring_list_t &var_names,
+                                       const operation_context_t &ctx) const {
+    // If our source is initially empty, we probably just created the file. Drop in a sweet comment.
+    if (source->empty()) source->append(UCONF_MESSAGE);
+
+    using namespace ast;
+    // Parse the file into an ast.
+    parse_error_list_t errors;
+    ast_t ast = ast_t::parse(*source, parse_flag_none, &errors);
+    if (ast.errored()) {
+        if (!should_suppress_stderr_for_tests()) {
+            FLOGF(error, _(L"Corrupt config file at '%ls'\n%ls"), path_.c_str(),
+                  errors.front().describe(*source, true).c_str());
+        }
+        return false;
+    }
+
+    // Construct vector of name, replacement range pairs.
+    struct name_range_t {
+        wcstring name;
+        source_range_t range;
+
+        static inline bool name_less(const name_range_t &lhs, const name_range_t &rhs) {
+            return lhs.name < rhs.name;
+        }
+
+        static inline bool name_eq(const name_range_t &lhs, const name_range_t &rhs) {
+            return lhs.name == rhs.name;
+        }
+
+        static inline bool range_less(const name_range_t &lhs, const name_range_t &rhs) {
+            return lhs.range.start < rhs.range.start;
+        }
+    };
+    std::vector<name_range_t> name_ranges;
+
+    std::unordered_map<wcstring, source_range_t> name_to_range;
+    for (const wcstring &name : var_names) {
+        // Look for a top-level job of the form 'set name'.
+        // We do not descend into conjunctions (like &&).
+        source_range_t range{0, 0};
+        for (const job_conjunction_t &job_conj : *ast.top()->as<ast::job_list_t>()) {
+            if (is_set_var_statement(job_conj.job.statement, *source, name, ctx)) {
+                // Found it.
+                range = job_conj.job.statement.source_range();
+                break;
+            }
+        }
+        name_ranges.push_back(name_range_t{name, range});
+    }
+
+    // Deduplicate by name, then sort by range.
+    std::sort(name_ranges.begin(), name_ranges.end(), name_range_t::name_less);
+    name_ranges.erase(std::unique(name_ranges.begin(), name_ranges.end(), name_range_t::name_eq),
+                      name_ranges.end());
+    // stable_sort here to preserve some name ordering.
+    std::stable_sort(name_ranges.begin(), name_ranges.end(), name_range_t::range_less);
+
+    // Paranoia: if our ranges were to overlap we would corrupt the file.
+    // This should not happen but it is cheap to check for.
+    // Keep track of the lowest char index we've modified. We expect this to only decrease.
+    size_t lowest_mod = source->size();
+    for (auto iter = name_ranges.rbegin(); iter != name_ranges.rend(); ++iter) {
+        const name_range_t &nr = *iter;
+        // We will be modifying nr.range.
+        if (nr.range.end() > lowest_mod) {
+            DIE("Replacement ranges overlap, would corrupt config file");
+        }
+        lowest_mod = nr.range.start;
+        this->insert_set_var(source, nr.name, nr.range, ctx.vars);
+    }
+    // Ensure our source has a trailing newline.
+    if (source->size() > 0 && source->back() != L'\n') {
+        source->push_back(L'\n');
+    }
+    return true;
+}
+
+wcstring config_universal_t::make_set_var_command(const wcstring &name,
+                                                  const environment_t &vars) const {
+    auto var = vars.get(name);
+    if (!var.has_value()) {
+        return wcstring{};
+    }
+
+    // Construct our 'set' call invoker.
+    wcstring_list_t cmd = {L"set", L"--global"};
+    if (var->exports()) {
+        cmd.push_back(L"--export");
+    }
+
+    if (var->is_pathvar() != env_var_t::should_auto_pathvar(name)) {
+        // We have to be explicit about the pathvarness.
+        cmd.push_back(var->is_pathvar() ? L"--path" : L"--unpath");
+    }
+
+    // Escape the variable name so it can be serialized properly.
+    cmd.push_back(escape_string(name, ESCAPE_ALL));
+    for (const wcstring &value : var->as_list()) {
+        cmd.push_back(escape_string(value, ESCAPE_ALL));
+    }
+    return join_strings(cmd, L' ');
+}
+
+void config_universal_t::insert_set_var(wcstring *source, const wcstring &name,
+                                        const source_range_t &range,
+                                        const environment_t &vars) const {
+    wcstring cmd = make_set_var_command(name, vars);
+    if (cmd.empty()) {
+        // Deleting. Note this handles an empty range fine.
+        source->erase(range.start, range.length);
+    } else if (range.length > 0) {
+        // We are replacing.
+        source->replace(range.start, range.length, cmd);
+    } else {
+        // We are appending.
+        // Ensure there's a trailing newline first.
+        if (source->size() > 0 && source->back() != L'\n') {
+            source->push_back(L'\n');
+        }
+        source->append(cmd);
+    }
+}
+
+autoclose_fd_t config_universal_t::try_open_and_lock() const {
+    if (path_.empty()) {
+        errno = ENOENT;
+        return autoclose_fd_t{};
+    }
+    bool do_flock = (path_get_config_is_remote() != 1);
+
+    // Attempt to open the file for reading at the given path, atomically acquiring a lock. On BSD,
+    // we can use O_EXLOCK. On Linux, we open the file, take a lock, and then compare fstat() to
+    // stat(); if they match, it means that the file was not replaced before we acquired the lock.
+    //
+    // We pass O_RDONLY with O_CREAT; this creates a potentially empty file. We do this so that we
+    // have something to lock on.
+    bool locked_by_open = false;
+    int flags = O_RDONLY | O_CREAT;
+
+#ifdef O_EXLOCK
+    if (do_flock) {
+        flags |= O_EXLOCK;
+        locked_by_open = true;
+    }
+#endif
+
+    autoclose_fd_t fd{};
+    while (!fd.valid()) {
+        fd = autoclose_fd_t{wopen_cloexec(path_, flags, 0644)};
+
+        if (!fd.valid()) {
+            int err = errno;
+            if (err == EINTR) continue;  // signaled; try again
+
+#ifdef O_EXLOCK
+            if ((flags & O_EXLOCK) && (err == ENOTSUP || err == EOPNOTSUPP)) {
+                // Filesystem probably does not support locking. Give up on locking.
+                // Note that on Linux the two errno symbols have the same value but on BSD they're
+                // different.
+                flags &= ~O_EXLOCK;
+                do_flock = false;
+                locked_by_open = false;
+                continue;
+            }
+#endif
+            FLOGF(error, _(L"Unable to open config file '%ls': %s"), path_.c_str(),
+                  std::strerror(err));
+            break;
+        }
+
+        assert(fd.valid() && "Should have a valid fd here");
+
+        // Lock if we want to lock and open() didn't do it for us.
+        // If flock fails, give up on locking forever.
+        if (do_flock && !locked_by_open) {
+            if (!flock_file(fd.fd())) do_flock = false;
+        }
+
+        // Hopefully we got the lock. However, it's possible the file changed out from under us
+        // while we were waiting for the lock. Make sure that didn't happen.
+        if (file_id_for_fd(fd.fd()) != file_id_for_path(path_)) {
+            // Oops, it changed! Try again.
+            fd.close();
+        }
+    }
+    return fd;
 }
 
 /// \return the default variable path, or an empty string on failure.
@@ -532,15 +958,14 @@ autoclose_fd_t env_universal_t::open_temporary_file(const wcstring &directory, w
 
 /// Try locking the file.
 /// \return true on success, false on error.
-static bool flock_uvar_file(int fd) {
+static bool flock_file(int fd) {
     double start_time = timef();
     while (flock(fd, LOCK_EX) == -1) {
         if (errno != EINTR) return false;  // do nothing per issue #2149
     }
     double duration = timef() - start_time;
     if (duration > 0.25) {
-        FLOGF(warning, _(L"Locking the universal var file took too long (%.3f seconds)."),
-              duration);
+        FLOGF(warning, _(L"Locking a file took too long (%.3f seconds)."), duration);
         return false;
     }
     return true;
@@ -592,7 +1017,7 @@ bool env_universal_t::open_and_acquire_lock(const wcstring &path, autoclose_fd_t
         // Lock if we want to lock and open() didn't do it for us.
         // If flock fails, give up on locking forever.
         if (do_flock && !locked_by_open) {
-            if (!flock_uvar_file(fd.fd())) do_flock = false;
+            if (!flock_file(fd.fd())) do_flock = false;
         }
 
         // Hopefully we got the lock. However, it's possible the file changed out from under us

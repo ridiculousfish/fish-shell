@@ -129,9 +129,11 @@ static bool is_read_only(const wchar_t *key) {
 static bool is_read_only(const wcstring &key) { return is_read_only(key.c_str()); }
 
 /// Return true if a variable should become a path variable by default. See #436.
-static bool variable_should_auto_pathvar(const wcstring &name) {
+// static
+bool env_var_t::should_auto_pathvar(const wcstring &name) {
     return string_suffixes_string(L"PATH", name);
 }
+
 // This is a big dorky lock we take around everything that might read from or modify an env_node_t.
 // Fine grained locking is annoying here because env_nodes may be shared between env_stacks, so each
 // node would need its own lock.
@@ -1041,7 +1043,7 @@ void env_stack_impl_t::set_in_node(const env_node_ref_t &node, const wcstring &k
 
     // Pathvar is inferred from the name. If set, split our entry about colons.
     bool res_pathvar =
-        flags.pathvar.has_value() ? *flags.pathvar : variable_should_auto_pathvar(key);
+        flags.pathvar.has_value() ? *flags.pathvar : env_var_t::should_auto_pathvar(key);
     if (res_pathvar) {
         val = colon_split(val);
     }
@@ -1124,7 +1126,7 @@ void env_stack_impl_t::set_universal(const wcstring &key, wcstring_list_t val,
     } else if (oldvar) {
         pathvar = oldvar->is_pathvar();
     } else {
-        pathvar = variable_should_auto_pathvar(key);
+        pathvar = env_var_t::should_auto_pathvar(key);
     }
 
     // Split about ':' if it's a path variable.

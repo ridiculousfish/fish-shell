@@ -220,6 +220,9 @@ class input_event_queue_t {
     /// Override point for when when select() is interrupted by a signal. The default does nothing.
     virtual void select_interrupted();
 
+    /// Override point for when the universal config file has changed.
+    virtual void universal_config_changed();
+
     virtual ~input_event_queue_t();
 
    private:

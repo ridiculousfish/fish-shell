@@ -4094,6 +4094,109 @@ static void test_universal_ok_to_save() {
     system_assert("rm -Rf test/fish_uvars_test/");
 }
 
+struct config_universal_tests_t {
+    static void test_file_source_modification();
+    static void test_file_change_detection();
+};
+
+void config_universal_tests_t::test_file_source_modification() {
+    wcstring_list_t lines = {L"# This is sample source",                  // 0
+                             L"# tricky comment set --global var1 foo1",  // 1
+                             L"set --global var1 foo1",                   // 2
+                             L"set --global var2 foo2",                   // 3
+                             L"if random; echo yay; end",                 // 4
+                             L"set --global var3 foo3",                   // 5
+                             L"set --global var4 foo4",                   // 6
+                             L""};
+    config_universal_t uconf(L"");
+
+    test_environment_t vars;
+    vars.vars[L"var1"] = L"bar1";
+    vars.vars[L"var2"] = L"bar2";
+    vars.vars[L"var3"] = L"bar3";
+
+    // We will change two variables.
+    wcstring_list_t to_update = {L"var1", L"var3"};
+    wcstring_list_t expected_lines = lines;
+    expected_lines[2] = L"set --global var1 bar1";
+    expected_lines[5] = L"set --global var3 bar3";
+
+    wcstring source = join_strings(lines, L'\n');
+    bool modified = uconf.modify_source(&source, to_update, operation_context_t{vars});
+    do_test(modified);
+    do_test(source == join_strings(expected_lines, L'\n'));
+
+    // Refuse to modify unparseable source.
+    wcstring_list_t broken = lines;
+    broken.push_back(L"end ;end ;end ;if begin i cannot be successfully parsed");
+    source = join_strings(broken, L'\n');
+    modified = uconf.modify_source(&source, {L"var1", L"var3"}, operation_context_t{vars});
+    do_test(!modified);
+    do_test(source == join_strings(broken, L'\n'));
+}
+
+void config_universal_tests_t::test_file_change_detection() {
+    say(L"Testing uconf file change detection");
+    char t[] = "/tmp/fish_test_uconf.XXXXXX";
+    autoclose_fd_t tmpfd{mkstemp(t)};
+    if (!tmpfd.valid()) {
+        err(L"Unable to create temporary file");
+        return;
+    }
+    cleanup_t remove_tmp{[&] { (void)remove(t); }};
+
+    wcstring path = str2wcstring(t);
+    config_universal_t uconf(path);
+
+    // Initial change.
+    do_test(uconf.check_file_changed());
+    do_test(!uconf.check_file_changed());
+
+    // Let's update it.
+    test_environment_t vars;
+    vars.vars[L"foo"] = L"bar";
+
+    bool external_changes = false;
+    uconf.update({L"foo"}, operation_context_t{vars}, &external_changes);
+    do_test(!external_changes);
+
+    // We do not react to our own changes.
+    do_test(!uconf.check_file_changed());
+
+    // The test merely checks that the file is not empty.
+    uint64_t size = file_id_for_path(path).size;
+    do_test(size > 0);
+
+    // Repeat it with a different but equal-length variable.
+    // The size should not change because we replace it inline.
+    vars.vars[L"foo"] = L"baz";
+    external_changes = false;
+    uconf.update({L"foo"}, operation_context_t{vars}, &external_changes);
+    do_test(!external_changes);
+    do_test(!uconf.check_file_changed());
+    do_test(file_id_for_path(path).size == size);
+
+    // Lastly tweak the file ourselves.
+    // external_changes should be reported as 'true'.
+    FILE *f = fopen(t, "a");
+    if (!f) {
+        err(L"Failed to open file");
+        return;
+    }
+    fputs("# comment\n", f);
+    fclose(f);
+    external_changes = false;
+    uconf.update({L"foo"}, operation_context_t{vars}, &external_changes);
+    do_test(external_changes);
+    do_test(uconf.check_file_changed());
+    do_test(!uconf.check_file_changed());
+}
+
+static void test_universal_config() {
+    config_universal_tests_t::test_file_source_modification();
+    config_universal_tests_t::test_file_change_detection();
+}
+
 bool poll_notifier(const std::unique_ptr<universal_notifier_t> &note) {
     if (note->poll()) return true;
 
@@ -6769,6 +6872,7 @@ static const test_t s_tests[]{
     {TEST_GROUP("universal"), test_universal_callbacks},
     {TEST_GROUP("universal"), test_universal_formats},
     {TEST_GROUP("universal"), test_universal_ok_to_save},
+    {TEST_GROUP("universal"), test_universal_config},
     {TEST_GROUP("notifiers"), test_universal_notifiers},
     {TEST_GROUP("wait_handles"), test_wait_handles},
     {TEST_GROUP("completion_insertions"), test_completion_insertions},

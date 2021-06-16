@@ -567,6 +567,21 @@ long read_blocked(int fd, void *buf, size_t count) {
     return res;
 }
 
+int read_all(int fd, std::string *out_str) {
+    for (;;) {
+        char buff[256];
+        ssize_t res = read(fd, buff, sizeof buff);
+        if (res < 0 && errno != EINTR) {
+            return -1;
+        } else if (res > 0) {
+            out_str->append(buff, res);
+        } else {
+            break;
+        }
+    }
+    return 0;
+}
+
 /// Loop a write request while failure is non-critical. Return -1 and set errno in case of critical
 /// error.
 ssize_t write_loop(int fd, const char *buff, size_t count) {

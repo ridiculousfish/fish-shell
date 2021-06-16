@@ -46,6 +46,7 @@
 #include "builtin_eval.h"
 #include "builtin_exit.h"
 #include "builtin_fg.h"
+#include "builtin_fish_sync.h"
 #include "builtin_functions.h"
 #include "builtin_history.h"
 #include "builtin_jobs.h"
@@ -388,6 +389,7 @@ static constexpr builtin_data_t builtin_datas[] = {
     {L"exit", &builtin_exit, N_(L"Exit the shell")},
     {L"false", &builtin_false, N_(L"Return an unsuccessful result")},
     {L"fg", &builtin_fg, N_(L"Send job to foreground")},
+    {L"fish_sync", &builtin_fish_sync, N_(L"Synchronize universal config")},
     {L"for", &builtin_generic, N_(L"Perform a set of commands multiple times")},
     {L"function", &builtin_generic, N_(L"Define a new function")},
     {L"functions", &builtin_functions, N_(L"List or remove functions")},

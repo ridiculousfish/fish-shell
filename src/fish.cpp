@@ -42,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include "env.h"
 #include "event.h"
 #include "expand.h"
+#include "env_universal_common.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "fish_version.h"
 #include "flog.h"
@@ -214,7 +215,7 @@ static struct config_paths_t determine_config_directory_paths(const char *argv0)
 }
 
 // Source the file config.fish in the given directory.
-static void source_config_in_directory(parser_t &parser, const wcstring &dir) {
+static void source_config_in_directory(parser_t &parser, const wcstring &dir, const wchar_t *name = L"/config.fish") {
     // If the config.fish file doesn't exist or isn't readable silently return. Fish versions up
     // thru 2.2.0 would instead try to source the file with stderr redirected to /dev/null to deal
     // with that possibility.
@@ -222,9 +223,9 @@ static void source_config_in_directory(parser_t &parser, const wcstring &dir) {
     // This introduces a race condition since the readability of the file can change between this
     // test and the execution of the 'source' command. However, that is not a security problem in
     // this context so we ignore it.
-    const wcstring config_pathname = dir + L"/config.fish";
+    wcstring config_pathname = dir + name;
     const wcstring escaped_dir = escape_string(dir, ESCAPE_ALL);
-    const wcstring escaped_pathname = escaped_dir + L"/config.fish";
+    const wcstring escaped_pathname = escaped_dir + name;
     if (waccess(config_pathname, R_OK) != 0) {
         FLOGF(config, L"not sourcing %ls (not readable or does not exist)",
               escaped_pathname.c_str());
@@ -248,6 +249,9 @@ static void read_init(parser_t &parser, const struct config_paths_t &paths) {
     // to load.
     wcstring config_dir;
     if (path_get_config(config_dir)) {
+        // Initialize our uconf with current state.
+        (void)config_universal_t::shared().check_file_changed();
+        source_config_in_directory(parser, config_dir, L"/config.auto.fish");
         source_config_in_directory(parser, config_dir);
     }
 }

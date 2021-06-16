@@ -52,8 +52,11 @@ enum {
     // Our uvar notifier reported a change (either through poll() or its fd).
     readb_uvar_notified = -3,
 
+    // Our uconf notifier reported a change, so reread the universal config.
+    readb_uconf_notified = -4,
+
     // Our ioport reported a change, so service main thread requests.
-    readb_ioport_notified = -4,
+    readb_ioport_notified = -5,
 };
 using readb_result_t = int;
 
@@ -98,7 +101,7 @@ static readb_result_t readb(int in_fd) {
         // This may come about through readability, or through a call to poll().
         if ((fdset.test(notifier_fd) && notifier.notification_fd_became_readable(notifier_fd)) ||
             notifier.poll()) {
-            return readb_uvar_notified;
+            return readb_uconf_notified;
         }
 
         // Check stdin.
@@ -177,6 +180,11 @@ char_event_t input_event_queue_t::readch() {
                 this->select_interrupted();
                 break;
 
+            case readb_uconf_notified:
+                // Our universal config changed.
+                this->universal_config_changed();
+                break;
+
             case readb_uvar_notified:
                 env_universal_barrier();
                 break;
@@ -237,4 +245,5 @@ void input_event_queue_t::push_front(const char_event_t& ch) { queue_.push_front
 
 void input_event_queue_t::prepare_to_select() {}
 void input_event_queue_t::select_interrupted() {}
+void input_event_queue_t::universal_config_changed() {}
 input_event_queue_t::~input_event_queue_t() = default;
