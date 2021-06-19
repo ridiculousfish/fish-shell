@@ -275,6 +275,10 @@ void config_universal_t::run_config(parser_t &parser) {
     parser.eval(cmd, io_chain_t());
 }
 
+bool config_universal_t::has_file() const {
+    return !path_.empty() && waccess(path_, F_OK) == 0;
+}
+
 bool config_universal_t::write_to_file(const wcstring &source, const autoclose_fd_t &fd) const {
     assert(fd.valid() && "Invalid fd");
     std::string utf8;
@@ -1334,6 +1338,33 @@ void env_universal_t::parse_message_2x_internal(const wcstring &msgstr, var_tabl
     if (!populate_1_variable(cursor, flags, vars, storage)) {
         FLOGF(warning, PARSE_ERR, msg);
     }
+}
+
+/// Adapts an env_universal_t to an environment_t.
+struct uvar_adapter_t final : public environment_t {
+    env_universal_t &uvars;
+    explicit uvar_adapter_t(env_universal_t &uvars) : uvars(uvars) {}
+
+    virtual maybe_t<env_var_t> get(const wcstring &key,
+                                   env_mode_flags_t = ENV_DEFAULT) const {
+        return uvars.get(key);
+    }
+
+    virtual wcstring_list_t get_names(int) const {
+        // This doesn't ever get called so we can ignore it.
+        assert(0 && "Unimplemented");
+        return {};
+    }
+};
+
+void env_universal_t::migrate_to_config(config_universal_t &uconf) {
+    if (vars.empty()) return;
+    wcstring_list_t var_names;
+    var_names.reserve(vars.size());
+    for (const auto &kv : vars) var_names.push_back(kv.first);
+
+    uvar_adapter_t adapter{*this};
+    uconf.update(var_names, operation_context_t{adapter});
 }
 
 /// Maximum length of hostname. Longer hostnames are truncated.

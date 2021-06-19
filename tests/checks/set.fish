@@ -173,6 +173,11 @@ else
 end
 # CHECK: Test 13 pass
 
+# Temporary until set learns about universal config.
+set -e -g __fish_test_universal_variables_variable_foo
+set -e -U __fish_test_universal_variables_variable_foo
+fish_sync --var __fish_test_universal_variables_variable_foo
+
 set -Ux __fish_test_universal_variables_variable_foo bar
 set -u __fish_test_universal_variables_variable_foo bar
 if test (/bin/sh -c 'echo $__fish_test_universal_variables_variable_foo') = '' -a ($FISH -c 'echo $__fish_test_universal_variables_variable_foo') = bar

@@ -65,6 +65,9 @@ class config_universal_t {
     /// Run the config file as script, using the given \p parser.
     void run_config(parser_t &parser);
 
+    /// \return whether there is a file. This hits the disk.
+    bool has_file() const;
+
    private:
     /// Construct with an explicit path, for tests.
     explicit config_universal_t(wcstring path);
@@ -122,6 +125,10 @@ class config_universal_t {
     friend struct config_universal_tests_t;
 };
 
+/// Migrate any universal variables to the universal config file.
+/// This does not re-execute it.
+void migrate_universal_variables_to_config(config_universal_t &uconf);
+
 /// Class representing universal variables.
 class env_universal_t {
    public:
@@ -175,6 +182,9 @@ class env_universal_t {
 
     /// Access the export generation.
     uint64_t get_export_generation() const { return export_generation; }
+
+    /// Read universal variables, store them in \p vars, and copy them to \p uconf.
+    void migrate_to_config(config_universal_t &uconf);
 
    private:
     // Path that we save to. This is set in initialize(). If empty, initialize has not been called.

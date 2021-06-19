@@ -425,7 +425,8 @@ void env_init(const struct config_paths_t *paths, bool do_uvars, bool default_pa
     // Initialize our uvars if requested.
     if (!do_uvars) {
         s_uvar_scope_is_global = true;
-    } else {
+    } else if (!config_universal_t::shared().has_file()) {
+        // Migrate any uvars to our universal config.
         // Set up universal variables using the default path.
         callback_data_list_t callbacks;
         uvars()->initialize(callbacks);
@@ -444,6 +445,7 @@ void env_init(const struct config_paths_t *paths, bool do_uvars, bool default_pa
                 vars.globals().remove(name, ENV_GLOBAL | ENV_EXPORT);
             }
         }
+        uvars()->migrate_to_config(config_universal_t::shared());
     }
 }
 

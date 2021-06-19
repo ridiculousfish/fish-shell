@@ -4097,6 +4097,7 @@ static void test_universal_ok_to_save() {
 struct config_universal_tests_t {
     static void test_file_source_modification();
     static void test_file_change_detection();
+    static void test_uvar_migration();
 };
 
 void config_universal_tests_t::test_file_source_modification() {
@@ -4192,9 +4193,55 @@ void config_universal_tests_t::test_file_change_detection() {
     do_test(!uconf.check_file_changed());
 }
 
+void config_universal_tests_t::test_uvar_migration() {
+    env_universal_t uvars;
+    callback_data_list_t callbacks;
+    uvars.initialize_at_path(callbacks, L"");
+    do_test(callbacks.empty());
+    uvars.set(L"var1", env_var_t(L"val1", 0));
+    uvars.set(L"var1_space", env_var_t(L"val1 space", 0));
+    uvars.set(L"var1_space_quote", env_var_t(L"val1 space '", 0));
+    uvars.set(L"var2", env_var_t(L"val2", env_var_t::flag_export));
+    uvars.set(L"var3", env_var_t(L"val3", env_var_t::flag_pathvar));
+    uvars.set(L"var4", env_var_t(L"val4", env_var_t::flag_pathvar | env_var_t::flag_export));
+    uvars.set(L"var5_not_PATH", env_var_t(wcstring_list_t{L"val5", L"val5b"}, 0));
+
+
+    char t[] = "/tmp/fish_test_uconf.XXXXXX";
+    autoclose_fd_t tmpfd{mkstemp(t)};
+    if (!tmpfd.valid()) {
+        err(L"Unable to create temporary file");
+        return;
+    }
+    tmpfd.close();
+    cleanup_t remove_tmp{[&] { (void)remove(t); }};
+    config_universal_t uconf(str2wcstring(t));
+
+    uvars.migrate_to_config(uconf);
+    std::string contents;
+    tmpfd.reset(wopen_cloexec(str2wcstring(t), O_RDONLY));
+    if (read_all(tmpfd.fd(), &contents)) {
+        wperror(L"read");
+        err(L"read_all failed");
+        return;
+    }
+
+    auto contains = [&](const char *s) {
+        return contents.find(s) != std::string::npos;
+    };
+    do_test(contains("set --global var1 val1\n"));
+    do_test(contains("set --global var1_space 'val1 space'\n"));
+    do_test(contains("set --global var1_space_quote val1\\ space\\ \\'\n"));
+    do_test(contains("set --global --export var2 val2\n"));
+    do_test(contains("set --global --path var3 val3\n"));
+    do_test(contains("set --global --export --path var4 val4\n"));
+    do_test(contains("set --global --unpath var5_not_PATH val5 val5b\n"));
+}
+
 static void test_universal_config() {
     config_universal_tests_t::test_file_source_modification();
     config_universal_tests_t::test_file_change_detection();
+    config_universal_tests_t::test_uvar_migration();
 }
 
 bool poll_notifier(const std::unique_ptr<universal_notifier_t> &note) {

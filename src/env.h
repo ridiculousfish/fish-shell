@@ -122,6 +122,8 @@ class env_var_t {
     env_var_t(wcstring val, env_var_flags_t flags)
         : env_var_t(wcstring_list_t{std::move(val)}, flags) {}
 
+    env_var_t(const wchar_t *val, env_var_flags_t flags) : env_var_t(wcstring(val), flags) {}
+
     // Constructors that infer the flags from a name.
     env_var_t(const wchar_t *name, wcstring_list_t vals)
         : env_var_t(std::move(vals), flags_for(name)) {}
