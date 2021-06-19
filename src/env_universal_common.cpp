@@ -240,7 +240,8 @@ bool config_universal_t::update(const wcstring_list_t &var_names, const operatio
     // Update our new file's props.
     tweak_new_file(real_path, private_fd);
 
-    // Apply new file. Moving it into place will tweak the ctime of the previous file, so grab that first.
+    // Apply new file. Moving it into place will tweak the ctime of the previous file, so grab that
+    // first.
     file_id_t prev_file_id = file_id_for_fd(fd);
     if (!replace_file(private_file_path, real_path)) return false;
     fd.close();
@@ -265,8 +266,7 @@ bool config_universal_t::check_file_changed() {
 
 void config_universal_t::run_config(parser_t &parser) {
     if (waccess(path_, R_OK) != 0) {
-        FLOGF(config, L"not sourcing %ls (not readable or does not exist)",
-              path_.c_str());
+        FLOGF(config, L"not sourcing %ls (not readable or does not exist)", path_.c_str());
         return;
     }
     FLOGF(config, L"sourcing %ls", path_.c_str());
@@ -275,9 +275,7 @@ void config_universal_t::run_config(parser_t &parser) {
     parser.eval(cmd, io_chain_t());
 }
 
-bool config_universal_t::has_file() const {
-    return !path_.empty() && waccess(path_, F_OK) == 0;
-}
+bool config_universal_t::has_file() const { return !path_.empty() && waccess(path_, F_OK) == 0; }
 
 bool config_universal_t::write_to_file(const wcstring &source, const autoclose_fd_t &fd) const {
     assert(fd.valid() && "Invalid fd");
@@ -466,7 +464,11 @@ void config_universal_t::insert_set_var(wcstring *source, const wcstring &name,
     wcstring cmd = make_set_var_command(name, vars);
     if (cmd.empty()) {
         // Deleting. Note this handles an empty range fine.
+        // Also trim up to one trailing newline.
         source->erase(range.start, range.length);
+        if (range.start < source->size() && source->at(range.start) == L'\n') {
+            source->erase(range.start);
+        }
     } else if (range.length > 0) {
         // We are replacing.
         source->replace(range.start, range.length, cmd);
@@ -825,7 +827,6 @@ bool env_universal_t::load_from_path(const wcstring &path, callback_data_list_t 
 }
 
 bool env_universal_t::load_from_path(const std::string &path, callback_data_list_t &callbacks) {
-
     // Check to see if the file is unchanged. We do this again in load_from_fd, but this avoids
     // opening the file unnecessarily.
     if (last_read_file != kInvalidFileID && file_id_for_path(path) == last_read_file) {
@@ -1345,8 +1346,7 @@ struct uvar_adapter_t final : public environment_t {
     env_universal_t &uvars;
     explicit uvar_adapter_t(env_universal_t &uvars) : uvars(uvars) {}
 
-    virtual maybe_t<env_var_t> get(const wcstring &key,
-                                   env_mode_flags_t = ENV_DEFAULT) const {
+    virtual maybe_t<env_var_t> get(const wcstring &key, env_mode_flags_t = ENV_DEFAULT) const {
         return uvars.get(key);
     }
 

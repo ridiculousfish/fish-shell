@@ -3,8 +3,8 @@
 
 #include "builtin_read.h"
 
-#include <unistd.h>
 #include <termios.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -23,6 +23,7 @@
 #include "common.h"
 #include "complete.h"
 #include "env.h"
+#include "env_universal_common.h"
 #include "event.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "highlight.h"
@@ -48,6 +49,7 @@ struct read_cmd_opts_t {
     // empty string and a given empty delimiter.
     bool have_delimiter = false;
     wcstring delimiter;
+    bool save_to_uconf = false;
     bool tokenize = false;
     bool shell = false;
     bool array = false;
@@ -169,7 +171,8 @@ static int parse_cmd_opts(read_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
                 break;
             }
             case L'U': {
-                opts.place |= ENV_UNIVERSAL;
+                opts.place |= ENV_GLOBAL;
+                opts.save_to_uconf = true;
                 break;
             }
             case L'u': {
@@ -392,8 +395,8 @@ static int validate_read_args(const wchar_t *cmd, read_cmd_opts_t &opts, int arg
         return STATUS_INVALID_ARGS;
     }
 
-    if ((opts.place & ENV_LOCAL ? 1 : 0) + (opts.place & ENV_FUNCTION ? 1 : 0) + (opts.place & ENV_GLOBAL ? 1 : 0) +
-            (opts.place & ENV_UNIVERSAL ? 1 : 0) >
+    if ((opts.place & ENV_LOCAL ? 1 : 0) + (opts.place & ENV_FUNCTION ? 1 : 0) +
+            (opts.place & ENV_GLOBAL ? 1 : 0) >
         1) {
         streams.err.append_format(BUILTIN_ERR_GLOCAL, cmd);
         builtin_print_error_trailer(parser, streams.err, cmd);
@@ -444,6 +447,7 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
     wcstring buff;
     int exit_res = STATUS_CMD_OK;
     read_cmd_opts_t opts;
+    wcstring_list_t uconf_var_names;
 
     int optind;
     int retval = parse_cmd_opts(opts, &optind, argc, argv, parser, streams);
@@ -484,8 +488,21 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
     auto clear_remaining_vars = [&]() {
         while (vars_left()) {
             parser.vars().set_empty(*var_ptr, opts.place);
+            if (opts.save_to_uconf) uconf_var_names.push_back(*var_ptr);
             ++var_ptr;
         }
+    };
+
+    // Helper to set a variable, fire any events, and optionally add it to our list of uconf
+    // changes.
+    auto set_var_helper = [&](const wcstring &name, wcstring val) {
+        parser.set_var_and_fire(name, opts.place, std::move(val));
+        if (opts.save_to_uconf) uconf_var_names.push_back(name);
+    };
+
+    auto set_vars_helper = [&](const wcstring &name, wcstring_list_t vals) {
+        parser.set_var_and_fire(name, opts.place, std::move(vals));
+        if (opts.save_to_uconf) uconf_var_names.push_back(name);
     };
 
     // Normally, we either consume a line of input or all available input. But if we are reading a
@@ -535,22 +552,22 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
                     }
                 }
 
-                parser.set_var_and_fire(*var_ptr++, opts.place, std::move(tokens));
+                set_vars_helper(*var_ptr++, std::move(tokens));
             } else {
                 maybe_t<tok_t> t;
                 while ((vars_left() - 1 > 0) && (t = tok.next())) {
                     auto text = tok.text_of(*t);
                     if (unescape_string(text, &out, UNESCAPE_DEFAULT)) {
-                        parser.set_var_and_fire(*var_ptr++, opts.place, out);
+                        set_var_helper(*var_ptr++, out);
                     } else {
-                        parser.set_var_and_fire(*var_ptr++, opts.place, text);
+                        set_var_helper(*var_ptr++, text);
                     }
                 }
 
                 // If we still have tokens, set the last variable to them.
                 if ((t = tok.next())) {
                     wcstring rest = wcstring(buff, t->offset);
-                    parser.set_var_and_fire(*var_ptr++, opts.place, std::move(rest));
+                    set_var_helper(*var_ptr++, std::move(rest));
                 }
             }
             // The rest of the loop is other split-modes, we don't care about those.
@@ -583,12 +600,12 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
 
             if (opts.array) {
                 // Array mode: assign each char as a separate element of the sole var.
-                parser.set_var_and_fire(*var_ptr++, opts.place, chars);
+                set_vars_helper(*var_ptr++, chars);
             } else {
                 // Not array mode: assign each char to a separate var with the remainder being
                 // assigned to the last var.
                 for (const auto &c : chars) {
-                    parser.set_var_and_fire(*var_ptr++, opts.place, c);
+                    set_var_helper(*var_ptr++, c);
                 }
             }
         } else if (opts.array) {
@@ -599,14 +616,14 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
                 // We're using IFS, so tokenize the buffer using each IFS char. This is for backward
                 // compatibility with old versions of fish.
                 wcstring_list_t tokens = split_string_tok(buff, opts.delimiter);
-                parser.set_var_and_fire(*var_ptr++, opts.place, std::move(tokens));
+                set_vars_helper(*var_ptr++, std::move(tokens));
             } else {
                 // We're using a delimiter provided by the user so use the `string split` behavior.
                 wcstring_list_t splits;
                 split_about(buff.begin(), buff.end(), opts.delimiter.begin(), opts.delimiter.end(),
                             &splits);
 
-                parser.set_var_and_fire(*var_ptr++, opts.place, splits);
+                set_vars_helper(*var_ptr++, splits);
             }
         } else {
             // Not array mode. Split the input into tokens and assign each to the vars in sequence.
@@ -621,7 +638,7 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
                     if (val_idx < var_vals.size()) {
                         val = std::move(var_vals.at(val_idx++));
                     }
-                    parser.set_var_and_fire(*var_ptr++, opts.place, std::move(val));
+                    set_var_helper(*var_ptr++, std::move(val));
                 }
             } else {
                 // We're using a delimiter provided by the user so use the `string split` behavior.
@@ -632,7 +649,7 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
                             &splits, argc - 1);
                 assert(splits.size() <= static_cast<size_t>(vars_left()));
                 for (const auto &split : splits) {
-                    parser.set_var_and_fire(*var_ptr++, opts.place, split);
+                    set_var_helper(*var_ptr++, split);
                 }
             }
         }
@@ -641,6 +658,11 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
     if (!opts.array) {
         // In case there were more args than splits
         clear_remaining_vars();
+    }
+
+    if (!uconf_var_names.empty()) {
+        assert(opts.save_to_uconf && "Should only have names if we are saving");
+        config_universal_t::shared().update(uconf_var_names, parser.context());
     }
 
     return exit_res;

@@ -1,6 +1,8 @@
 // Functions used for implementing the set builtin.
 #include "config.h"  // IWYU pragma: keep
 
+#include "builtin_set.h"
+
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -17,9 +19,9 @@
 #include <vector>
 
 #include "builtin.h"
-#include "builtin_set.h"
 #include "common.h"
 #include "env.h"
+#include "env_universal_common.h"
 #include "expand.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "history.h"
@@ -42,7 +44,7 @@ struct set_cmd_opts_t {
     bool unexport = false;
     bool pathvar = false;
     bool unpathvar = false;
-    bool universal = false;
+    bool save_to_uconf = false;
     bool query = false;
     bool shorten_ok = true;
     bool append = false;
@@ -60,23 +62,28 @@ enum {
 // (REQUIRE_ORDER) option for flag parsing. This is not typical of most fish commands. It means
 // we stop scanning for flags when the first non-flag argument is seen.
 static const wchar_t *const short_options = L"+:LSUaefghlnpqux";
-static const struct woption long_options[] = {
-    {L"export", no_argument, nullptr, 'x'},    {L"global", no_argument, nullptr, 'g'},
-    {L"function", no_argument, nullptr, 'f'},
-    {L"local", no_argument, nullptr, 'l'},     {L"erase", no_argument, nullptr, 'e'},
-    {L"names", no_argument, nullptr, 'n'},     {L"unexport", no_argument, nullptr, 'u'},
-    {L"universal", no_argument, nullptr, 'U'}, {L"long", no_argument, nullptr, 'L'},
-    {L"query", no_argument, nullptr, 'q'},     {L"show", no_argument, nullptr, 'S'},
-    {L"append", no_argument, nullptr, 'a'},    {L"prepend", no_argument, nullptr, 'p'},
-    {L"path", no_argument, nullptr, opt_path}, {L"unpath", no_argument, nullptr, opt_unpath},
-    {L"help", no_argument, nullptr, 'h'},      {nullptr, 0, nullptr, 0}};
+static const struct woption long_options[] = {{L"export", no_argument, nullptr, 'x'},
+                                              {L"global", no_argument, nullptr, 'g'},
+                                              {L"function", no_argument, nullptr, 'f'},
+                                              {L"local", no_argument, nullptr, 'l'},
+                                              {L"erase", no_argument, nullptr, 'e'},
+                                              {L"names", no_argument, nullptr, 'n'},
+                                              {L"unexport", no_argument, nullptr, 'u'},
+                                              {L"universal", no_argument, nullptr, 'U'},
+                                              {L"long", no_argument, nullptr, 'L'},
+                                              {L"query", no_argument, nullptr, 'q'},
+                                              {L"show", no_argument, nullptr, 'S'},
+                                              {L"append", no_argument, nullptr, 'a'},
+                                              {L"prepend", no_argument, nullptr, 'p'},
+                                              {L"path", no_argument, nullptr, opt_path},
+                                              {L"unpath", no_argument, nullptr, opt_unpath},
+                                              {L"help", no_argument, nullptr, 'h'},
+                                              {nullptr, 0, nullptr, 0}};
 
 // Hint for invalid path operation with a colon.
 #define BUILTIN_SET_MISMATCHED_ARGS _(L"%ls: You provided %d indexes but %d values\n")
 #define BUILTIN_SET_ERASE_NO_VAR _(L"%ls: Erase needs a variable name\n")
 #define BUILTIN_SET_ARRAY_BOUNDS_ERR _(L"%ls: Array index out of bounds\n")
-#define BUILTIN_SET_UVAR_ERR \
-    _(L"%ls: Universal variable '%ls' is shadowed by the global variable of the same name.\n")
 
 static int parse_cmd_opts(set_cmd_opts_t &opts, int *optind,  //!OCLINT(high ncss method)
                           int argc, const wchar_t **argv, parser_t &parser, io_streams_t &streams) {
@@ -142,7 +149,8 @@ static int parse_cmd_opts(set_cmd_opts_t &opts, int *optind,  //!OCLINT(high ncs
                 break;
             }
             case 'U': {
-                opts.universal = true;
+                opts.global = true;
+                opts.save_to_uconf = true;
                 break;
             }
             case 'L': {
@@ -190,7 +198,7 @@ static int validate_cmd_opts(const wchar_t *cmd,
     }
 
     // Variables can only have one scope.
-    if (opts.local + opts.function + opts.global + opts.universal > 1) {
+    if (opts.local + opts.function + opts.global > 1) {
         streams.err.append_format(BUILTIN_ERR_GLOCAL, cmd);
         builtin_print_error_trailer(parser, streams.err, cmd);
         return STATUS_INVALID_ARGS;
@@ -218,8 +226,8 @@ static int validate_cmd_opts(const wchar_t *cmd,
     }
 
     // The --show flag cannot be combined with any other flag.
-    if (opts.show &&
-        (opts.local || opts.function || opts.global || opts.erase || opts.list || opts.exportv || opts.universal)) {
+    if (opts.show && (opts.local || opts.function || opts.global || opts.erase || opts.list ||
+                      opts.exportv || opts.save_to_uconf)) {
         streams.err.append_format(BUILTIN_ERR_COMBO, cmd);
         builtin_print_error_trailer(parser, streams.err, cmd);
         return STATUS_INVALID_ARGS;
@@ -229,21 +237,6 @@ static int validate_cmd_opts(const wchar_t *cmd,
         streams.err.append_format(BUILTIN_SET_ERASE_NO_VAR, cmd);
         builtin_print_error_trailer(parser, streams.err, cmd);
         return STATUS_INVALID_ARGS;
-    }
-
-    return STATUS_CMD_OK;
-}
-
-// Check if we are setting a uvar and a global of the same name exists. See
-// https://github.com/fish-shell/fish-shell/issues/806
-static int check_global_scope_exists(const wchar_t *cmd, const set_cmd_opts_t &opts,
-                                     const wcstring &dest, io_streams_t &streams,
-                                     const parser_t &parser) {
-    if (opts.universal) {
-        auto global_dest = parser.vars().get(dest, ENV_GLOBAL);
-        if (global_dest && parser.is_interactive()) {
-            streams.err.append_format(BUILTIN_SET_UVAR_ERR, cmd, dest.c_str());
-        }
     }
 
     return STATUS_CMD_OK;
@@ -315,7 +308,8 @@ struct split_var_t {
 ///   a split var on success, none() on error, in which case an error will have been printed.
 ///   If no index is found, this leaves indexes empty.
 static maybe_t<split_var_t> split_var_and_indexes(const wchar_t *arg, env_mode_flags_t mode,
-                                           const environment_t &vars, io_streams_t &streams) {
+                                                  const environment_t &vars,
+                                                  io_streams_t &streams) {
     split_var_t res{};
     const wchar_t *open_bracket = std::wcschr(arg, L'[');
     size_t varname_len = open_bracket ? open_bracket - arg : wcslen(arg);
@@ -404,7 +398,6 @@ static env_mode_flags_t compute_scope(const set_cmd_opts_t &opts) {
     if (opts.global) scope |= ENV_GLOBAL;
     if (opts.exportv) scope |= ENV_EXPORT;
     if (opts.unexport) scope |= ENV_UNEXPORT;
-    if (opts.universal) scope |= ENV_UNIVERSAL;
     if (opts.pathvar) scope |= ENV_PATHVAR;
     if (opts.unpathvar) scope |= ENV_UNPATHVAR;
     return scope;
@@ -505,10 +498,6 @@ static void show_scope(const wchar_t *var_name, int scope, io_streams_t &streams
             scope_name = L"global";
             break;
         }
-        case ENV_UNIVERSAL: {
-            scope_name = L"universal";
-            break;
-        }
         default: {
             DIE("invalid scope");
         }
@@ -557,7 +546,6 @@ static int builtin_set_show(const wchar_t *cmd, const set_cmd_opts_t &opts, int 
             if (name == L"history") continue;
             show_scope(name.c_str(), ENV_LOCAL, streams, vars);
             show_scope(name.c_str(), ENV_GLOBAL, streams, vars);
-            show_scope(name.c_str(), ENV_UNIVERSAL, streams, vars);
         }
     } else {
         for (int i = 0; i < argc; i++) {
@@ -578,7 +566,6 @@ static int builtin_set_show(const wchar_t *cmd, const set_cmd_opts_t &opts, int 
 
             show_scope(arg, ENV_LOCAL, streams, vars);
             show_scope(arg, ENV_GLOBAL, streams, vars);
-            show_scope(arg, ENV_UNIVERSAL, streams, vars);
         }
     }
 
@@ -588,7 +575,7 @@ static int builtin_set_show(const wchar_t *cmd, const set_cmd_opts_t &opts, int 
 /// Erase a variable.
 static int builtin_set_erase(const wchar_t *cmd, set_cmd_opts_t &opts, int argc,
                              const wchar_t **argv, parser_t &parser, io_streams_t &streams) {
-    int ret = STATUS_CMD_OK;
+    int retval = STATUS_CMD_OK;
     env_mode_flags_t scope = compute_scope(opts);
     for (int i = 0; i < argc; i++) {
         auto split = split_var_and_indexes(argv[i], scope, parser.vars(), streams);
@@ -603,7 +590,6 @@ static int builtin_set_erase(const wchar_t *cmd, set_cmd_opts_t &opts, int argc,
             return STATUS_INVALID_ARGS;
         }
 
-        int retval = STATUS_CMD_OK;
         if (split->indexes.empty()) {  // unset the var
             retval = parser.vars().remove(split->varname, scope);
             // When a non-existent-variable is unset, return ENV_NOT_FOUND as $status
@@ -622,16 +608,12 @@ static int builtin_set_erase(const wchar_t *cmd, set_cmd_opts_t &opts, int argc,
                                               streams, parser);
         }
 
-        // Set $status to the last error value.
-        // This is cheesy, but I don't expect this to be checked often.
-        if (retval != STATUS_CMD_OK) {
-            ret = retval;
-        } else {
-            retval = check_global_scope_exists(cmd, opts, split->varname, streams, parser);
-            if (retval != STATUS_CMD_OK) ret = retval;
+        // TODO: we're updating the file more than once if we are given multiple vars.
+        if (opts.save_to_uconf) {
+            config_universal_t::shared().update({split->varname}, parser.context());
         }
     }
-    return ret;
+    return retval;
 }
 
 /// Return a list of new values for the variable \p varname, respecting the \p opts.
@@ -754,13 +736,15 @@ static int builtin_set_set(const wchar_t *cmd, set_cmd_opts_t &opts, int argc, c
         new_values = new_var_values_by_index(*split, argc, argv);
     }
 
-    bool have_shadowing_global = check_global_scope_exists(cmd, opts, split->varname, streams, parser);
     // Set the value back in the variable stack and fire any events.
     int retval = env_set_reporting_errors(cmd, split->varname, scope, std::move(new_values),
                                           streams, parser);
 
-    if (retval != STATUS_CMD_OK) return retval;
-    return have_shadowing_global;
+    if (opts.save_to_uconf) {
+        config_universal_t::shared().update({split->varname}, parser.context());
+    }
+
+    return retval;
 }
 
 /// The set builtin creates, updates, and erases (removes, deletes) variables.
