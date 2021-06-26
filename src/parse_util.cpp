@@ -104,75 +104,76 @@ size_t parse_util_get_offset(const wcstring &str, int line, long line_offset) {
     return off + line_offset;
 }
 
-static int parse_util_locate_cmdsub(const wchar_t *in, const wchar_t **begin, const wchar_t **end,
-                                    bool allow_incomplete) {
-    const wchar_t open_type = L'(';
-    const wchar_t close_type = L')';
-    bool escaped = false;
-    bool syntax_error = false;
-    int paran_count = 0;
+/// Given that \p in points at the opening parens of a cmdsub, find the closing paren.
+/// \return a pointer to the closing paren, or the end of the string if allow_incomplete is set and
+/// there was no closing paren, or nullptr on error. Note this function is recursive.
+static const wchar_t *parse_util_locate_cmdsub_impl(const wchar_t *in, bool allow_incomplete) {
+    assert(in && *in == L'(' && "invalid input");
+    const wchar_t *pos = in + 1;  // skip opening paren
+    // The quote type is " or ' or \0.
+    wchar_t quote = L'\0';
+    for (; *pos; pos++) {
+        const wchar_t c = *pos;
+        if (c == L'\\') {
+            // Skip next character.
+            pos++;
+            if (!*pos) break;
+        } else if (quote && c == quote) {
+            quote = L'\0';
+        } else if (!quote && (c == L'\'' || c == L'"')) {
+            quote = c;
+        } else if (!quote && c == L')') {
+            // Closed the cmdsub.
+            return pos;
+        } else if (!quote && c == L'(') {
+            // Nested unquoted cmdsub. Invoke ourselves recursively. We may only get back nullptr,
+            // or the end of the string, or a closing paren.
+            pos = parse_util_locate_cmdsub_impl(pos, allow_incomplete);
+            assert((!pos || !*pos || *pos == L')') && "invalid return");
+            if (!pos || !*pos) return pos;
+        }
+    }
+    assert(!*pos && "Should be at end of string");
+    return allow_incomplete ? pos : nullptr;
+}
 
-    const wchar_t *paran_begin = nullptr, *paran_end = nullptr;
-
-    assert(in && "null parameter");
-    for (const wchar_t *pos = in; *pos; pos++) {
-        if (!escaped) {
-            if (*pos == L'\'' || *pos == L'"') {
-                const wchar_t *q_end = quote_end(pos);
-                if (q_end && *q_end) {
-                    pos = q_end;
-                } else {
-                    break;
-                }
+static int parse_util_locate_cmdsub(const wchar_t *in, const wchar_t **out_begin,
+                                    const wchar_t **out_end, bool allow_incomplete) {
+    assert(in && "invalid input");
+    // The quote type is " or ' or \0.
+    wchar_t quote = L'\0';
+    const wchar_t *pos = in;
+    for (; *pos; pos++) {
+        const wchar_t c = *pos;
+        if (c == L'\\') {
+            // Skip next character.
+            pos++;
+            if (!*pos) break;
+        } else if (quote && c == quote) {
+            quote = L'\0';
+        } else if (!quote && (c == L'\'' || c == L'"')) {
+            quote = c;
+        } else if (!quote && c == L')') {
+            // Unbalancing closing paren.
+            return -1;
+        } else if (!quote && c == L'(') {
+            // We found a top-level cmdsub.
+            const wchar_t *end = parse_util_locate_cmdsub_impl(pos, allow_incomplete);
+            assert((!end || !*end || *end == L')') && "invalid return");
+            if (end == nullptr) {
+                return -1;
             } else {
-                if (*pos == open_type) {
-                    if ((paran_count == 0) && (paran_begin == nullptr)) {
-                        paran_begin = pos;
-                    }
-
-                    paran_count++;
-                } else if (*pos == close_type) {
-                    paran_count--;
-
-                    if ((paran_count == 0) && (paran_end == nullptr)) {
-                        paran_end = pos;
-                        break;
-                    }
-
-                    if (paran_count < 0) {
-                        syntax_error = true;
-                        break;
-                    }
-                }
+                if (out_begin) *out_begin = pos;
+                if (out_end) *out_end = end;
+                return 1;
             }
         }
-        if (*pos == '\\') {
-            escaped = !escaped;
-        } else {
-            escaped = false;
-        }
     }
-
-    syntax_error |= (paran_count < 0);
-    syntax_error |= ((paran_count > 0) && (!allow_incomplete));
-
-    if (syntax_error) {
-        return -1;
-    }
-
-    if (paran_begin == nullptr) {
-        return 0;
-    }
-
-    if (begin) {
-        *begin = paran_begin;
-    }
-
-    if (end) {
-        *end = paran_count ? in + std::wcslen(in) : paran_end;
-    }
-
-    return 1;
+    // No cmdsubs were found.
+    assert(*pos == L'\0' && "should be at end of string");
+    if (out_begin) *out_begin = in;
+    if (out_end) *out_begin = pos;
+    return 0;
 }
 
 long parse_util_slice_length(const wchar_t *in) {
