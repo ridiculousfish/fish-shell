@@ -501,21 +501,16 @@ void append_format(wcstring &str, const wchar_t *format, ...) {
     va_end(va);
 }
 
-wchar_t *quote_end(const wchar_t *pos) {
-    wchar_t c = *pos;
-
-    while (true) {
-        pos++;
-
-        if (!*pos) return nullptr;
-
-        if (*pos == L'\\') {
-            pos++;
-            if (!*pos) return nullptr;
-        } else {
-            if (*pos == c) {
-                return const_cast<wchar_t *>(pos);
-            }
+const wchar_t *quote_end(const wchar_t *pos) {
+    assert(pos && (pos[0] == L'\'' || pos[0] == L'"') && "string is null or does not start with quote");
+    wchar_t quote = *pos;
+    for (const wchar_t *cursor = pos + 1; *cursor; cursor++) {
+        if (*cursor == quote) {
+            return cursor;
+        } else if (*cursor == L'\\') {
+            // Skip potentially escaped quote.
+            cursor++;
+            if (!*cursor) return nullptr;
         }
     }
     return nullptr;

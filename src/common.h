@@ -442,10 +442,10 @@ std::unique_ptr<T> make_unique(Args &&...args) {
 #endif
 
 /// This functions returns the end of the quoted substring beginning at \c in. The type of quoting
-/// character is detemrined by examining \c in. Returns 0 on error.
+/// character is detemrined by examining \c in. Returns nullptr on error.
 ///
 /// \param in the position of the opening quote.
-wchar_t *quote_end(const wchar_t *pos);
+const wchar_t *quote_end(const wchar_t *pos);
 
 /// This function should be called after calling `setlocale()` to perform fish specific locale
 /// initialization.
