@@ -104,44 +104,31 @@ size_t parse_util_get_offset(const wcstring &str, int line, long line_offset) {
     return off + line_offset;
 }
 
-/// Given that \p in points at the opening parens of a cmdsub, find the closing paren.
-/// \return a pointer to the closing paren, or the end of the string if allow_incomplete is set and
-/// there was no closing paren, or nullptr on error. Note this function is recursive.
-static const wchar_t *parse_util_locate_cmdsub_impl(const wchar_t *in, bool allow_incomplete) {
-    assert(in && *in == L'(' && "invalid input");
-    const wchar_t *pos = in + 1;  // skip opening paren
-    // The quote type is " or ' or \0.
-    wchar_t quote = L'\0';
-    for (; *pos; pos++) {
-        const wchar_t c = *pos;
-        if (c == L'\\') {
-            // Skip next character.
-            pos++;
-            if (!*pos) break;
-        } else if (quote && c == quote) {
-            quote = L'\0';
-        } else if (!quote && (c == L'\'' || c == L'"')) {
-            quote = c;
-        } else if (!quote && c == L')') {
-            // Closed the cmdsub.
-            return pos;
-        } else if (!quote && c == L'(') {
-            // Nested unquoted cmdsub. Invoke ourselves recursively. We may only get back nullptr,
-            // or the end of the string, or a closing paren.
-            pos = parse_util_locate_cmdsub_impl(pos, allow_incomplete);
-            assert((!pos || !*pos || *pos == L')') && "invalid return");
-            if (!pos || !*pos) return pos;
-        }
-    }
-    assert(!*pos && "Should be at end of string");
-    return allow_incomplete ? pos : nullptr;
-}
+struct cmdsub_range_t {
+    // If this is a cmdsub, the opening paren. If no cmdsub was found, the beginning of the string.
+    const wchar_t *begin;
+    // If this is a cmdsub, pointer to its inside. If no cmdsub was found, the beginning of the
+    // string.
+    const wchar_t *contents;
+    // Closing paren, or end of the string. The cmdsub contents are [contents, end).
+    const wchar_t *end;
 
-static int parse_util_locate_cmdsub(const wchar_t *in, const wchar_t **out_begin,
-                                    const wchar_t **out_end, bool allow_incomplete) {
-    assert(in && "invalid input");
-    // The quote type is " or ' or \0.
-    wchar_t quote = L'\0';
+    cmdsub_range_t(const wchar_t *begin, const wchar_t *contents, const wchar_t *end)
+        : begin(begin), contents(contents), end(end) {
+        assert(begin && contents && end && begin <= contents && contents <= end &&
+               "Pointers null or out of order");
+    }
+
+    /// \return if we found a cmdsub.
+    bool found() const { return contents > begin; }
+};
+
+/// Look for a cmdsub "boundary."
+/// If \p closing is false, return a pointer to the opening (, or nullptr if an unbalancing ) is
+/// found, or string-end if none found. If \p closing is true, return a pointer to the closing ). If
+/// not found, return string-end or nullptr, according to allow_incomplete.
+static const wchar_t *find_cmdsub_boundary(const wchar_t *in, bool allow_incomplete, bool closing) {
+    wchar_t quote = L'\0';  // " or ' or \0
     const wchar_t *pos = in;
     for (; *pos; pos++) {
         const wchar_t c = *pos;
@@ -154,26 +141,44 @@ static int parse_util_locate_cmdsub(const wchar_t *in, const wchar_t **out_begin
         } else if (!quote && (c == L'\'' || c == L'"')) {
             quote = c;
         } else if (!quote && c == L')') {
-            // Unbalancing closing paren.
-            return -1;
+            return closing ? pos : nullptr;
         } else if (!quote && c == L'(') {
-            // We found a top-level cmdsub.
-            const wchar_t *end = parse_util_locate_cmdsub_impl(pos, allow_incomplete);
-            assert((!end || !*end || *end == L')') && "invalid return");
-            if (end == nullptr) {
-                return -1;
-            } else {
-                if (out_begin) *out_begin = pos;
-                if (out_end) *out_end = end;
-                return 1;
-            }
+            // Found an opening paren. If we're looking for it, we're done.
+            // If we're looking for the closing, this is a nested cmdsub; invoke ourselves recursively.
+            // We're done if we get null back (error) or end-of-string (incomplete).
+            // Otherwise we must have gotten back a ')'; leave pos pointing it, it will be
+            // incremented next iteration.
+            if (! closing) return pos;
+
+            pos = find_cmdsub_boundary(pos + 1, allow_incomplete, true /* closing */);
+            if (!pos || !*pos) return pos;
+            assert(*pos == L')' && "Should have found closing paren");
         }
     }
-    // No cmdsubs were found.
-    assert(*pos == L'\0' && "should be at end of string");
-    if (out_begin) *out_begin = in;
-    if (out_end) *out_begin = pos;
-    return 0;
+    assert(*pos == L'\0' && "Should have exhausted the string");
+    if (closing) {
+        return allow_incomplete ? pos : nullptr;
+    } else {
+        return pos;
+    }
+}
+
+/// \return the first cmdsub range, or none on error.
+static maybe_t<cmdsub_range_t> parse_util_locate_cmdsub(const wchar_t *in, bool allow_incomplete) {
+    assert(in && "Invalid input");
+    const wchar_t *boundary = find_cmdsub_boundary(in, allow_incomplete, false /* not closing */);
+    if (!boundary) return none();
+    assert((*boundary == L'(' || *boundary == L'\0') &&
+           "boundary should be opening paren or string end");
+
+    // No cmdsubs found?
+    if (*boundary == L'\0') return cmdsub_range_t{in, in, boundary};
+
+    // boundary points at the opening paren. Find any closing paren.
+    const wchar_t *contents = boundary + 1;
+    const wchar_t *end = find_cmdsub_boundary(contents, allow_incomplete, true /* closing */);
+    if (! end) return none();
+    return cmdsub_range_t{boundary, contents, end};
 }
 
 long parse_util_slice_length(const wchar_t *in) {
@@ -233,35 +238,32 @@ int parse_util_locate_cmdsubst_range(const wcstring &str, size_t *inout_cursor_o
     const wchar_t *const buff = str.c_str();
     const wchar_t *const valid_range_start = buff + *inout_cursor_offset,
                          *valid_range_end = buff + str.size();
-    const wchar_t *bracket_range_begin = nullptr;
-    const wchar_t *bracket_range_end = nullptr;
-    int ret = parse_util_locate_cmdsub(valid_range_start, &bracket_range_begin, &bracket_range_end,
-                                       accept_incomplete);
-    if (ret <= 0) {
-        return ret;
-    }
+    auto range = parse_util_locate_cmdsub(valid_range_start, accept_incomplete);
+    // Did we get an error?
+    if (!range) return -1;
+
+    // Was there no cmdsub?
+    if (!range->found()) return 0;
 
     // The command substitutions must not be NULL and must be in the valid pointer range, and
-    // the end must be bigger than the beginning.
-    assert(bracket_range_begin != nullptr && bracket_range_begin >= valid_range_start &&
-           bracket_range_begin <= valid_range_end);
-    assert(bracket_range_end != nullptr && bracket_range_end > bracket_range_begin &&
-           bracket_range_end >= valid_range_start && bracket_range_end <= valid_range_end);
+    // the end must be strictly bigger than the beginning.
+    assert(range->begin && valid_range_start <= range->begin && range->begin <= valid_range_end);
+    assert(range->end && valid_range_start <= range->end && range->end <= valid_range_end);
+    assert(range->end > range->begin);
 
-    // Assign the substring to the out_contents.
-    const wchar_t *interior_begin = bracket_range_begin + 1;
-    if (out_contents != nullptr) {
-        out_contents->assign(interior_begin, bracket_range_end - interior_begin);
+    // out_contents gets what's inside the cmdsub
+    if (out_contents) {
+        out_contents->assign(range->contents, range->end);
     }
 
     // Return the start and end.
-    *out_start = bracket_range_begin - buff;
-    *out_end = bracket_range_end - buff;
+    *out_start = range->begin - buff;
+    *out_end = range->end - buff;
 
     // Update the inout_cursor_offset. Note this may cause it to exceed str.size(), though
     // overflow is not likely.
     *inout_cursor_offset = 1 + *out_end;
-    return ret;
+    return 1;
 }
 
 void parse_util_cmdsubst_extent(const wchar_t *buff, size_t cursor_pos, const wchar_t **a,
@@ -276,19 +278,16 @@ void parse_util_cmdsubst_extent(const wchar_t *buff, size_t cursor_pos, const wc
     const wchar_t *ap = buff, *bp = buff + bufflen;
     const wchar_t *pos = buff;
     for (;;) {
-        const wchar_t *begin = nullptr, *end = nullptr;
-        if (parse_util_locate_cmdsub(pos, &begin, &end, true) <= 0) {
+        auto range = parse_util_locate_cmdsub(pos, true /* allow_incomplete */);
+        if (!range || !range->found()) {
             // No subshell found, all done.
             break;
         }
-        // Interpret NULL to mean the end.
-        if (end == nullptr) {
-            end = const_cast<wchar_t *>(buff) + bufflen;
-        }
-
-        if (begin < cursor && end >= cursor) {
+        // Inside of cmdsub is [contents, end).
+        const wchar_t *begin = range->contents;
+        const wchar_t *end = range->end;
+        if (begin <= cursor && cursor <= end) {
             // This command substitution surrounds the cursor, so it's a tighter fit.
-            begin++;
             ap = begin;
             bp = end;
             // pos is where to begin looking for the next one. But if we reached the end there's no
