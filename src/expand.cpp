@@ -615,13 +615,9 @@ static expand_result_t expand_braces(wcstring &&instr, expand_flags_t flags,
 static expand_result_t expand_cmdsubst(wcstring input, const operation_context_t &ctx,
                                        completion_receiver_t *out, parse_error_list_t *errors) {
     assert(ctx.parser && "Cannot expand without a parser");
-    size_t cursor = 0;
-    size_t paren_begin = 0;
-    size_t paren_end = 0;
     wcstring subcmd;
-
-    switch (parse_util_locate_cmdsubst_range(input, &cursor, &subcmd, &paren_begin, &paren_end,
-                                             false)) {
+    cmdsubst_iterator_t cmdsub{input, false};
+    switch (cmdsub.next()) {
         case -1: {
             append_syntax_error(errors, SOURCE_LOCATION_UNKNOWN, L"Mismatched parenthesis");
             return expand_result_t::make_error(STATUS_EXPAND_ERROR);
@@ -633,6 +629,7 @@ static expand_result_t expand_cmdsubst(wcstring input, const operation_context_t
             return expand_result_t::ok;
         }
         case 1: {
+            subcmd = cmdsub.contents();
             break;
         }
         default: {
@@ -665,12 +662,12 @@ static expand_result_t expand_cmdsubst(wcstring input, const operation_context_t
                 err = L"Unknown error while evaluating command substitution";
                 break;
         }
-        append_cmdsub_error(errors, paren_begin, _(err));
+        append_cmdsub_error(errors, cmdsub.paren_start, _(err));
         return expand_result_t::make_error(subshell_status);
     }
 
     // Expand slices like (cat /var/words)[1]
-    size_t tail_begin = paren_end + 1;
+    size_t tail_begin = cmdsub.paren_end + 1;
     if (tail_begin < input.size() && input.at(tail_begin) == L'[') {
         const wchar_t *in = input.c_str();
         std::vector<long> slice_idx;
@@ -712,9 +709,9 @@ static expand_result_t expand_cmdsubst(wcstring input, const operation_context_t
         wcstring sub_item2 = escape_string(sub_item, ESCAPE_ALL);
         for (const completion_t &tail_item : tail_expand) {
             wcstring whole_item;
-            whole_item.reserve(paren_begin + 1 + sub_item2.size() + 1 +
+            whole_item.reserve(cmdsub.paren_start + 1 + sub_item2.size() + 1 +
                                tail_item.completion.size());
-            whole_item.append(input, 0, paren_begin);
+            whole_item.append(input, 0, cmdsub.paren_start);
             whole_item.push_back(INTERNAL_SEPARATOR);
             whole_item.append(sub_item2);
             whole_item.push_back(INTERNAL_SEPARATOR);
@@ -922,15 +919,16 @@ class expander_t {
 
 expand_result_t expander_t::stage_cmdsubst(wcstring input, completion_receiver_t *out) {
     if (flags & expand_flag::skip_cmdsubst) {
-        size_t cur = 0, start = 0, end;
-        switch (parse_util_locate_cmdsubst_range(input, &cur, nullptr, &start, &end, true)) {
+        cmdsubst_iterator_t cmdsub{input, true};
+        switch (cmdsub.next()) {
             case 0:
                 if (!out->add(std::move(input))) {
                     return append_overflow_error(errors);
                 }
                 return expand_result_t::ok;
             case 1:
-                append_cmdsub_error(errors, start, L"Command substitutions not allowed");
+                append_cmdsub_error(errors, cmdsub.paren_start,
+                                    L"Command substitutions not allowed");
                 /* intentionally falls through */
             case -1:
             default:

@@ -223,46 +223,39 @@ long parse_util_slice_length(const wchar_t *in) {
     return -1;
 }
 
-int parse_util_locate_cmdsubst_range(const wcstring &str, size_t *inout_cursor_offset,
-                                     wcstring *out_contents, size_t *out_start, size_t *out_end,
-                                     bool accept_incomplete) {
-    // Clear the return values.
-    if (out_contents != nullptr) out_contents->clear();
-    *out_start = 0;
-    *out_end = str.size();
+int cmdsubst_iterator_t::next() {
+    paren_start = 0;
+    contents_start = 0;
+    paren_end = 0;
 
-    // Nothing to do if the offset is at or past the end of the string.
-    if (*inout_cursor_offset >= str.size()) return 0;
+    if (finished_) return 0;
 
     // Defer to the wonky version.
-    const wchar_t *const buff = str.c_str();
-    const wchar_t *const valid_range_start = buff + *inout_cursor_offset,
-                         *valid_range_end = buff + str.size();
-    auto range = parse_util_locate_cmdsub(valid_range_start, accept_incomplete);
+    const wchar_t *start = base_ + cursor_;
+    auto range = parse_util_locate_cmdsub(start, accept_incomplete_);
+
     // Did we get an error?
     if (!range) return -1;
 
-    // Was there no cmdsub?
-    if (!range->found()) return 0;
-
-    // The command substitutions must not be NULL and must be in the valid pointer range, and
-    // the end must be strictly bigger than the beginning.
-    assert(range->begin && valid_range_start <= range->begin && range->begin <= valid_range_end);
-    assert(range->end && valid_range_start <= range->end && range->end <= valid_range_end);
-    assert(range->end > range->begin);
-
-    // out_contents gets what's inside the cmdsub
-    if (out_contents) {
-        out_contents->assign(range->contents, range->end);
+    // Was there none?
+    if (!range->found()) {
+        finished_ = true;
+        return 0;
     }
 
-    // Return the start and end.
-    *out_start = range->begin - buff;
-    *out_end = range->end - buff;
+    // Validate our range.
+    assert(range->begin && range->end && start <= range->begin && range->begin <= range->contents &&
+           range->contents <= range->end);
+    paren_start = range->begin - base_;
+    contents_start = range->contents - base_;
+    paren_end = range->end - base_;
 
-    // Update the inout_cursor_offset. Note this may cause it to exceed str.size(), though
-    // overflow is not likely.
-    *inout_cursor_offset = 1 + *out_end;
+    // If paren_end is the end-of-string, we're finished; otherwise update cursor.
+    if (base_[paren_end] == L'\0') {
+        finished_ = true;
+    } else {
+        cursor_ = paren_end + 1;
+    }
     return 1;
 }
 
@@ -887,9 +880,10 @@ void parse_util_expand_variable_error(const wcstring &token, size_t global_token
             // Try to determine what's in the parens.
             wcstring token_after_parens;
             wcstring paren_text;
-            size_t open_parens = dollar_pos + 1, cmdsub_start = 0, cmdsub_end = 0;
-            if (parse_util_locate_cmdsubst_range(token, &open_parens, &paren_text, &cmdsub_start,
-                                                 &cmdsub_end, true) > 0) {
+            size_t open_parens = dollar_pos + 1;
+            cmdsubst_iterator_t cmdsubs{token, open_parens, true};
+            if (cmdsubs.next() > 0) {
+                paren_text = cmdsubs.contents();
                 token_after_parens = tok_first(paren_text);
             }
 
@@ -972,15 +966,12 @@ parser_test_error_bits_t parse_util_detect_errors_in_argument(const ast::argumen
     size_t source_start = source_range->start;
     parser_test_error_bits_t err = 0;
 
-    size_t cursor = 0;
     wcstring subst;
 
     bool do_loop = true;
+    cmdsubst_iterator_t cmdsub(arg_src, false);
     while (do_loop) {
-        size_t paren_begin = 0;
-        size_t paren_end = 0;
-        switch (parse_util_locate_cmdsubst_range(arg_src, &cursor, &subst, &paren_begin, &paren_end,
-                                                 false)) {
+        switch (cmdsub.next()) {
             case -1: {
                 err |= PARSER_TEST_ERROR;
                 if (out_errors) {
@@ -993,14 +984,15 @@ parser_test_error_bits_t parse_util_detect_errors_in_argument(const ast::argumen
                 break;
             }
             case 1: {
-                assert(paren_begin < paren_end && "Parens out of order?");
+                assert(cmdsub.paren_start < cmdsub.paren_end && "Parens out of order?");
+                cmdsub.contents(&subst);
                 parse_error_list_t subst_errors;
                 err |= parse_util_detect_errors(subst, &subst_errors);
 
                 // Our command substitution produced error offsets relative to its source. Tweak the
                 // offsets of the errors in the command substitution to account for both its offset
                 // within the string, and the offset of the node.
-                size_t error_offset = paren_begin + 1 + source_start;
+                size_t error_offset = cmdsub.contents_start + source_start;
                 parse_error_offset_source_start(&subst_errors, error_offset);
 
                 if (out_errors != nullptr) {
@@ -1010,9 +1002,9 @@ parser_test_error_bits_t parse_util_detect_errors_in_argument(const ast::argumen
                     // after we've replaced with internal separators, we can't distinguish between
                     // "" and (), and also we no longer have the source of the command substitution.
                     // As an optimization, this is only necessary if the last character is a $.
-                    if (paren_begin > 0 && arg_src.at(paren_begin - 1) == L'$') {
+                    if (cmdsub.paren_start > 0 && arg_src.at(cmdsub.paren_start - 1) == L'$') {
                         err |= detect_dollar_cmdsub_errors(
-                            source_start, arg_src.substr(0, paren_begin), subst, out_errors);
+                            source_start, arg_src.substr(0, cmdsub.paren_start), subst, out_errors);
                     }
                 }
                 break;

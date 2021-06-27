@@ -19,20 +19,63 @@ struct argument_t;
 /// This never accepts incomplete slices.
 long parse_util_slice_length(const wchar_t *in);
 
-/// Alternative API. Iterate over command substitutions.
-///
-/// \param str the string to search for subshells
-/// \param inout_cursor_offset On input, the location to begin the search. On output, either the end
-/// of the string, or just after the closed-paren.
-/// \param out_contents On output, the contents of the command substitution
-/// \param out_start On output, the offset of the start of the command substitution (open paren)
-/// \param out_end On output, the offset of the end of the command substitution (close paren), or
-/// the end of the string if it was incomplete
-/// \param accept_incomplete whether to permit missing closing parenthesis
-/// \return -1 on syntax error, 0 if no subshells exist and 1 on success
-int parse_util_locate_cmdsubst_range(const wcstring &str, size_t *inout_cursor_offset,
-                                     wcstring *out_contents, size_t *out_start, size_t *out_end,
-                                     bool accept_incomplete);
+/// Lightweight support for iterating over command substitutions.
+/// This only finds top-level (not nested) cmdsubs.
+struct cmdsubst_iterator_t {
+    /// Construct with a nul-terminated string \p str and initial cursor location.
+    cmdsubst_iterator_t(const wchar_t *str, size_t cursor, bool accept_incomplete)
+        : base_(str), cursor_(cursor), accept_incomplete_(accept_incomplete) {
+        assert(str && "Null string");
+    }
+
+    /// Construct with a nul-terminated string \p str, starting at 0.
+    cmdsubst_iterator_t(const wchar_t *str, bool accept_incomplete)
+        : cmdsubst_iterator_t(str, 0, accept_incomplete) {}
+
+    /// Wrappers around wcstring. Note the caller must ensure the str stays alive.
+    cmdsubst_iterator_t(const wcstring &str, bool accept_incomplete)
+        : cmdsubst_iterator_t(str, 0, accept_incomplete) {}
+
+    cmdsubst_iterator_t(const wcstring &str, size_t cursor, bool accept_incomplete)
+        : cmdsubst_iterator_t(str.c_str(), cursor, accept_incomplete) {}
+
+    /// Find the next cmdsub. This updates the below fields to reflect it.
+    /// \return -1 on error, 0 if none, 1 on success.
+    int next();
+
+    /// offset of opening (.
+    size_t paren_start{};
+
+    // start of contents, extending to end.
+    size_t contents_start{};
+
+    // offset of closing ), or end of string if incomplete.
+    size_t paren_end{};
+
+    /// \return the size of the contents (the text of the cmdsub, not counting parens).
+    size_t contents_size() const { return paren_end - contents_start; }
+
+    /// \return the contents of the cmdsub by copying it into the provided storage.
+    void contents(wcstring *storage) const {
+        storage->assign(base_, contents_start, contents_size());
+    }
+
+    /// \return the contents by allocating a new string.
+    wcstring contents() const { return wcstring(base_, contents_start, contents_size()); }
+
+   private:
+    // Initial string.
+    const wchar_t *const base_;
+
+    /// Location to begin the next search. Initially zero, later just-after closed paren.
+    size_t cursor_{0};
+
+    // Set if we should allow a missing closing paren.
+    const bool accept_incomplete_;
+
+    // Set when cursor exceeds the length of the string.
+    bool finished_{false};
+};
 
 /// Find the beginning and end of the command substitution under the cursor. If no subshell is
 /// found, the entire string is returned. If the current command substitution is not ended, i.e. the

@@ -870,44 +870,35 @@ void highlighter_t::color_as_argument(const ast::node_t &node) {
     const wcstring arg_str = get_source(source_range);
 
     // Get an iterator to the colors associated with the argument.
-    const size_t arg_start = source_range.start;
-    const color_array_t::iterator arg_colors = color_array.begin() + arg_start;
+    color_array_t::iterator arg_colors = color_array.begin() + source_range.start;
 
     // Color this argument without concern for command substitutions.
     color_string_internal(arg_str, highlight_role_t::param, arg_colors);
 
     // Now do command substitutions.
-    size_t cmdsub_cursor = 0, cmdsub_start = 0, cmdsub_end = 0;
+    cmdsubst_iterator_t cmdsub{arg_str, true /* accept incomplete */};
     wcstring cmdsub_contents;
-    while (parse_util_locate_cmdsubst_range(arg_str, &cmdsub_cursor, &cmdsub_contents,
-                                            &cmdsub_start, &cmdsub_end,
-                                            true /* accept incomplete */) > 0) {
+    while (cmdsub.next() > 0) {
         // The cmdsub_start is the open paren. cmdsub_end is either the close paren or the end of
         // the string. cmdsub_contents extends from one past cmdsub_start to cmdsub_end.
-        assert(cmdsub_end > cmdsub_start);
-        assert(cmdsub_end - cmdsub_start - 1 == cmdsub_contents.size());
-
-        // Found a command substitution. Compute the position of the start and end of the cmdsub
-        // contents, within our overall src.
-        const size_t arg_subcmd_start = arg_start + cmdsub_start,
-                     arg_subcmd_end = arg_start + cmdsub_end;
+        assert(cmdsub.paren_end > cmdsub.paren_start);
 
         // Highlight the parens. The open paren must exist; the closed paren may not if it was
-        // incomplete.
-        assert(cmdsub_start < arg_str.size());
-        this->color_array.at(arg_subcmd_start) = highlight_role_t::operat;
-        if (arg_subcmd_end < this->buff.size())
-            this->color_array.at(arg_subcmd_end) = highlight_role_t::operat;
+        // incomplete. Use fill in anticipation of "$(...)" style cmdsubs.
+        std::fill(arg_colors + cmdsub.paren_start, arg_colors + cmdsub.contents_start,
+                  highlight_role_t::operat);
+        if (cmdsub.paren_end < source_range.length)
+            *(arg_colors + cmdsub.paren_end) = highlight_role_t::operat;
 
         // Highlight it recursively.
+        cmdsub.contents(&cmdsub_contents);
         highlighter_t cmdsub_highlighter(cmdsub_contents, this->ctx, this->working_directory,
                                          this->io_ok);
         color_array_t subcolors = cmdsub_highlighter.highlight();
 
-        // Copy out the subcolors back into our array.
-        assert(subcolors.size() == cmdsub_contents.size());
-        std::copy(subcolors.begin(), subcolors.end(),
-                  this->color_array.begin() + arg_subcmd_start + 1);
+        // Copy the subcolors back into our array.
+        assert(subcolors.size() == cmdsub.contents_size());
+        std::copy(subcolors.begin(), subcolors.end(), arg_colors + cmdsub.contents_start);
     }
 }
 
@@ -1102,12 +1093,7 @@ void highlighter_t::visit(const ast::block_statement_t &block) {
 }
 
 /// \return whether a string contains a command substitution.
-static bool has_cmdsub(const wcstring &src) {
-    size_t cursor = 0;
-    size_t start = 0;
-    size_t end = 0;
-    return parse_util_locate_cmdsubst_range(src, &cursor, nullptr, &start, &end, true) != 0;
-}
+static bool has_cmdsub(const wcstring &src) { return cmdsubst_iterator_t{src, true}.next() != 0; }
 
 static bool contains_pending_variable(const std::vector<wcstring> &pending_variables,
                                       const wcstring &haystack) {
