@@ -5141,8 +5141,7 @@ static void test_error_messages() {
                        {L"echo foo\"$\"bar", ERROR_NO_VAR_NAME},
                        {L"echo \"foo\"$\"bar\"", ERROR_NO_VAR_NAME},
                        {L"echo foo $ bar", ERROR_NO_VAR_NAME},
-                       {L"echo foo$(foo)bar", ERROR_BAD_VAR_SUBCOMMAND1},
-                       {L"echo \"foo$(foo)bar\"", ERROR_BAD_VAR_SUBCOMMAND1}};
+                       {L"echo foo$(foo)bar", ERROR_BAD_VAR_SUBCOMMAND1}};
 
     parse_error_list_t errors;
     for (const auto &test : error_tests) {
@@ -5231,6 +5230,16 @@ static void test_highlighting() {
         {L")", highlight_role_t::operat},
         {L"|", highlight_role_t::statement_terminator},
         {L"cat", highlight_role_t::command},
+    });
+
+    highlight_tests.push_back({
+        {L"echo", highlight_role_t::command},
+        {L"\"", highlight_role_t::quote},
+        {L"$(", highlight_role_t::operat},
+        {L"ls", highlight_role_t::command},
+        {L"param2", highlight_role_t::param},
+        {L")", highlight_role_t::operat},
+        {L"\"", highlight_role_t::quote},
     });
 
     // Redirections substitutions.

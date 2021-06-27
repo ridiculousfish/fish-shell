@@ -19,6 +19,12 @@ struct argument_t;
 /// This never accepts incomplete slices.
 long parse_util_slice_length(const wchar_t *in);
 
+/// Command substitution types.
+enum class cmdsubt_quote_type_t : uint8_t {
+    unquoted,  // echo (cmd)
+    quoted,    // echo "$(cmd)"
+};
+
 /// Lightweight support for iterating over command substitutions.
 /// This only finds top-level (not nested) cmdsubs.
 struct cmdsubst_iterator_t {
@@ -70,12 +76,20 @@ struct cmdsubst_iterator_t {
     /// Set the cursor to a new value. This controls where the next search for a cmdsub will start.
     void set_cursor(size_t cursor) { cursor_ = cursor; }
 
+    /// \return the type of the last cmdsub.
+    cmdsubt_quote_type_t quote_type() const {
+        return quote_;
+    }
+
    private:
     // Initial string.
     const wchar_t *const base_;
 
     /// Location to begin the next search. Initially zero, later just-after closed paren.
     size_t cursor_{0};
+
+    // The quote type surrounding the most recently returned cmdsub.
+    cmdsubt_quote_type_t quote_{cmdsubt_quote_type_t::unquoted};
 
     // Set if we should allow a missing closing paren.
     const bool accept_incomplete_;

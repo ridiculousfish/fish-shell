@@ -484,6 +484,10 @@ wcstring escape_string(const wchar_t *in, escape_flags_t flags,
 wcstring escape_string(const wcstring &in, escape_flags_t flags,
                        escape_string_style_t style = STRING_STYLE_SCRIPT);
 
+/// Escape a string so that it may be inserted into a double-quoted string.
+/// This permits ownership transfer.
+wcstring escape_string_for_double_quotes(wcstring in);
+
 /// \return a string representation suitable for debugging (not for presenting to the user). This
 /// replaces non-ASCII characters with either tokens like <BRACE_SEP> or <\xfdd7>. No other escapes
 /// are made (i.e. this is a lossy escape).

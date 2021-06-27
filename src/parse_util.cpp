@@ -112,9 +112,12 @@ struct cmdsub_range_t {
     const wchar_t *contents;
     // Closing paren, or end of the string. The cmdsub contents are [contents, end).
     const wchar_t *end;
+    // Type of quote surrounding this cmdsub.
+    cmdsubt_quote_type_t quote;
 
-    cmdsub_range_t(const wchar_t *begin, const wchar_t *contents, const wchar_t *end)
-        : begin(begin), contents(contents), end(end) {
+    cmdsub_range_t(const wchar_t *begin, const wchar_t *contents, const wchar_t *end,
+                   cmdsubt_quote_type_t quote)
+        : begin(begin), contents(contents), end(end), quote(quote) {
         assert(begin && contents && end && begin <= contents && contents <= end &&
                "Pointers null or out of order");
     }
@@ -127,8 +130,10 @@ struct cmdsub_range_t {
 /// If \p closing is false, return a pointer to the opening (, or nullptr if an unbalancing ) is
 /// found, or string-end if none found. If \p closing is true, return a pointer to the closing ). If
 /// not found, return string-end or nullptr, according to allow_incomplete.
-static const wchar_t *find_cmdsub_boundary(const wchar_t *in, bool allow_incomplete, bool closing) {
-    wchar_t quote = L'\0';  // " or ' or \0
+static const wchar_t *find_cmdsub_boundary(const wchar_t *in, cmdsubt_quote_type_t init_quote,
+                                           bool allow_incomplete, bool closing) {
+    bool init_quoted = init_quote == cmdsubt_quote_type_t::quoted;
+    wchar_t quote = init_quoted ? L'"' : L'\0';
     const wchar_t *pos = in;
     for (; *pos; pos++) {
         const wchar_t c = *pos;
@@ -150,7 +155,22 @@ static const wchar_t *find_cmdsub_boundary(const wchar_t *in, bool allow_incompl
             // incremented next iteration.
             if (! closing) return pos;
 
-            pos = find_cmdsub_boundary(pos + 1, allow_incomplete, true /* closing */);
+            pos = find_cmdsub_boundary(pos + 1, cmdsubt_quote_type_t::unquoted, allow_incomplete,
+                                       true /* closing */);
+            if (!pos || !*pos) return pos;
+            assert(*pos == L')' && "Should have found closing paren");
+        } else if (quote == L'"' && c == L')' && closing && init_quoted) {
+            // Terminating ) inside a quoted cmdsub.
+            return pos;
+
+        } else if (quote == L'"' && c == L'$' && pos[1] == L'(') {
+            // Found a quoted cmdsub like "$(foo)".
+            if (!closing) return pos;
+
+            // Note quoted cmdsubs establish a new quoting context, so it is correct to not pass in
+            // our quote.
+            pos = find_cmdsub_boundary(pos + 2, cmdsubt_quote_type_t::unquoted, allow_incomplete,
+                                       true /* closing */);
             if (!pos || !*pos) return pos;
             assert(*pos == L')' && "Should have found closing paren");
         }
@@ -164,21 +184,31 @@ static const wchar_t *find_cmdsub_boundary(const wchar_t *in, bool allow_incompl
 }
 
 /// \return the first cmdsub range, or none on error.
-static maybe_t<cmdsub_range_t> parse_util_locate_cmdsub(const wchar_t *in, bool allow_incomplete) {
+/// This is invoked with pointers into strings; \p init_quote describes the quoting style
+/// surrounding the string. For example in "$(cmd1) $(cmd2)" we will start at the space and here
+/// init_quote will be quoted.
+static maybe_t<cmdsub_range_t> parse_util_locate_cmdsub(const wchar_t *in,
+                                                        cmdsubt_quote_type_t init_quote,
+                                                        bool allow_incomplete) {
     assert(in && "Invalid input");
-    const wchar_t *boundary = find_cmdsub_boundary(in, allow_incomplete, false /* not closing */);
+    const wchar_t *boundary =
+        find_cmdsub_boundary(in, init_quote, allow_incomplete, false /* not closing */);
     if (!boundary) return none();
-    assert((*boundary == L'(' || *boundary == L'\0') &&
-           "boundary should be opening paren or string end");
+    wchar_t bc = *boundary;
+    assert((bc == L'(' || bc == L'$' || bc == L'\0') && "boundary should be $( or ( or string end");
 
     // No cmdsubs found?
-    if (*boundary == L'\0') return cmdsub_range_t{in, in, boundary};
+    if (bc == L'\0') return cmdsub_range_t{in, in, boundary, cmdsubt_quote_type_t::unquoted};
 
-    // boundary points at the opening paren. Find any closing paren.
-    const wchar_t *contents = boundary + 1;
-    const wchar_t *end = find_cmdsub_boundary(contents, allow_incomplete, true /* closing */);
+    // boundary points at the opening dollar or paren. Find any closing paren.
+    bool quoted = (bc == L'$');
+    cmdsubt_quote_type_t type =
+        (quoted ? cmdsubt_quote_type_t::quoted : cmdsubt_quote_type_t::unquoted);
+    const wchar_t *contents = boundary + (quoted ? 2 : 1);  // either $( or (
+    const wchar_t *end = find_cmdsub_boundary(contents, type, allow_incomplete, true /* closing */);
     if (! end) return none();
-    return cmdsub_range_t{boundary, contents, end};
+    return cmdsub_range_t{boundary, contents, end,
+                          quoted ? cmdsubt_quote_type_t::quoted : cmdsubt_quote_type_t::unquoted};
 }
 
 long parse_util_slice_length(const wchar_t *in) {
@@ -232,7 +262,7 @@ int cmdsubst_iterator_t::next() {
 
     // Defer to the wonky version.
     const wchar_t *start = base_ + cursor_;
-    auto range = parse_util_locate_cmdsub(start, accept_incomplete_);
+    auto range = parse_util_locate_cmdsub(start, quote_, accept_incomplete_);
 
     // Did we get an error?
     if (!range) return -1;
@@ -249,6 +279,7 @@ int cmdsubst_iterator_t::next() {
     paren_start = range->begin - base_;
     contents_start = range->contents - base_;
     paren_end = range->end - base_;
+    quote_ = range->quote;
 
     // If paren_end is the end-of-string, we're finished; otherwise update cursor.
     if (base_[paren_end] == L'\0') {

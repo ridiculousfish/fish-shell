@@ -849,6 +849,22 @@ static bool unescape_string_var(const wchar_t *in, wcstring *out) {
     return true;
 }
 
+wcstring escape_string_for_double_quotes(wcstring in) {
+    // We need to escape backslashes, double quotes, and dollars only.
+    wcstring result = std::move(in);
+    size_t idx = result.size();
+    while (idx--) {
+        switch (result[idx]) {
+            case L'\\':
+            case L'$':
+            case L'"':
+                result.insert(idx, 1, L'\\');
+                break;
+        }
+    }
+    return result;
+}
+
 /// Escape a string in a fashion suitable for using in fish script. Store the result in out_str.
 static void escape_string_script(const wchar_t *orig_in, size_t in_len, wcstring &out,
                                  escape_flags_t flags) {
@@ -1517,7 +1533,10 @@ static bool unescape_string_internal(const wchar_t *const input, const size_t in
                     break;
                 }
                 case '$': {
-                    if (unescape_special) {
+                    if (input[input_position + 1] == L'(') {
+                        // A "$(...)" style cmdsub.
+                        to_append_or_none = L'$';
+                    } else if (unescape_special) {
                         to_append_or_none = VARIABLE_EXPAND_SINGLE;
                         vars_or_seps.push_back(input_position);
                     }

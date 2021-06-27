@@ -678,6 +678,26 @@ static void form_cartesian_product(wcstring_list_t *prefixes, wcstring_list_t &&
     }
 }
 
+/// For each string in prefixes, append each suffix in turn, separating with spaces.
+/// This supports quoted cmdsubs.
+static void append_with_spaces(wcstring_list_t * prefixes, const wcstring_list_t &suffixes) {
+    if (prefixes->empty() || suffixes.empty()) return;
+
+    size_t total_suffix_length = suffixes.size() - 1; // space separating
+    for (const wcstring &suffix : suffixes) {
+        total_suffix_length += suffix.size();
+    }
+    for (wcstring &prefix : *prefixes) {
+        prefix.reserve(prefix.size() + total_suffix_length);
+        bool first = true;
+        for (const wcstring &suffix : suffixes) {
+            if (! first) prefix.push_back(L' ');
+            prefix.append(suffix);
+            first = false;
+        }
+    }
+}
+
 /// Given that our cmdsub iterator \p cmdsub has found a command substitution in \p input, execute
 /// the command substitution and apply any slices. \p limit is the maximum number of results that
 /// should be placed into expanded_so_far.
@@ -748,18 +768,32 @@ static expand_result_t expand_1_cmdsub(cmdsubst_iterator_t &cmdsub, const wcstri
         cmdsub.set_cursor(slice_end - in);
     }
 
-    // We will form the cartesian product of every incoming expanded string with every cmdsub.
-    // But first check if this will this give us too many results.
-    if (product_exceeds(expanded_so_far->size(), cmdsub_expanded.size(), limit)) {
-        return append_overflow_error(errors, cmdsub.paren_start);
-    }
-
     // Escape each expanded item in preparation for inserting it into the results.
-    for (wcstring &item : cmdsub_expanded) {
-        item = escape_string(item, ESCAPE_ALL);
-    }
+    // How we escape depends upon whether this is a quoted "$(...)" or unquoted expansion.
+    switch (cmdsub.quote_type()) {
+        case cmdsubt_quote_type_t::quoted: {
+            // We're going to join our items with spaces.
+            // Note this does not increase the total number of items.
+            for (wcstring &item : cmdsub_expanded) {
+                item = escape_string_for_double_quotes(std::move(item));
+            }
+            append_with_spaces(expanded_so_far, cmdsub_expanded);
+            break;
+        }
+        case cmdsubt_quote_type_t::unquoted: {
+            // We will form the cartesian product of every incoming expanded string with every cmdsub.
+            // But first check if this will this give us too many results.
+            if (product_exceeds(expanded_so_far->size(), cmdsub_expanded.size(), limit)) {
+                return append_overflow_error(errors, cmdsub.paren_start);
+            }
 
-    form_cartesian_product(expanded_so_far, std::move(cmdsub_expanded));
+            for (wcstring &item : cmdsub_expanded) {
+                item = escape_string(item, ESCAPE_ALL);
+            }
+            form_cartesian_product(expanded_so_far, std::move(cmdsub_expanded));
+            break;
+        }
+    }
     return expand_result_t::ok;
 }
 
