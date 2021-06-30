@@ -266,6 +266,18 @@ bool completion_receiver_t::add_list(completion_list_t &&lst) {
     return true;
 }
 
+__warn_unused bool completion_receiver_t::add_list(wcstring_list_t &&lst) {
+    size_t total_size = lst.size() + this->size();
+    if (total_size < this->size() || total_size > limit_) {
+        return false;
+    }
+    completions_.reserve(completions_.size() + lst.size());
+    for (wcstring &elem : lst) {
+        completions_.emplace_back(std::move(elem), wcstring{});
+    }
+    return true;
+}
+
 completion_list_t completion_receiver_t::take() {
     completion_list_t res{};
     std::swap(res, this->completions_);

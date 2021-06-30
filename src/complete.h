@@ -149,6 +149,7 @@ class completion_receiver_t {
     /// Add a list of completions.
     /// \return true on success, false if this would overflow the limit.
     __warn_unused bool add_list(completion_list_t &&lst);
+    __warn_unused bool add_list(wcstring_list_t &&lst);
 
     /// Swap our completions with a new list.
     void swap(completion_list_t &lst) { std::swap(completions_, lst); }
@@ -162,6 +163,11 @@ class completion_receiver_t {
 
     /// \return how many completions we have stored.
     size_t size() const { return completions_.size(); }
+
+    /// \return how many more completions we can add before hitting our limit.
+    size_t remaining_capacity() const {
+        return size() < limit_ ? limit_ - size() : 0;
+    }
 
     /// \return a completion at an index.
     completion_t &at(size_t idx) { return completions_.at(idx); }

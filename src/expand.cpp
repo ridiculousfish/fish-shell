@@ -610,35 +610,85 @@ static expand_result_t expand_braces(wcstring &&instr, expand_flags_t flags,
     return expand_result_t::ok;
 }
 
-/// Expand a command substitution \p input, executing on \p ctx, and inserting the results into
-/// \p out_list, or any errors into \p errors. \return an expand result.
-static expand_result_t expand_cmdsubst(wcstring input, const operation_context_t &ctx,
-                                       completion_receiver_t *out, parse_error_list_t *errors) {
-    assert(ctx.parser && "Cannot expand without a parser");
-    wcstring subcmd;
-    cmdsubst_iterator_t cmdsub{input, false};
-    switch (cmdsub.next()) {
-        case -1: {
-            append_syntax_error(errors, SOURCE_LOCATION_UNKNOWN, L"Mismatched parenthesis");
-            return expand_result_t::make_error(STATUS_EXPAND_ERROR);
-        }
-        case 0: {
-            if (!out->add(std::move(input))) {
-                return append_overflow_error(errors);
-            }
-            return expand_result_t::ok;
-        }
-        case 1: {
-            subcmd = cmdsub.contents();
-            break;
-        }
-        default: {
-            DIE("unhandled parse_ret value");
-        }
-    }
+/// \return true if x*y > limit or x*y overflows.
+/// Note overflow is quite realistic here: `echo (seq 65536)(seq 65536)` will easily produce it.
+static bool product_exceeds(size_t x, size_t y, size_t limit) {
+    size_t product = x * y;
+    bool overflowed = (x > 0 && product / x != y);
+    return overflowed || product > limit;
+}
 
-    wcstring_list_t sub_res;
-    int subshell_status = exec_subshell_for_expand(subcmd, *ctx.parser, ctx.job_group, sub_res);
+// Append the range [start, end) of to_append to str.
+// If str is not empty, also append an internal separator.
+static inline void append_with_sep(wcstring &str, const wcstring &to_append, size_t start = 0,
+                                   size_t end_or_huge = wcstring::npos) {
+    size_t end = std::min(end_or_huge, to_append.size());
+    assert(start <= end && "Invalid range");
+    size_t len = end - start;
+    if (len > 0) {
+        if (!str.empty()) {
+            str.reserve(str.size() + len + 1);
+            str.push_back(INTERNAL_SEPARATOR);
+        }
+        str.append(to_append, start, len);
+    }
+}
+
+// Join two strings, applying an internal separator if not empty.
+static wcstring join_with_sep(const wcstring &prefix, const wcstring &suffix) {
+    wcstring result;
+    result.reserve(prefix.size() + suffix.size() + 1);
+    result.append(prefix);
+    append_with_sep(result, suffix);
+    return result;
+}
+
+// Form the cartesian product of \p prefixes and \p suffixes, and place the result in prefixes.
+static void form_cartesian_product(wcstring_list_t *prefixes, wcstring_list_t &&suffixes) {
+    // This is used a lot, so apply some optimizations to reduce allocations.
+    if (prefixes->empty() || suffixes.empty()) {
+        // The product will be empty.
+        prefixes->clear();
+    } else if (prefixes->size() == 1 && prefixes->front().empty()) {
+        // Common case with no prefix, like just `(echo foo)`
+        *prefixes = std::move(suffixes);
+    } else if (prefixes->size() == 1) {
+        // Single non-empty prefix, like foo(echo bar).
+        wcstring prefix = std::move(prefixes->front());
+        prefixes->clear();
+        for (const wcstring &suffix : suffixes) {
+            prefixes->push_back(join_with_sep(prefix, suffix));
+        }
+    } else if (suffixes.size() == 1) {
+        // Only one suffix, append it to everything without a temporary vector.
+        for (wcstring &str : *prefixes) {
+            append_with_sep(str, suffixes.front());
+        }
+    } else {
+        // General cartesian product.
+        // Note our caller has already checked for overflow in the product below.
+        wcstring_list_t temp;
+        temp.reserve(prefixes->size() * suffixes.size());
+        for (const wcstring &prefix : *prefixes) {
+            for (const wcstring &suffix : suffixes) {
+                temp.push_back(join_with_sep(prefix, suffix));
+            }
+        }
+        *prefixes = std::move(temp);
+    }
+}
+
+/// Given that our cmdsub iterator \p cmdsub has found a command substitution in \p input, execute
+/// the command substitution and apply any slices. \p limit is the maximum number of results that
+/// should be placed into expanded_so_far.
+static expand_result_t expand_1_cmdsub(cmdsubst_iterator_t &cmdsub, const wcstring &input,
+                                       wcstring_list_t *expanded_so_far,
+                                       const operation_context_t &ctx, parse_error_list_t *errors,
+                                       size_t limit) {
+    // Now can we expand it?
+    wcstring_list_t cmdsub_expanded;
+    int subshell_status =
+        exec_subshell_for_expand(cmdsub.contents(), *ctx.parser, ctx.job_group, cmdsub_expanded);
     if (subshell_status != 0) {
         // TODO: Ad-hoc switch, how can we enumerate the possible errors more safely?
         const wchar_t *err;
@@ -673,7 +723,7 @@ static expand_result_t expand_cmdsubst(wcstring input, const operation_context_t
         std::vector<long> slice_idx;
         const wchar_t *const slice_begin = in + tail_begin;
         wchar_t *slice_end = nullptr;
-        size_t bad_pos = parse_slice(slice_begin, &slice_end, slice_idx, sub_res.size());
+        size_t bad_pos = parse_slice(slice_begin, &slice_end, slice_idx, cmdsub_expanded.size());
         if (bad_pos != 0) {
             if (slice_begin[bad_pos] == L'0') {
                 append_syntax_error(errors, slice_begin - in + bad_pos,
@@ -684,44 +734,91 @@ static expand_result_t expand_cmdsubst(wcstring input, const operation_context_t
             return expand_result_t::make_error(STATUS_EXPAND_ERROR);
         }
 
-        wcstring_list_t sub_res2;
-        tail_begin = slice_end - in;
+        wcstring_list_t sliced;
         for (long idx : slice_idx) {
-            if (static_cast<size_t>(idx) > sub_res.size() || idx < 1) {
+            if (static_cast<size_t>(idx) > cmdsub_expanded.size() || idx < 1) {
                 continue;
             }
             // -1 to convert from 1-based slice index to C++ 0-based vector index.
-            sub_res2.push_back(sub_res.at(idx - 1));
+            sliced.push_back(cmdsub_expanded.at(idx - 1));
         }
-        sub_res = std::move(sub_res2);
+        cmdsub_expanded = std::move(sliced);
+
+        // Start looking for the next cmdsub after the slice.
+        cmdsub.set_cursor(slice_end - in);
     }
 
-    // Recursively call ourselves to expand any remaining command substitutions. The result of this
-    // recursive call using the tail of the string is inserted into the tail_expand array list
-    completion_receiver_t tail_expand_recv = out->subreceiver();
-    expand_cmdsubst(input.substr(tail_begin), ctx, &tail_expand_recv,
-                    errors);  // TODO: offset error locations
-    completion_list_t tail_expand = tail_expand_recv.take();
+    // We will form the cartesian product of every incoming expanded string with every cmdsub.
+    // But first check if this will this give us too many results.
+    if (product_exceeds(expanded_so_far->size(), cmdsub_expanded.size(), limit)) {
+        return append_overflow_error(errors, cmdsub.paren_start);
+    }
 
-    // Combine the result of the current command substitution with the result of the recursive tail
-    // expansion.
-    for (const wcstring &sub_item : sub_res) {
-        wcstring sub_item2 = escape_string(sub_item, ESCAPE_ALL);
-        for (const completion_t &tail_item : tail_expand) {
-            wcstring whole_item;
-            whole_item.reserve(cmdsub.paren_start + 1 + sub_item2.size() + 1 +
-                               tail_item.completion.size());
-            whole_item.append(input, 0, cmdsub.paren_start);
-            whole_item.push_back(INTERNAL_SEPARATOR);
-            whole_item.append(sub_item2);
-            whole_item.push_back(INTERNAL_SEPARATOR);
-            whole_item.append(tail_item.completion);
-            if (!out->add(std::move(whole_item))) {
-                return append_overflow_error(errors);
+    // Escape each expanded item in preparation for inserting it into the results.
+    for (wcstring &item : cmdsub_expanded) {
+        item = escape_string(item, ESCAPE_ALL);
+    }
+
+    form_cartesian_product(expanded_so_far, std::move(cmdsub_expanded));
+    return expand_result_t::ok;
+}
+
+/// Expand a command substitution \p input, executing on \p ctx, and inserting the results into
+/// \p out_list, or any errors into \p errors. \return an expand result.
+static expand_result_t expand_cmdsubst(wcstring input, const operation_context_t &ctx,
+                                       completion_receiver_t *out, parse_error_list_t *errors) {
+    assert(ctx.parser && "Cannot expand without a parser");
+    cmdsubst_iterator_t cmdsub{input, false /* not accept incomplete */};
+
+    // Look for the first cmdsub.
+    int cmdsub_status = cmdsub.next();
+    if (cmdsub_status == 0) {
+        // Common case of no cmdsubs. Just take the whole string.
+        if (!out->add(std::move(input))) {
+            return append_overflow_error(errors);
+        }
+        return expand_result_t::ok;
+    }
+
+    // We've located a cmdsub (or an error).
+    // Our input string can be thought of as a sequence of command substitutions, separated by sequences of non-cmdsub text (perhaps empty).
+    // We manually enforce the limit here.
+    const size_t limit = out->remaining_capacity();
+    size_t text_run_start = 0;
+    wcstring_list_t expanded_so_far{L""};
+
+    // Helper to append the range [start, end) of our input to each string in our results, perhaps with an internal separator.
+    auto append_source_range = [&](size_t start, size_t end) {
+        assert(start <= end && end <= input.size() && "Invalid range");
+        if (start < end) {
+            for (wcstring &entry : expanded_so_far) {
+                append_with_sep(entry, input, start, end);
             }
         }
+    };
+
+    while (cmdsub_status != 0) {
+        if (cmdsub_status < 0) {
+            append_syntax_error(errors, SOURCE_LOCATION_UNKNOWN, L"Mismatched parenthesis");
+            return expand_result_t::make_error(STATUS_EXPAND_ERROR);
+        }
+
+        // Got a cmdsub. Append any text from before it.
+        append_source_range(text_run_start, cmdsub.paren_start);
+        expand_result_t res =
+            expand_1_cmdsub(cmdsub, input, &expanded_so_far, ctx, errors, limit);
+        if (res != expand_result_t::ok) return res;
+
+        text_run_start = cmdsub.cursor();
+        cmdsub_status = cmdsub.next();
     }
 
+    // Append any trailing text.
+    append_source_range(text_run_start, input.size());
+
+    if (!out->add_list(std::move(expanded_so_far))) {
+        return append_overflow_error(errors);
+    }
     return expand_result_t::ok;
 }
 

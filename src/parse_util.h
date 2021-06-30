@@ -56,12 +56,19 @@ struct cmdsubst_iterator_t {
     size_t contents_size() const { return paren_end - contents_start; }
 
     /// \return the contents of the cmdsub by copying it into the provided storage.
-    void contents(wcstring *storage) const {
+    const wcstring &contents(wcstring *storage) const {
         storage->assign(base_, contents_start, contents_size());
+        return *storage;
     }
 
-    /// \return the contents by allocating a new string.
+    /// \return the contents of the most recently found cmdsub by allocating a new string.
     wcstring contents() const { return wcstring(base_, contents_start, contents_size()); }
+
+    /// \return the cursor, where the next search for a cmdsub will start.
+    size_t cursor() const { return cursor_; }
+
+    /// Set the cursor to a new value. This controls where the next search for a cmdsub will start.
+    void set_cursor(size_t cursor) { cursor_ = cursor; }
 
    private:
     // Initial string.
