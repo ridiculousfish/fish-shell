@@ -1615,6 +1615,43 @@ static void test_parse_util_cmdsubst_extent() {
     }
 }
 
+static void test_parse_util_cmdsubst_extent_quoted() {
+    // Note inside a quoted cmdsub we are unquoted so the dollarless ( is recognized.
+    const wchar_t *str = L"\"echo $(first) $(second (third";
+    const wchar_t *str_end = str + std::wcslen(str);
+
+    const wchar_t *expected_begin = str;
+    const wchar_t *expected_end = str_end;
+    // March through every character keeping track of which cmdsub we expect to be in.
+    // Note we want to test the nul terminator as well.
+    for (size_t i=0;; i++) {
+        const wchar_t *cursor = &str[i];
+        if (string_prefixes_string(L"first", cursor)) {
+            expected_begin = cursor;
+            expected_end = expected_begin + std::wcslen(L"first");
+        } else if (string_suffixes_string(L"first)", wcstring(str, cursor))) {
+            // Just past the terminating paren.
+            // Note the closing paren itself is considered part of the 'first' cmdsub.
+            expected_begin = str;
+            expected_end = str_end;
+        } else if (string_prefixes_string(L"second", cursor)) {
+            expected_begin = cursor;
+            expected_end = str_end;
+        } else if (string_prefixes_string(L"third", cursor)) {
+            expected_begin = cursor;
+            expected_end = str_end;
+        }
+        const wchar_t *begin = NULL, *end = NULL;
+        parse_util_cmdsubst_extent(str, i, &begin, &end);
+        if (begin != expected_begin) {
+            err(L"parse_util_cmdsubst_extent failed for '%ls'\n  expected: %ls\n  got %ls\n",
+                &str[i], wcstring(expected_begin, expected_end).c_str(),
+                wcstring(begin, end).c_str());
+        }
+        if (! str[i]) break;
+    }
+}
+
 static struct wcsfilecmp_test {
     const wchar_t *str1;
     const wchar_t *str2;
@@ -1675,6 +1712,7 @@ static void test_utility_functions() {
     say(L"Testing utility functions");
     test_wcsfilecmp();
     test_parse_util_cmdsubst_extent();
+    test_parse_util_cmdsubst_extent_quoted();
 }
 
 // UTF8 tests taken from Alexey Vatchenko's utf8 library. See http://www.bsdua.org/libbsdua.html.

@@ -12,16 +12,6 @@
         exit_without_destructors(-1);  \
     } while (0)
 
-// A range of source code.
-struct source_range_t {
-    uint32_t start;
-    uint32_t length;
-
-    uint32_t end() const {
-        assert(start + length >= start && "Overflow");
-        return start + length;
-    }
-};
 
 // IMPORTANT: If the following enum table is modified you must also update token_enum_map below.
 enum class parse_token_type_t : uint8_t {

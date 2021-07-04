@@ -261,44 +261,31 @@ int cmdsubst_iterator_t::next() {
 
 void parse_util_cmdsubst_extent(const wchar_t *buff, size_t cursor_pos, const wchar_t **a,
                                 const wchar_t **b) {
-    assert(buff && "Null buffer");
-    const wchar_t *const cursor = buff + cursor_pos;
-
     const size_t bufflen = std::wcslen(buff);
-    assert(cursor_pos <= bufflen);
+    assert(cursor_pos <= bufflen && "Invalid cursor position");
 
     // ap and bp are the beginning and end of the tightest command substitution found so far.
     const wchar_t *ap = buff, *bp = buff + bufflen;
-    const wchar_t *pos = buff;
+    size_t pos = 0;
     for (;;) {
-        auto range = parse_util_locate_cmdsub(pos, true /* allow_incomplete */);
-        if (!range || !range->found()) {
-            // No subshell found, all done.
-            break;
+        bool found = false;
+        cmdsubst_iterator_t iter(buff, pos, true /* accept_incomplete */);
+        while (iter.next() > 0) {
+            if (iter.contents_start <= cursor_pos && cursor_pos <= iter.paren_end) {
+                // This cmdsub surrounds the cursor.
+                // Maybe there's a tighter one inside.
+                ap = buff + iter.contents_start;
+                bp = buff + iter.paren_end;
+                pos = iter.contents_start;
+                found = true;
+                break;
+            } else if (iter.paren_start > cursor_pos) {
+                // We went past the cursor, we're done here.
+                break;
+            }
         }
-        // Inside of cmdsub is [contents, end).
-        const wchar_t *begin = range->contents;
-        const wchar_t *end = range->end;
-        if (begin <= cursor && cursor <= end) {
-            // This command substitution surrounds the cursor, so it's a tighter fit.
-            ap = begin;
-            bp = end;
-            // pos is where to begin looking for the next one. But if we reached the end there's no
-            // next one.
-            if (begin >= end) break;
-            pos = begin + 1;
-        } else if (begin >= cursor) {
-            // This command substitution starts at or after the cursor. Since it was the first
-            // command substitution in the string, we're done.
-            break;
-        } else {
-            // This command substitution ends before the cursor. Skip it.
-            assert(end < cursor);
-            pos = end + 1;
-            assert(pos <= buff + bufflen);
-        }
+        if (!found) break;
     }
-
     if (a != nullptr) *a = ap;
     if (b != nullptr) *b = bp;
 }

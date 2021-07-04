@@ -163,6 +163,17 @@ using job_id_t = int;
 /// Every job has a unique positive value for this.
 using internal_job_id_t = uint64_t;
 
+// A range of source code.
+struct source_range_t {
+    uint32_t start;
+    uint32_t length;
+
+    uint32_t end() const {
+        assert(start + length >= start && "Overflow");
+        return start + length;
+    }
+};
+
 /// Exits without invoking destructors (via _exit), useful for code after fork.
 [[noreturn]] void exit_without_destructors(int code);
 
