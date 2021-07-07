@@ -1615,9 +1615,9 @@ static void test_parse_util_cmdsubst_extent() {
     }
 }
 
-static void test_parse_util_cmdsubst_extent_quoted() {
+static void test_parse_util_cmdsubst_extent_quoted_incomplete() {
     // Note inside a quoted cmdsub we are unquoted so the dollarless ( is recognized.
-    const wchar_t *str = L"\"echo $(first) $(second (third";
+    const wchar_t *str = L"echo \"$(first) $(second (third";
     const wchar_t *str_end = str + std::wcslen(str);
 
     const wchar_t *expected_begin = str;
@@ -1649,6 +1649,61 @@ static void test_parse_util_cmdsubst_extent_quoted() {
                 wcstring(begin, end).c_str());
         }
         if (! str[i]) break;
+    }
+}
+
+static void test_parse_util_cmdsubst_extent_quoted_complete() {
+    // Note inside a quoted cmdsub we are unquoted so the dollarless ( is recognized.
+    const wchar_t *str = L"echo \"$(first) $(second (third) \"$(fourth)\")\"";
+    const wchar_t *str_end = str + std::wcslen(str);
+
+    auto find_range = [&](const wchar_t *start, const wchar_t *stop) {
+        const wchar_t *begin = std::wcsstr(str, start);
+        const wchar_t *end = std::wcsstr(begin, stop);
+        assert(begin && end && "strings not found");
+        return std::make_pair(begin, end + std::wcslen(stop) - 1);
+    };
+
+    // Our expected ranges of cmdsubs.
+    const std::pair<const wchar_t *, const wchar_t *> ranges[] = {
+        find_range(L"first", L")"),
+        find_range(L"second", L"\")"),
+        find_range(L"third", L")"),
+        find_range(L"fourth", L")"),
+    };
+
+    // March through every character and see if we are in the expected cmdsub.
+    // Note we want to test the nul terminator as well.
+    for (const wchar_t *cursor = str; cursor <= str_end; ++cursor) {
+        const wchar_t *expected_begin = str;
+        const wchar_t *expected_end = str_end;
+        for (const auto &r : ranges) {
+            if (r.first <= cursor && cursor <= r.second) {
+                expected_begin = r.first;
+                expected_end = r.second;
+            }
+        }
+
+        const wchar_t *begin = NULL, *end = NULL;
+        size_t idx = cursor - str;
+        parse_util_cmdsubst_extent(str, cursor - str, &begin, &end);
+        if (begin != expected_begin) {
+            // Compute the offsets of our carets. We add 1 to make it a field width.
+            int exp_start = static_cast<int>(expected_begin - str);
+            int exp_end_off = static_cast<int>(expected_end - str) - exp_start - 1;
+            int act_start = static_cast<int>(begin - str);
+            int act_end_off = static_cast<int>(end - str) - act_start - 1;
+            err(L"parse_util_cmdsubst_extent failed here:\n"
+                L"%ls\n"
+                L"%*c\n\n"
+                L"%ls\n%*c%*c   <-- expected\n\n"
+                L"%ls\n%*c%*c   <-- actual",
+                str,                                            //
+                (int)idx, '^',                                  //
+                str, exp_start + 1, '^', exp_end_off + 1, '^',  //
+                str, act_start + 1, '^', act_end_off + 1, '^');
+            break;
+        }
     }
 }
 
@@ -1712,7 +1767,8 @@ static void test_utility_functions() {
     say(L"Testing utility functions");
     test_wcsfilecmp();
     test_parse_util_cmdsubst_extent();
-    test_parse_util_cmdsubst_extent_quoted();
+    test_parse_util_cmdsubst_extent_quoted_incomplete();
+    test_parse_util_cmdsubst_extent_quoted_complete();
 }
 
 // UTF8 tests taken from Alexey Vatchenko's utf8 library. See http://www.bsdua.org/libbsdua.html.
