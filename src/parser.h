@@ -324,6 +324,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Get the "principal" parser, whatever that is.
     static parser_t &principal_parser();
 
+    /// \return if this is the principal parser.
+    bool is_principal() const { return is_principal_; }
+
     /// Bind this parser to the current thread; it will assert if executing on another thread.
     void bind_thread();
 
