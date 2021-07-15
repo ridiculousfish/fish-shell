@@ -293,6 +293,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// Get the "principal" parser, whatever that is.
     static parser_t &principal_parser();
 
+    /// \return if this is the principal parser.
+    bool is_principal() const;
+
     /// Global event blocks.
     event_blockage_list_t global_event_blocks;
 

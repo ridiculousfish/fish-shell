@@ -207,6 +207,11 @@ static int parse_cmd_opts(read_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
 static int read_interactive(parser_t &parser, wcstring &buff, int nchars, bool shell, bool silent,
                             const wchar_t *prompt, const wchar_t *right_prompt,
                             const wchar_t *commandline, int in) {
+    // Disallow reading interactively in pipelines or background processes.
+    if (!parser.is_principal()) {
+        return STATUS_CMD_ERROR;
+    }
+    ASSERT_IS_MAIN_THREAD();
     int exit_res = STATUS_CMD_OK;
 
     // Construct a configuration.
@@ -493,9 +498,6 @@ maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, const wchar_t
     // fill the given vars.
     do {
         buff.clear();
-
-        // TODO: Determine if the original set of conditions for interactive reads should be
-        // reinstated: if (isatty(0) && streams.stdin_fd == STDIN_FILENO && !split_null) {
         int stream_stdin_is_a_tty = isatty(streams.stdin_fd);
         if (stream_stdin_is_a_tty && !opts.split_null) {
             // Read interactively using reader_readline(). This does not support splitting on null.

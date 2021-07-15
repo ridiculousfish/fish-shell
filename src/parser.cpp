@@ -100,6 +100,8 @@ parser_t &parser_t::principal_parser() {
     return *principal;
 }
 
+bool parser_t::is_principal() const { return this == principal.get(); }
+
 int parser_t::set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
     int res = vars().set(key, mode, std::move(vals));
     if (res == ENV_OK) {
