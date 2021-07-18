@@ -90,6 +90,11 @@ parser_t::parser_t(std::shared_ptr<env_stack_t> vars) : variables(std::move(vars
 
 parser_t::parser_t() : parser_t(env_stack_t::principal_ref()) {}
 
+// static
+std::shared_ptr<parser_t> parser_t::create() {
+    return std::shared_ptr<parser_t>(new parser_t(env_stack_t::create()));
+}
+
 // Out of line destructor to enable forward declaration of parse_execution_context_t
 parser_t::~parser_t() = default;
 

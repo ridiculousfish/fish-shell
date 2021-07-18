@@ -1439,9 +1439,14 @@ env_stack_t &env_stack_t::globals() {
     return s_globals;
 }
 
+// static
+std::shared_ptr<env_stack_t> env_stack_t::create() {
+    return std::shared_ptr<env_stack_t>(new env_stack_t(env_stack_impl_t::create()));
+}
+
+// static
 const std::shared_ptr<env_stack_t> &env_stack_t::principal_ref() {
-    static const std::shared_ptr<env_stack_t> s_principal{
-        new env_stack_t(env_stack_impl_t::create())};
+    static const std::shared_ptr<env_stack_t> s_principal = env_stack_t::create();
     return s_principal;
 }
 

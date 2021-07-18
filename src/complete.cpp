@@ -36,6 +36,7 @@
 #include "expand.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "function.h"
+#include "future_feature_flags.h"
 #include "history.h"
 #include "iothread.h"
 #include "parse_constants.h"
@@ -578,7 +579,6 @@ void completer_t::complete_strings(const wcstring &wc_escaped, const description
 /// If command to complete is short enough, substitute the description with the whatis information
 /// for the executable.
 void completer_t::complete_cmd_desc(const wcstring &str) {
-    ASSERT_IS_MAIN_THREAD();
     if (!ctx.parser) return;
 
     wcstring cmd;
@@ -851,10 +851,9 @@ static size_t short_option_pos(const wcstring &arg, const option_list_t &options
 }
 
 /// Load command-specific completions for the specified command.
-static void complete_load(const wcstring &name) {
+static void complete_load(const wcstring &name, parser_t &parser) {
     // We have to load this as a function, since it may define a --wraps or signature.
     // See issue #2466.
-    auto &parser = parser_t::principal_parser();
     function_get_props_autoload(name, parser);
 
     // It's important to NOT hold the lock around completion loading.
@@ -905,8 +904,10 @@ bool completer_t::complete_param_for_command(const wcstring &cmd_orig, const wcs
         // tools that do not exist. Applies to both manual completions ("cm<TAB>", "cmd <TAB>")
         // and automatic completions ("gi" autosuggestion provider -> git)
         FLOG(complete, "Skipping completions for non-existent head");
+    } else if (feature_test(features_t::concurrent)) {
+        complete_load(cmd, *parser_t::create());
     } else {
-        iothread_perform_on_main([&]() { complete_load(cmd); });
+        iothread_perform_on_main([&]() { complete_load(cmd, parser_t::principal_parser()); });
     }
 
     // Make a list of lists of all options that we care about.

@@ -288,6 +288,9 @@ class env_stack_t final : public environment_t {
     /// Black magic.
     std::shared_ptr<env_stack_t> branch() const;
 
+    /// Create a new variable stack, with shared globals and an empty local set.
+    static std::shared_ptr<env_stack_t> create();
+
     // Compatibility hack; access the "environment stack" from back when there was just one.
     static const std::shared_ptr<env_stack_t> &principal_ref();
     static env_stack_t &principal() { return *principal_ref(); }

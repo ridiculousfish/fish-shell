@@ -296,6 +296,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// \return if this is the principal parser.
     bool is_principal() const;
 
+    /// Create a parser with a new set of local variables (but sharing globals).
+    static std::shared_ptr<parser_t> create();
+
     /// Global event blocks.
     event_blockage_list_t global_event_blocks;
 
