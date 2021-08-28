@@ -50,6 +50,7 @@
 #include "builtin_history.h"
 #include "builtin_jobs.h"
 #include "builtin_math.h"
+#include "builtin_path.h"
 #include "builtin_printf.h"
 #include "builtin_pwd.h"
 #include "builtin_random.h"
@@ -389,6 +390,7 @@ static constexpr builtin_data_t builtin_datas[] = {
     {L"math", &builtin_math, N_(L"Evaluate math expressions")},
     {L"not", &builtin_generic, N_(L"Negate exit status of job")},
     {L"or", &builtin_generic, N_(L"Execute command if previous command failed")},
+    {L"path", &builtin_path, N_(L"Handle paths")},
     {L"printf", &builtin_printf, N_(L"Prints formatted text")},
     {L"pwd", &builtin_pwd, N_(L"Print the working directory")},
     {L"random", &builtin_random, N_(L"Generate random number")},
