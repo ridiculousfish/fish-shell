@@ -18,9 +18,15 @@
 #include "proc.h"
 #include "wutil.h"  // IWYU pragma: keep
 
+struct mystruct {
+    mystruct() { printf("constructor from %s\n", __FILE__); puts("yay"); }
+};
+
+
 /// The cd builtin. Changes the current directory to the one specified or to $HOME if none is
 /// specified. The directory can be relative to any directory in the CDPATH variable.
 maybe_t<int> builtin_cd(parser_t &parser, io_streams_t &streams, const wchar_t **argv) {
+    mystruct s;
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     help_only_cmd_opts_t opts;

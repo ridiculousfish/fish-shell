@@ -1882,8 +1882,15 @@ static constexpr const struct string_subcommand {
 };
 ASSERT_SORTED_BY_NAME(string_subcommands);
 
+
+struct mystruct {
+    mystruct() { printf("constructor from %s\n", __FILE__); }
+};
+
+
 /// The string builtin, for manipulating strings.
 maybe_t<int> builtin_string(parser_t &parser, io_streams_t &streams, const wchar_t **argv) {
+    mystruct s;
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     if (argc <= 1) {
