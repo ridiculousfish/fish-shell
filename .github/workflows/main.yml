@@ -70,7 +70,7 @@ jobs:
     - name: cmake
       env:
           CMAKE_C_FLAGS: "-gdwarf-4"
-          CXXFLAGS: "-gdwarf-4 -fuse-ld=gold -Wl,--detect-odr-violations"
+          CXXFLAGS: "-gdwarf-4 -fuse-ld=gold -Wl,--detect-odr-violations -fno-inline-functions"
       run: |
         mkdir build && cd build
         cmake -DCMAKE_BUILD_TYPE=Debug ..
