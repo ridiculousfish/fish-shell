@@ -57,6 +57,30 @@ jobs:
       run: |
         make test
 
+  ubuntu-odr-test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install deps
+      run: |
+        sudo apt install gettext libncurses5-dev libpcre2-dev python3-pip tmux
+        sudo pip3 install pexpect
+    - name: cmake
+      env:
+          CMAKE_C_FLAGS: "-gdwarf-4"
+          CXXFLAGS: "-gdwarf-4 -fuse-ld=gold -Wl,--detect-odr-violations"
+      run: |
+        mkdir build && cd build
+        cmake -DCMAKE_BUILD_TYPE=Debug ..
+    - name: make
+      run: |
+        make VERBOSE=1
+    - name: make test
+      run: |
+        make test
+
   ubuntu-asan:
 
     runs-on: ubuntu-latest
