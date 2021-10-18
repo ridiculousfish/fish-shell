@@ -162,8 +162,9 @@ set_source_files_properties(src/fish_version.cpp
 # Enable thread-safe errno on Solaris (#5611)
 add_definitions(-D_REENTRANT)
 
-# Set up PCRE2
+# Set up PCRE2 and SQLite.
 include(cmake/PCRE2.cmake)
+include(cmake/SQLite.cmake)
 
 # Define a function to link dependencies.
 function(FISH_LINK_DEPS_AND_SIGN target)
@@ -176,7 +177,7 @@ add_library(fishlib STATIC ${FISH_SRCS} ${FISH_BUILTIN_SRCS})
 target_sources(fishlib PRIVATE ${FISH_HEADERS})
 target_link_libraries(fishlib
   ${CURSES_LIBRARY} ${CURSES_EXTRA_LIBRARY} Threads::Threads ${CMAKE_DL_LIBS}
-  ${PCRE2_LIB} ${Intl_LIBRARIES} ${ATOMIC_LIBRARY})
+  ${PCRE2_LIB} ${SQLite3_LIBRARIES} ${Intl_LIBRARIES} ${ATOMIC_LIBRARY})
 target_include_directories(fishlib PRIVATE
   ${CURSES_INCLUDE_DIRS})
 
