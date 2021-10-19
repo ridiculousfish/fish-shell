@@ -12,7 +12,11 @@
 #include "common.h"
 #include "maybe.h"
 
-/// Our wrapper around SQLite. This is safe to use from multiple threads.
+#define FISH_HISTORY_SQL 0
+
+#if FISH_HISTORY_SQL
+
+/// Our wrapper around SQLite.
 class history_t;
 class history_db_t : noncopyable_t, nonmovable_t {
    public:
@@ -26,4 +30,5 @@ class history_db_t : noncopyable_t, nonmovable_t {
     virtual ~history_db_t();
 };
 
+#endif
 #endif

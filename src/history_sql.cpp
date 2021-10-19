@@ -2,6 +2,8 @@
 
 #include "history_sql.h"
 
+#if FISH_HISTORY_SQL
+
 #include <cstring>
 
 #include "fds.h"
@@ -262,3 +264,5 @@ std::unique_ptr<history_db_t> history_db_t::create_at_path(const wcstring &path)
 }
 
 history_db_t::~history_db_t() = default;
+
+#endif

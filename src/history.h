@@ -18,6 +18,7 @@
 
 #include "common.h"
 #include "maybe.h"
+#include "history_sql.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 struct io_streams_t;

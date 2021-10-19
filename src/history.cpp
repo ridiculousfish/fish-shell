@@ -1361,8 +1361,10 @@ bool history_t::never_mmap = false;
 #endif
 
 history_t::history_t(wcstring name) : wrap_(make_unique<impl_wrapper_t>(std::move(name))) {
+#if FISH_HISTORY_SQL
     auto db = history_db_t::create_at_path(L"/Users/peter/github/sqlite_tests/history.db");
     if (db) db->add_from(this);
+#endif
 }
 
 history_t::~history_t() = default;
