@@ -95,6 +95,7 @@ class category_list_t {
 
     category_t history{L"history", L"Command history events"};
     category_t history_file{L"history-file", L"Reading/Writing the history file"};
+    category_t history_sql{L"history-sql", L"History SQL queries"};
 
     category_t profile_history{L"profile-history", L"History performance measurements"};
 

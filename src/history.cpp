@@ -30,6 +30,7 @@
 #include "global_safety.h"
 #include "history.h"
 #include "history_file.h"
+#include "history_sql.h"
 #include "io.h"
 #include "iothread.h"
 #include "lru.h"
@@ -1359,7 +1360,10 @@ bool history_t::never_mmap = true;
 bool history_t::never_mmap = false;
 #endif
 
-history_t::history_t(wcstring name) : wrap_(make_unique<impl_wrapper_t>(std::move(name))) {}
+history_t::history_t(wcstring name) : wrap_(make_unique<impl_wrapper_t>(std::move(name))) {
+    auto db = history_db_t::create_at_path(L"/Users/peter/github/sqlite_tests/history.db");
+    if (db) db->add_from(this);
+}
 
 history_t::~history_t() = default;
 
