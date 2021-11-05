@@ -177,7 +177,7 @@ add_library(fishlib STATIC ${FISH_SRCS} ${FISH_BUILTIN_SRCS})
 target_sources(fishlib PRIVATE ${FISH_HEADERS})
 target_link_libraries(fishlib
   ${CURSES_LIBRARY} ${CURSES_EXTRA_LIBRARY} Threads::Threads ${CMAKE_DL_LIBS}
-  ${PCRE2_LIB} ${SQLite3_LIBRARIES} ${Intl_LIBRARIES} ${ATOMIC_LIBRARY})
+  ${PCRE2_LIB} ${SQLite3_LIBRARIES} ${SHA3_LIB} ${Intl_LIBRARIES} ${ATOMIC_LIBRARY})
 target_include_directories(fishlib PRIVATE
   ${CURSES_INCLUDE_DIRS})
 

@@ -12,7 +12,7 @@
 #include "common.h"
 #include "maybe.h"
 
-#define FISH_HISTORY_SQL 0
+#define FISH_HISTORY_SQL 1
 
 #if FISH_HISTORY_SQL
 

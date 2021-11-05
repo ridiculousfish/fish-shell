@@ -13,9 +13,26 @@
 #include "sqlite3.h"
 #include "utf8.h"
 
+extern "C" {
+#include "sha3.h"
+}
+
 namespace {
 
+// SQLite plugin function that hashes a string using sha256, returning the first 8 bytes as an
+// int64.
+int64_t sha3_prefix_hash(const unsigned char *str, size_t len) {
+    uint8_t sha[64];
+    sha3(str, len, sha, sizeof sha);
+    uint64_t result = 0;
+    for (size_t i = 0; i < 8; i++) {
+        result = result << 8 | sha[i];
+    }
+    return *reinterpret_cast<int64_t *>(&result);
+}
+
 namespace sql {
+
 // Create our tables.
 // Note this is NOT run as a prepared statement.
 // const char *CREATE_TABLES_SQL =
@@ -66,9 +83,7 @@ struct prepared_statement_t {
     }
 
     // Reset this statement.
-    int reset() {
-        return sqlite3_reset(this->stmt);
-    }
+    int reset() { return sqlite3_reset(this->stmt); }
 
    protected:
     // Bind a string to a parameter index.
@@ -92,7 +107,7 @@ struct ensure_content_t : public prepared_statement_t {
     // Reset and bind our parameters.
     int bind(const std::string &text) {
         int ret = this->reset();
-        if (! ret) ret = this->bind_str(TEXT_PARAM_IDX, text);
+        if (!ret) ret = this->bind_str(TEXT_PARAM_IDX, text);
         return ret;
     }
 };
@@ -111,8 +126,8 @@ struct insert_item_t : public prepared_statement_t {
     // Reset and bind our parameters.
     int bind(const std::string &text, time_t timestamp) {
         int ret = this->reset();
-        if (! ret) ret = this->bind_int(TIMESTAMP_PARAM_IDX, timestamp);
-        if (! ret) ret = this->bind_str(TEXT_PARAM_IDX, text);
+        if (!ret) ret = this->bind_int(TIMESTAMP_PARAM_IDX, timestamp);
+        if (!ret) ret = this->bind_str(TEXT_PARAM_IDX, text);
         return ret;
     }
 };
@@ -155,11 +170,32 @@ struct history_db_impl_t final : public history_db_t {
         assert(!this->db && "Already initialized");
         std::string path = wcs2string(wpath);
         int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
-        if (check_fail(__LINE__, sqlite3_open_v2(path.c_str(), &this->db, flags, nullptr))) return false;
+        if (check_fail(__LINE__, sqlite3_open_v2(path.c_str(), &this->db, flags, nullptr)))
+            return false;
         if (check_fail(__LINE__, sqlite3_busy_timeout(this->db, 250 /* ms */))) return false;
         if (check_fail_sql("PRAGMA synchronous = NORMAL")) return false;
+        if (!this->install_function()) return false;
         if (check_fail_sql(sql::CREATE_TABLES)) return false;
         if (!this->prepare()) return false;
+        return true;
+    }
+
+    // Create our sha3 hash function.
+    bool install_function() {
+        auto sql_sha3 = [](sqlite3_context *ctx, int argc, sqlite3_value **argv) {
+            if (argc == 1) {
+                const unsigned char *text = sqlite3_value_text(argv[0]);
+                int len = sqlite3_value_bytes(argv[0]);
+                if (text && len >= 0) {
+                    sqlite3_result_int64(ctx, sha3_prefix_hash(text, len));
+                }
+            }
+        };
+        if (check_fail(__LINE__, sqlite3_create_function(this->db, "sha3_prefix64", 1,
+                                                         SQLITE_UTF8 | SQLITE_DETERMINISTIC,
+                                                         nullptr, sql_sha3, nullptr, nullptr))) {
+            return false;
+        }
         return true;
     }
 
