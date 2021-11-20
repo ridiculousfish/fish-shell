@@ -136,6 +136,8 @@ class history_t : noncopyable_t, nonmovable_t {
     struct impl_wrapper_t;
     const std::unique_ptr<impl_wrapper_t> wrap_;
 
+    std::unique_ptr<histdb::history_db_t> db_;
+
     acquired_lock<history_impl_t> impl();
     acquired_lock<const history_impl_t> impl() const;
 

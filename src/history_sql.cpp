@@ -132,9 +132,18 @@ struct insert_item_t : public prepared_statement_t {
     }
 };
 }  // namespace sql
+}  // namespace
 
-struct history_db_impl_t final : public history_db_t {
-    ~history_db_impl_t() {
+namespace histdb {
+
+struct history_db_conn_t : noncopyable_t {
+    explicit history_db_conn_t(wcstring path) : path_(path) {}
+
+    // history_db_conn_t is "movable" to allow construction, but must NOT be moved after
+    // initialize() is called.
+    history_db_conn_t(history_db_conn_t &&) = default;
+
+    ~history_db_conn_t() {
         // Free our prepared statements.
         ensure_content.finalize();
         insert_item.finalize();
@@ -166,9 +175,9 @@ struct history_db_impl_t final : public history_db_t {
 
     // Initialize this db, constructing the prepared statements and creating the table.
     // \return true on success, false on failure.
-    bool initialize(const wcstring &wpath) {
+    bool initialize() {
         assert(!this->db && "Already initialized");
-        std::string path = wcs2string(wpath);
+        std::string path = wcs2string(path_);
         int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
         if (check_fail(__LINE__, sqlite3_open_v2(path.c_str(), &this->db, flags, nullptr)))
             return false;
@@ -264,7 +273,7 @@ struct history_db_impl_t final : public history_db_t {
         return true;
     }
 
-    void add_from(history_t *hist) override {
+    void add_from(::history_t *hist) {
         check_fail_sql("BEGIN");
         for (size_t i = 1, max = hist->size(); i <= max; i++) {
             history_item_t item = hist->item_at_index(i);
@@ -276,6 +285,9 @@ struct history_db_impl_t final : public history_db_t {
         }
         check_fail_sql("COMMIT");
     }
+
+    // Path to the file on disk, or empty for in-memory.
+    const wcstring path_;
 
     // Our SQLite connection.
     sqlite3 *db{};
@@ -290,15 +302,30 @@ struct history_db_impl_t final : public history_db_t {
     // String storage.
     std::string storage;
 };
-}  // namespace
+
+class search_impl_t final : public search_t {};
+
+struct history_db_handle_t {
+    owning_lock<history_db_conn_t> lock;
+    explicit history_db_handle_t(const wcstring &path) : lock(history_db_conn_t(path)) {}
+};
 
 // static
 std::unique_ptr<history_db_t> history_db_t::create_at_path(const wcstring &path) {
-    auto hist = make_unique<history_db_impl_t>();
-    if (!hist->initialize(path)) return nullptr;
+    std::unique_ptr<history_db_t> hist{
+        new history_db_t(std::make_shared<history_db_handle_t>(path))};
+    if (!hist->conn()->initialize()) return nullptr;
     return hist;
 }
 
+acquired_lock<history_db_conn_t> history_db_t::conn() { return handle_->lock.acquire(); }
+
+void history_db_t::add_from(::history_t *hist) { conn()->add_from(hist); }
+
+std::unique_ptr<search_t> history_db_t::search(const wcstring &query, search_mode_t mode,
+                                               bool icase) const {}
+
 history_db_t::~history_db_t() = default;
+}  // namespace histdb
 
 #endif
