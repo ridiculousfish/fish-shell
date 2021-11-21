@@ -28,28 +28,44 @@ struct history_db_handle_t;
 using history_db_handle_ref_t = std::shared_ptr<history_db_handle_t>;
 
 /// Ways in which you can search history.
-enum class search_mode_t {
+enum class search_mode_t : int {
     exact,
     contains,
     prefix,
     contains_glob,
     prefix_glob,
-    everything,
 };
 
 class search_t : noncopyable_t, nonmovable_t {
    public:
+    search_t() = default;
     virtual ~search_t();
 
-    // Access the current item.
-    const maybe_t<wcstring> &current() const { return current_; }
+    /// Access the current item, asserting we have one.
+    const wcstring &current() const {
+        assert(!items_.empty() && "No current item");
+        return items_.back();
+    }
+
+    /// \return whether we have a current item.
+    bool has_current() const { return !items_.empty(); }
 
     /// Advance to the next item.
     /// \return true if we get one, false if empty.
-    virtual bool step() const;
+    /// This does NOT need to be called to get the first item.
+    bool step() {
+        if (items_.empty()) return false;
+        items_.pop_back();
+        if (items_.empty()) try_fill();
+        return !items_.empty();
+    }
 
-   private:
-    maybe_t<wcstring> current_{};
+   protected:
+    // Try filling our items.
+    virtual void try_fill() = 0;
+
+    // List of items to return, with the next-up item at the end.
+    wcstring_list_t items_{};
 };
 
 /// Our wrapper around SQLite.
