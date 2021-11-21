@@ -4949,6 +4949,23 @@ void history_tests_t::test_history_formats() {
     }
 }
 
+static void test_history_sql() {
+    say(L"Testing history SQL");
+    using namespace histdb;
+    auto hist =
+        history_db_t::create_at_path(L"/Users/peter/github/sqlite_tests/history_sql_test.db");
+    auto when = time(nullptr);
+    hist->add(history_item_t(L"echo foo", when));
+    hist->add(history_item_t(L"echo foo", when + 1));
+    hist->add(history_item_t(L"echo foo", when + 2));
+    hist->add(history_item_t(L"echo derp", when + 3));
+
+    auto search = hist->list();
+    while (search->has_current()) {
+        search->step();
+    }
+}
+
 #if 0
 // This test isn't run at this time. It was added by commit b9283d48 but not actually enabled.
 void history_tests_t::test_history_speed(void)
@@ -7243,6 +7260,7 @@ static const test_t s_tests[]{
     {TEST_GROUP("history_paths"), history_tests_t::test_history_path_detection},
     {TEST_GROUP("history_races"), history_tests_t::test_history_races},
     {TEST_GROUP("history_formats"), history_tests_t::test_history_formats},
+    {TEST_GROUP("history_sql"), test_history_sql},
     {TEST_GROUP("string"), test_string},
     {TEST_GROUP("illegal_command_exit_code"), test_illegal_command_exit_code},
     {TEST_GROUP("maybe"), test_maybe},

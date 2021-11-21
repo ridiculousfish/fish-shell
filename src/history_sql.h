@@ -17,6 +17,7 @@
 #if FISH_HISTORY_SQL
 
 class history_t;
+class history_item_t;
 
 namespace histdb {
 
@@ -29,6 +30,7 @@ using history_db_handle_ref_t = std::shared_ptr<history_db_handle_t>;
 
 /// Ways in which you can search history.
 enum class search_mode_t : int {
+    any,
     exact,
     contains,
     prefix,
@@ -36,10 +38,11 @@ enum class search_mode_t : int {
     prefix_glob,
 };
 
-class search_t : noncopyable_t, nonmovable_t {
+class search_t final : noncopyable_t, nonmovable_t {
    public:
-    search_t() = default;
-    virtual ~search_t();
+    search_t(history_db_handle_ref_t handle, wcstring query, search_mode_t mode, bool icase)
+        : handle_(handle), query_(std::move(query)), mode_(mode), icase_(icase) {}
+    ~search_t();
 
     /// Access the current item, asserting we have one.
     const wcstring &current() const {
@@ -51,7 +54,7 @@ class search_t : noncopyable_t, nonmovable_t {
     bool has_current() const { return !items_.empty(); }
 
     /// Advance to the next item.
-    /// \return true if we get one, false if empty.
+    /// \return true if we have one, false if empty.
     /// This does NOT need to be called to get the first item.
     bool step() {
         if (items_.empty()) return false;
@@ -60,12 +63,26 @@ class search_t : noncopyable_t, nonmovable_t {
         return !items_.empty();
     }
 
-   protected:
+   private:
     // Try filling our items.
-    virtual void try_fill() = 0;
+    void try_fill();
 
     // List of items to return, with the next-up item at the end.
     wcstring_list_t items_{};
+
+    // Last ID returned, used for windowing.
+    int64_t last_id_{INT64_MAX};
+
+    // Our DB handle.
+    const history_db_handle_ref_t handle_;
+
+    // Properties of the search.
+    const wcstring query_;
+    const search_mode_t mode_;
+    const bool icase_;
+
+    friend class history_db_t;
+    friend struct history_db_conn_t;
 };
 
 /// Our wrapper around SQLite.
@@ -77,8 +94,14 @@ class history_db_t : noncopyable_t, nonmovable_t {
     /// \return the file, or nullptr on failure in which case an error will have been logged.
     static std::unique_ptr<history_db_t> create_at_path(const wcstring &path);
 
+    /// Add an item to history.
+    void add(const history_item_t &item);
+
     /// Construct a history search.
     std::unique_ptr<search_t> search(const wcstring &query, search_mode_t mode, bool icase) const;
+
+    /// Construct a history "search" that just enumerates all items.
+    std::unique_ptr<search_t> list() const { return this->search(L"", search_mode_t::any, false); }
 
     // Temporary hack.
     void add_from(::history_t *hist);

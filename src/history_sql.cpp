@@ -20,7 +20,25 @@ extern "C" {
 #include "sha3.h"
 }
 
+namespace histdb {
 namespace {
+
+// The number of items that a history search will return in a "window" (from a single query).
+constexpr size_t HISTORY_SEARCH_WINDOW_SIZE = 24;
+
+// Helper to invoke check_fail, propagating the line number.
+#define SQLCHECK(x) check_fail(__LINE__, (x))
+
+// SQLite3 strings are unsigned.
+wcstring sqlstr2wcstr(const unsigned char *str) {
+    if (!str) return wcstring{};
+    return str2wcstring(reinterpret_cast<const char *>(str));
+}
+
+wcstring sqlstr2wcstr(const unsigned char *str, int len) {
+    if (!str || len <= 0) return wcstring{};
+    return str2wcstring(reinterpret_cast<const char *>(str), static_cast<size_t>(len));
+}
 
 // SQLite plugin function that hashes a string using sha256, returning the first 8 bytes as an
 // int64.
@@ -35,11 +53,13 @@ int64_t sha3_prefix_hash(const unsigned char *str, size_t len) {
 }
 
 /// \return true if a history item matches a given search query.
-static bool text_matches_search(histdb::search_mode_t mode, const wcstring &query,
-                                const wcstring &text, bool icase) {
-    using histdb::search_mode_t;
+static bool text_matches_search(search_mode_t mode, const wcstring &query, const wcstring &text,
+                                bool icase) {
     assert(!icase && "icase not yet supported");
     switch (mode) {
+        case search_mode_t::any:
+            return true;
+
         case search_mode_t::exact:
             return query == text;
 
@@ -128,6 +148,7 @@ struct prepared_statement_t {
     int bind_str(int idx, const std::string &s) {
         return sqlite3_bind_text(this->stmt, idx, s.c_str(), (int)s.size(), SQLITE_TRANSIENT);
     }
+    int bind_str(int idx, const wcstring &s) { return bind_str(idx, wcs2string(s)); }
 
     // Bind an int to a parameter index.
     // \return any SQLite error.
@@ -174,11 +195,11 @@ struct insert_item_t : public prepared_statement_t {
 // Find distinct items before a given item.
 struct get_items_t : public prepared_statement_t {
     static constexpr const char *SQL =
-        "SELECT MAX(items.id), texts.contents"
+        "SELECT MAX(items.id) as max_id, items.timestamp, texts.contents"
         "    FROM items"
         "    INNER JOIN texts ON texts.id = items.text_id"
-        "    WHERE items.id < :max_id"
         "    GROUP BY items.text_id"
+        "    HAVING max_id < :max_id"
         "    ORDER BY items.id DESC"
         "    LIMIT :amount";
 
@@ -186,18 +207,26 @@ struct get_items_t : public prepared_statement_t {
         max_id_param_idx = 1,
         amount_param_idx,
     };
+
+    // Reset and bind our parameters.
+    int bind(sqlite3_int64 max_id, int amount) {
+        int ret = this->reset();
+        if (!ret) ret = this->bind_int(max_id_param_idx, max_id);
+        if (!ret) ret = this->bind_int(amount_param_idx, amount);
+        return ret;
+    }
 };
 
 // Query used for fuzzy history search.
 // Mode can be contains, prefix, contains_glob, prefix_glob, optionally icase.
 struct search_items_t : public prepared_statement_t {
     static constexpr const char *SQL =
-        "SELECT MAX(items.id), texts.contents"
+        "SELECT MAX(items.id) as max_id, items.timestamp, texts.contents"
         "    FROM items"
         "    INNER JOIN texts ON texts.id = items.text_id"
-        "    WHERE items.id < :max_id"
         "    AND histmatch(:mode, :icase, :query, texts.contents)"
         "    GROUP BY items.text_id"
+        "    HAVING max_id < :max_id"
         "    ORDER BY items.id DESC"
         "    LIMIT :amount";
 
@@ -206,13 +235,24 @@ struct search_items_t : public prepared_statement_t {
         mode_param_idx,
         icase_param_idx,
         query_param_idx,
+        amount_param_idx,
     };
+
+    // Reset and bind our parameters.
+    int bind(sqlite3_int64 max_id, search_mode_t mode, bool icase, const wcstring &query,
+             int amount) {
+        int ret = this->reset();
+        if (!ret) ret = this->bind_int(max_id_param_idx, max_id);
+        if (!ret) ret = this->bind_int(mode_param_idx, static_cast<int>(mode));
+        if (!ret) ret = this->bind_int(icase_param_idx, static_cast<int>(icase));
+        if (!ret) ret = this->bind_str(query_param_idx, query);
+        if (!ret) ret = this->bind_int(amount_param_idx, amount);
+        return ret;
+    }
 };
 
 }  // namespace sql
 }  // namespace
-
-namespace histdb {
 
 struct history_db_conn_t : noncopyable_t {
     explicit history_db_conn_t(wcstring path) : path_(path) {}
@@ -259,9 +299,8 @@ struct history_db_conn_t : noncopyable_t {
         assert(!this->db && "Already initialized");
         std::string path = wcs2string(path_);
         int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
-        if (check_fail(__LINE__, sqlite3_open_v2(path.c_str(), &this->db, flags, nullptr)))
-            return false;
-        if (check_fail(__LINE__, sqlite3_busy_timeout(this->db, 250 /* ms */))) return false;
+        if (SQLCHECK(sqlite3_open_v2(path.c_str(), &this->db, flags, nullptr))) return false;
+        if (SQLCHECK(sqlite3_busy_timeout(this->db, 250 /* ms */))) return false;
         if (check_fail_sql("PRAGMA synchronous = NORMAL")) return false;
         if (!this->install_histmatch_function()) return false;
         if (!this->install_sha3_function()) return false;
@@ -285,10 +324,9 @@ struct history_db_conn_t : noncopyable_t {
 
     // Create our sha3 hash function.
     bool install_sha3_function() {
-        if (check_fail(__LINE__,
-                       sqlite3_create_function(this->db, "sha3_prefix64", 1,
-                                               SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
-                                               sql_sha3_prefix, nullptr, nullptr))) {
+        if (SQLCHECK(sqlite3_create_function(this->db, "sha3_prefix64", 1,
+                                             SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
+                                             sql_sha3_prefix, nullptr, nullptr))) {
             return false;
         }
         return true;
@@ -313,21 +351,17 @@ struct history_db_conn_t : noncopyable_t {
         int text_len = sqlite3_value_bytes(argv[3]);
         if (!text || text_len < 0) return;
 
-        wcstring wquery =
-            str2wcstring(reinterpret_cast<const char *>(query), static_cast<size_t>(query_len));
-        wcstring wtext =
-            str2wcstring(reinterpret_cast<const char *>(text), static_cast<size_t>(text_len));
-
-        bool matches = text_matches_search(static_cast<histdb::search_mode_t>(search_mode), wquery,
-                                           wtext, icase);
+        bool matches = text_matches_search(static_cast<histdb::search_mode_t>(search_mode),
+                                           sqlstr2wcstr(query, query_len),
+                                           sqlstr2wcstr(text, text_len), icase);
         sqlite3_result_int(ctx, matches ? 1 : 0);
     }
 
     // Create our history match function.
     bool install_histmatch_function() {
-        if (check_fail(__LINE__, sqlite3_create_function(
-                                     this->db, "histmatch", 4, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
-                                     nullptr, sql_histmatch, nullptr, nullptr))) {
+        if (SQLCHECK(sqlite3_create_function(this->db, "histmatch", 4,
+                                             SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
+                                             sql_histmatch, nullptr, nullptr))) {
             return false;
         }
         return true;
@@ -347,7 +381,7 @@ struct history_db_conn_t : noncopyable_t {
     bool prepare_1_stmt(const char *sql, sql::prepared_statement_t *ps) {
         // Asks SQLite to compute string length for us.
         const int nbyte = -1;
-        if (check_fail(__LINE__, sqlite3_prepare_v2(this->db, sql, nbyte, &ps->stmt, nullptr))) {
+        if (SQLCHECK(sqlite3_prepare_v2(this->db, sql, nbyte, &ps->stmt, nullptr))) {
             FLOG(error, "SQL is:", sql);
             return false;
         }
@@ -377,7 +411,7 @@ struct history_db_conn_t : noncopyable_t {
         // Loop on BUSY.
         int ret;
         do {
-            if (check_fail(__LINE__, ps.reset())) return false;
+            if (SQLCHECK(ps.reset())) return false;
             ret = sqlite3_step(ps.stmt);
         } while (ret == SQLITE_BUSY);
         assert(ret != SQLITE_ROW && "Should not get row data from query");
@@ -392,13 +426,19 @@ struct history_db_conn_t : noncopyable_t {
         }
 
         // Ensure we have text content in the DB.
-        if (check_fail(__LINE__, ensure_content.bind(storage))) return false;
-        if (check_fail(__LINE__, run_stmt(ensure_content))) return false;
+        if (SQLCHECK(ensure_content.bind(storage))) return false;
+        if (SQLCHECK(run_stmt(ensure_content))) return false;
 
         // Add the item.
-        if (check_fail(__LINE__, insert_item.bind(storage, item.timestamp()))) return false;
-        if (check_fail(__LINE__, run_stmt(insert_item))) return false;
+        if (SQLCHECK(insert_item.bind(storage, item.timestamp()))) return false;
+        if (SQLCHECK(run_stmt(insert_item))) return false;
         return true;
+    }
+
+    void add(const history_item_t &item) {
+        check_fail_sql("BEGIN");
+        add_item(item);
+        check_fail_sql("COMMIT");
     }
 
     void add_from(::history_t *hist) {
@@ -412,6 +452,65 @@ struct history_db_conn_t : noncopyable_t {
             if (!add_item(item)) break;
         }
         check_fail_sql("COMMIT");
+    }
+
+    // Add items to the given search.
+    void fill_search(search_t *search) {
+        assert(search && "Null search");
+        assert(search->items_.empty() && "Items should be empty if filling");
+        // Decide which prepared statement to use.
+        // If the search is just matching everything we can be more efficient.
+        sql::prepared_statement_t *ps{};
+        if (search->mode_ == search_mode_t::any) {
+            if (SQLCHECK(get_items.bind(search->last_id_, HISTORY_SEARCH_WINDOW_SIZE))) {
+                return;
+            }
+            ps = &get_items;
+        } else {
+            if (SQLCHECK(search_items.bind(search->last_id_, search->mode_, search->icase_,
+                                           search->query_, HISTORY_SEARCH_WINDOW_SIZE))) {
+                return;
+            }
+            ps = &search_items;
+        }
+
+        // Fields which our query has selected.
+        enum result_idxs {
+            col_id,
+            col_timestamp,
+            col_contents,
+        };
+
+        // Start fetching our items.
+        // Loop on BUSY.
+        bool done = false;
+        while (!done) {
+            int ret = sqlite3_step(ps->stmt);
+            switch (ret) {
+                case SQLITE_ROW: {
+                    int64_t id = sqlite3_column_int64(ps->stmt, col_id);
+                    int timestamp = sqlite3_column_int(ps->stmt, col_timestamp);
+                    wcstring contents = sqlstr2wcstr(sqlite3_column_text(ps->stmt, col_contents));
+                    (void)timestamp;
+                    search->items_.push_back(std::move(contents));
+                    search->last_id_ = std::min(search->last_id_, id);
+                    break;
+                }
+                case SQLITE_DONE:
+                    done = true;
+                    break;
+                case SQLITE_BUSY:
+                    continue;
+                default:
+                    SQLCHECK(ret);
+                    search->items_.clear();
+                    return;
+            }
+        }
+
+        // We have added a bunch of items with the oldest item at the end.
+        // We want the oldest item at the beginning.
+        std::reverse(search->items_.begin(), search->items_.end());
     }
 
     // Path to the file on disk, or empty for in-memory.
@@ -437,22 +536,14 @@ struct history_db_conn_t : noncopyable_t {
     std::string storage;
 };
 
-struct search_impl_t final : public search_t {
-    explicit search_impl_t(history_db_handle_ref_t handle) : handle_(handle) {}
-    const history_db_handle_ref_t handle_;
-    void try_fill() override;
-
-    ~search_impl_t() = default;
-};
-
-void search_impl_t::try_fill() {}
-
-search_t::~search_t() = default;
-
 struct history_db_handle_t {
     owning_lock<history_db_conn_t> lock;
     explicit history_db_handle_t(const wcstring &path) : lock(history_db_conn_t(path)) {}
 };
+
+search_t::~search_t() = default;
+
+void search_t::try_fill() { handle_->lock.acquire()->fill_search(this); }
 
 // static
 std::unique_ptr<history_db_t> history_db_t::create_at_path(const wcstring &path) {
@@ -464,11 +555,15 @@ std::unique_ptr<history_db_t> history_db_t::create_at_path(const wcstring &path)
 
 acquired_lock<history_db_conn_t> history_db_t::conn() { return handle_->lock.acquire(); }
 
+void history_db_t::add(const history_item_t &item) { conn()->add(item); }
+
 void history_db_t::add_from(::history_t *hist) { conn()->add_from(hist); }
 
 std::unique_ptr<search_t> history_db_t::search(const wcstring &query, search_mode_t mode,
                                                bool icase) const {
-    return make_unique<search_impl_t>(this->handle_);
+    auto search = make_unique<search_t>(this->handle_, query, mode, icase);
+    search->try_fill();
+    return search;
 }
 
 history_db_t::~history_db_t() = default;
