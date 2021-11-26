@@ -165,6 +165,8 @@ class history_t : noncopyable_t, nonmovable_t {
     /// Returns whether this is using the default name.
     bool is_default() const;
 
+    const std::unique_ptr<histdb::history_db_t> &db() { return db_; }
+
     /// Determines whether the history is empty. Unfortunately this cannot be const, since it may
     /// require populating the history.
     bool is_empty();

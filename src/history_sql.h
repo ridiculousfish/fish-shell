@@ -11,6 +11,7 @@
 
 #include "common.h"
 #include "maybe.h"
+#include "wcstringutil.h"
 
 #define FISH_HISTORY_SQL 1
 
@@ -38,10 +39,25 @@ enum class search_mode_t : int {
     prefix_glob,
 };
 
+/// Flags for history searching.
+enum {
+    // If set, ignore case.
+    history_search_ignore_case = 1 << 0,
+
+    // If set, do not deduplicate, which can help performance.
+    history_search_no_dedup = 1 << 1
+};
+using history_search_flags_t = uint32_t;
+
 class search_t final : noncopyable_t, nonmovable_t {
    public:
-    search_t(history_db_handle_ref_t handle, wcstring query, search_mode_t mode, bool icase)
-        : handle_(handle), query_(std::move(query)), mode_(mode), icase_(icase) {}
+    search_t(history_db_handle_ref_t handle, wcstring query, search_mode_t mode,
+             history_search_flags_t flags)
+        : handle_(handle),
+          query_(std::move(query)),
+          query_canon_(canonicalize(query_, flags)),
+          mode_(mode),
+          flags_(flags) {}
     ~search_t();
 
     /// Access the current item, asserting we have one.
@@ -57,11 +73,17 @@ class search_t final : noncopyable_t, nonmovable_t {
     /// \return true if we have one, false if empty.
     /// This does NOT need to be called to get the first item.
     bool step() {
-        if (items_.empty()) return false;
+        if (!has_current()) return false;
         items_.pop_back();
         if (items_.empty()) try_fill();
-        return !items_.empty();
+        return has_current();
     }
+
+    /// \return the original search query.
+    const wcstring &query() const { return query_; }
+
+    /// return whether we are case insensitive.
+    bool ignores_case() const { return flags_ & history_search_ignore_case; }
 
    private:
     // Try filling our items.
@@ -78,8 +100,14 @@ class search_t final : noncopyable_t, nonmovable_t {
 
     // Properties of the search.
     const wcstring query_;
+    const wcstring query_canon_;
     const search_mode_t mode_;
-    const bool icase_;
+    const history_search_flags_t flags_;
+
+    static wcstring canonicalize(const wcstring &q, history_search_flags_t flags) {
+        if (flags & history_search_ignore_case) return wcstolower(q);
+        return q;
+    }
 
     friend class history_db_t;
     friend struct history_db_conn_t;
@@ -98,7 +126,8 @@ class history_db_t : noncopyable_t, nonmovable_t {
     void add(const history_item_t &item);
 
     /// Construct a history search.
-    std::unique_ptr<search_t> search(const wcstring &query, search_mode_t mode, bool icase) const;
+    std::unique_ptr<search_t> search(const wcstring &query, search_mode_t mode,
+                                     history_search_flags_t flags) const;
 
     /// Construct a history "search" that just enumerates all items.
     std::unique_ptr<search_t> list() const { return this->search(L"", search_mode_t::any, false); }

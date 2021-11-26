@@ -60,6 +60,7 @@
 #include "global_safety.h"
 #include "highlight.h"
 #include "history.h"
+#include "history_sql.h"
 #include "input.h"
 #include "input_common.h"
 #include "io.h"
@@ -393,7 +394,7 @@ class reader_history_search_t {
     mode_t mode_{inactive};
 
     /// Our history search itself.
-    history_search_t search_;
+    std::unique_ptr<histdb::search_t> search_;
 
     /// The ordered list of matches. This may grow long.
     std::vector<match_t> matches_;
@@ -418,13 +419,13 @@ class reader_history_search_t {
     /// \return true if something was appended.
     bool append_matches_from_search() {
         auto find = [this](const wcstring &haystack, const wcstring &needle) {
-            if (search_.ignores_case()) {
+            if (search_->ignores_case()) {
                 return ifind(haystack, needle);
             }
             return haystack.find(needle);
         };
         const size_t before = matches_.size();
-        wcstring text = search_.current_string();
+        wcstring text = search_->current();
         const wcstring &needle = search_string();
         if (mode_ == line || mode_ == prefix) {
             size_t offset = find(text, needle);
@@ -513,7 +514,7 @@ class reader_history_search_t {
     }
 
     /// \return the string we are searching for.
-    const wcstring &search_string() const { return search_.original_term(); }
+    const wcstring &search_string() const { return search_->query(); }
 
     /// \return the range of the original search string in the new command line.
     maybe_t<source_range_t> search_range_if_active() const {
@@ -540,11 +541,21 @@ class reader_history_search_t {
         match_index_ = 0;
         mode_ = mode;
         token_offset_ = token_offset;
-        history_search_flags_t flags = history_search_no_dedup | smartcase_flags(text);
         // We can skip dedup in history_search_t because we do it ourselves in skips_.
-        search_ = history_search_t(
-            hist, text,
-            by_prefix() ? history_search_type_t::prefix : history_search_type_t::contains, flags);
+        histdb::history_search_flags_t flags = histdb::history_search_no_dedup;
+        // Make the search case-insensitive unless we have an uppercase character.
+        wcstring low = wcstolower(text);
+        if (low == text) flags |= histdb::history_search_ignore_case;
+
+        histdb::search_mode_t hmode;
+        if (text.empty()) {
+            hmode = histdb::search_mode_t::any;
+        } else if (by_prefix()) {
+            hmode = histdb::search_mode_t::prefix;
+        } else {
+            hmode = histdb::search_mode_t::contains;
+        }
+        search_ = hist->db()->search(text, hmode, flags);
     }
 
     /// Reset to inactive search.
@@ -554,7 +565,7 @@ class reader_history_search_t {
         match_index_ = 0;
         mode_ = inactive;
         token_offset_ = 0;
-        search_ = history_search_t();
+        search_ = nullptr;
     }
 };
 

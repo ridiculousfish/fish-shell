@@ -13,7 +13,6 @@
 #include "path.h"
 #include "sqlite3.h"
 #include "utf8.h"
-#include "wcstringutil.h"
 #include "wildcard.h"
 
 extern "C" {
@@ -52,34 +51,40 @@ int64_t sha3_prefix_hash(const unsigned char *str, size_t len) {
     return *reinterpret_cast<int64_t *>(&result);
 }
 
-/// \return true if a history item matches a given search query.
-static bool text_matches_search(search_mode_t mode, const wcstring &query, const wcstring &text,
+/// \return true if a history item matches a given search query. If icase is set, the query is
+/// already lowercased.
+static bool text_matches_search(search_mode_t mode, const wcstring &query, const wcstring &inp_text,
                                 bool icase) {
-    assert(!icase && "icase not yet supported");
+    wcstring text_lower;
+    if (icase) {
+        text_lower = wcstolower(inp_text);
+    }
+    const wcstring &eff_text = icase ? text_lower : inp_text;
+
     switch (mode) {
         case search_mode_t::any:
             return true;
 
         case search_mode_t::exact:
-            return query == text;
+            return query == eff_text;
 
         case search_mode_t::contains:
-            return text.find(query) != wcstring::npos;
+            return eff_text.find(query) != wcstring::npos;
 
         case search_mode_t::prefix:
-            return string_prefixes_string(query, text);
+            return string_prefixes_string(query, eff_text);
 
         case search_mode_t::contains_glob: {
             wcstring wcpattern1 = parse_util_unescape_wildcards(query);
             if (wcpattern1.front() != ANY_STRING) wcpattern1.insert(0, 1, ANY_STRING);
             if (wcpattern1.back() != ANY_STRING) wcpattern1.push_back(ANY_STRING);
-            return wildcard_match(text, wcpattern1);
+            return wildcard_match(eff_text, wcpattern1);
         }
 
         case search_mode_t::prefix_glob: {
             wcstring wcpattern2 = parse_util_unescape_wildcards(query);
             if (wcpattern2.back() != ANY_STRING) wcpattern2.push_back(ANY_STRING);
-            return wildcard_match(text, wcpattern2);
+            return wildcard_match(eff_text, wcpattern2);
         }
 
         default:
@@ -129,15 +134,8 @@ constexpr const char *CREATE_TABLES =
 
 // A prepared statement
 struct prepared_statement_t {
+    // This is finalized by history_db_conn_t.
     sqlite3_stmt *stmt{};
-
-    // Per SQLite: "The application must finalize every prepared statement in order to avoid
-    // resource leaks."
-    void finalize() {
-        // Note this only returns errors from evaluating the statement; ignore those.
-        (void)sqlite3_finalize(stmt);
-        stmt = nullptr;
-    }
 
     // Reset this statement.
     int reset() { return sqlite3_reset(this->stmt); }
@@ -153,8 +151,6 @@ struct prepared_statement_t {
     // Bind an int to a parameter index.
     // \return any SQLite error.
     int bind_int(int idx, sqlite_int64 val) { return sqlite3_bind_int64(this->stmt, idx, val); }
-
-    ~prepared_statement_t() { assert(!stmt && "Statement was not finalized"); }
 };
 
 // Ensure a history text is present.
@@ -195,7 +191,31 @@ struct insert_item_t : public prepared_statement_t {
 // Find distinct items before a given item.
 struct get_items_t : public prepared_statement_t {
     static constexpr const char *SQL =
-        "SELECT MAX(items.id) as max_id, items.timestamp, texts.contents"
+        "SELECT items.id, items.text_id, items.timestamp, texts.contents"
+        "    FROM items"
+        "    INNER JOIN texts ON texts.id = items.text_id"
+        "    WHERE items.id < :max_id"
+        "    ORDER BY items.id DESC"
+        "    LIMIT :amount";
+
+    enum {
+        max_id_param_idx = 1,
+        amount_param_idx,
+    };
+
+    // Reset and bind our parameters.
+    int bind(sqlite3_int64 max_id, int amount) {
+        int ret = this->reset();
+        if (!ret) ret = this->bind_int(max_id_param_idx, max_id);
+        if (!ret) ret = this->bind_int(amount_param_idx, amount);
+        return ret;
+    }
+};
+
+// Find distinct items before a given item.
+struct get_items_distinct_t : public prepared_statement_t {
+    static constexpr const char *SQL =
+        "SELECT MAX(items.id) as max_id, items.text_id, items.timestamp, texts.contents"
         "    FROM items"
         "    INNER JOIN texts ON texts.id = items.text_id"
         "    GROUP BY items.text_id"
@@ -221,7 +241,40 @@ struct get_items_t : public prepared_statement_t {
 // Mode can be contains, prefix, contains_glob, prefix_glob, optionally icase.
 struct search_items_t : public prepared_statement_t {
     static constexpr const char *SQL =
-        "SELECT MAX(items.id) as max_id, items.timestamp, texts.contents"
+        "SELECT items.id, items.text_id, items.timestamp, texts.contents"
+        "    FROM items"
+        "    INNER JOIN texts ON texts.id = items.text_id"
+        "    AND histmatch(:mode, :icase, :query, texts.contents)"
+        "    WHERE items.id < :max_id"
+        "    ORDER BY items.id DESC"
+        "    LIMIT :amount";
+
+    enum {
+        mode_param_idx = 1,
+        icase_param_idx,
+        query_param_idx,
+        max_id_param_idx,
+        amount_param_idx,
+    };
+
+    // Reset and bind our parameters.
+    int bind(sqlite3_int64 max_id, search_mode_t mode, bool icase, const wcstring &query,
+             int amount) {
+        int ret = this->reset();
+        if (!ret) ret = this->bind_int(max_id_param_idx, max_id);
+        if (!ret) ret = this->bind_int(mode_param_idx, static_cast<int>(mode));
+        if (!ret) ret = this->bind_int(icase_param_idx, static_cast<int>(icase));
+        if (!ret) ret = this->bind_str(query_param_idx, query);
+        if (!ret) ret = this->bind_int(amount_param_idx, amount);
+        return ret;
+    }
+};
+
+// Query used for fuzzy history search.
+// Mode can be contains, prefix, contains_glob, prefix_glob, optionally icase.
+struct search_items_distinct_t : public prepared_statement_t {
+    static constexpr const char *SQL =
+        "SELECT MAX(items.id) as max_id, items.text_id, items.timestamp, texts.contents"
         "    FROM items"
         "    INNER JOIN texts ON texts.id = items.text_id"
         "    AND histmatch(:mode, :icase, :query, texts.contents)"
@@ -231,10 +284,10 @@ struct search_items_t : public prepared_statement_t {
         "    LIMIT :amount";
 
     enum {
-        max_id_param_idx = 1,
-        mode_param_idx,
+        mode_param_idx = 1,
         icase_param_idx,
         query_param_idx,
+        max_id_param_idx,
         amount_param_idx,
     };
 
@@ -262,12 +315,9 @@ struct history_db_conn_t : noncopyable_t {
     history_db_conn_t(history_db_conn_t &&) = default;
 
     ~history_db_conn_t() {
-        // Free our prepared statements.
-        ensure_content.finalize();
-        insert_item.finalize();
-        get_items.finalize();
-        search_items.finalize();
-
+        // Per SQLite: "The application must finalize every prepared statement in order to avoid
+        // resource leaks."
+        for (auto *stmt : finalizees_) sqlite3_finalize(stmt);
         // sqlite3_close is null-safe.
         sqlite3_close(this->db);
     }
@@ -340,15 +390,23 @@ struct history_db_conn_t : noncopyable_t {
             return;
         }
 
-        int search_mode = sqlite3_value_int(argv[0]);
-        bool icase = sqlite3_value_int(argv[1]);
+        sqlite3_value *mode_arg = argv[0];
+        sqlite3_value *icase_arg = argv[1];
+        sqlite3_value *query_arg = argv[2];
+        sqlite3_value *text_arg = argv[3];
 
-        const unsigned char *query = sqlite3_value_text(argv[2]);
-        int query_len = sqlite3_value_bytes(argv[2]);
+        int search_mode = sqlite3_value_int(mode_arg);
+        assert(search_mode >= 0 && search_mode <= static_cast<int>(search_mode_t::prefix_glob) &&
+               "Invalid search mode");
+
+        bool icase = sqlite3_value_int(icase_arg);
+
+        const unsigned char *query = sqlite3_value_text(query_arg);
+        int query_len = sqlite3_value_bytes(query_arg);
         if (!query || query_len < 0) return;
 
-        const unsigned char *text = sqlite3_value_text(argv[3]);
-        int text_len = sqlite3_value_bytes(argv[3]);
+        const unsigned char *text = sqlite3_value_text(text_arg);
+        int text_len = sqlite3_value_bytes(text_arg);
         if (!text || text_len < 0) return;
 
         bool matches = text_matches_search(static_cast<histdb::search_mode_t>(search_mode),
@@ -373,7 +431,9 @@ struct history_db_conn_t : noncopyable_t {
         if (!prepare_1_stmt(ensure_content.SQL, &this->ensure_content)) return false;
         if (!prepare_1_stmt(insert_item.SQL, &this->insert_item)) return false;
         if (!prepare_1_stmt(get_items.SQL, &this->get_items)) return false;
+        if (!prepare_1_stmt(get_items_distinct.SQL, &this->get_items_distinct)) return false;
         if (!prepare_1_stmt(search_items.SQL, &this->search_items)) return false;
+        if (!prepare_1_stmt(search_items_distinct.SQL, &this->search_items_distinct)) return false;
         return true;
     }
 
@@ -385,6 +445,7 @@ struct history_db_conn_t : noncopyable_t {
             FLOG(error, "SQL is:", sql);
             return false;
         }
+        finalizees_.push_back(ps->stmt);
         return true;
     }
 
@@ -460,23 +521,38 @@ struct history_db_conn_t : noncopyable_t {
         assert(search->items_.empty() && "Items should be empty if filling");
         // Decide which prepared statement to use.
         // If the search is just matching everything we can be more efficient.
+        bool distinct = !(search->flags_ & history_search_no_dedup);
         sql::prepared_statement_t *ps{};
-        if (search->mode_ == search_mode_t::any) {
+        if (search->mode_ == search_mode_t::any && !distinct) {
             if (SQLCHECK(get_items.bind(search->last_id_, HISTORY_SEARCH_WINDOW_SIZE))) {
                 return;
             }
             ps = &get_items;
-        } else {
-            if (SQLCHECK(search_items.bind(search->last_id_, search->mode_, search->icase_,
-                                           search->query_, HISTORY_SEARCH_WINDOW_SIZE))) {
+        } else if (search->mode_ == search_mode_t::any /* && distinct */) {
+            if (SQLCHECK(get_items_distinct.bind(search->last_id_, HISTORY_SEARCH_WINDOW_SIZE))) {
+                return;
+            }
+            ps = &get_items_distinct;
+        } else if (!distinct) {
+            if (SQLCHECK(search_items.bind(search->last_id_, search->mode_,
+                                           search->flags_ & history_search_ignore_case,
+                                           search->query_canon_, HISTORY_SEARCH_WINDOW_SIZE))) {
                 return;
             }
             ps = &search_items;
+        } else /* distinct */ {
+            if (SQLCHECK(search_items_distinct.bind(
+                    search->last_id_, search->mode_, search->flags_ & history_search_ignore_case,
+                    search->query_canon_, HISTORY_SEARCH_WINDOW_SIZE))) {
+                return;
+            }
+            ps = &search_items_distinct;
         }
 
         // Fields which our query has selected.
         enum result_idxs {
             col_id,
+            col_text_id,
             col_timestamp,
             col_contents,
         };
@@ -527,10 +603,16 @@ struct history_db_conn_t : noncopyable_t {
     sql::insert_item_t insert_item{};
 
     // Finds items before a given item.
+    // The "distinct" version deduplicates but is more expensive.
     sql::get_items_t get_items{};
+    sql::get_items_distinct_t get_items_distinct{};
 
     // Finds items matching a query, before a given item.
     sql::search_items_t search_items{};
+    sql::search_items_distinct_t search_items_distinct{};
+
+    // List of prepared statements that we are responsible for finalizing.
+    std::vector<sqlite3_stmt *> finalizees_;
 
     // String storage.
     std::string storage;
@@ -560,8 +642,8 @@ void history_db_t::add(const history_item_t &item) { conn()->add(item); }
 void history_db_t::add_from(::history_t *hist) { conn()->add_from(hist); }
 
 std::unique_ptr<search_t> history_db_t::search(const wcstring &query, search_mode_t mode,
-                                               bool icase) const {
-    auto search = make_unique<search_t>(this->handle_, query, mode, icase);
+                                               history_search_flags_t flags) const {
+    auto search = make_unique<search_t>(this->handle_, query, mode, flags);
     search->try_fill();
     return search;
 }
