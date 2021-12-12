@@ -172,40 +172,55 @@ history_item_t::history_item_t(wcstring str, time_t when, history_identifier_t i
       identifier(ident),
       persist_mode(persist_mode) {}
 
-bool history_item_t::matches_search(const wcstring &term, enum history_search_type_t type,
-                                    bool case_sensitive) const {
+history_item_predicate_t::history_item_predicate_t(wcstring term, history_search_type_t type,
+                                                   bool icase)
+    : canon_term_(std::move(term)), type_(type), icase_(icase) {
+    if (icase) {
+        std::transform(canon_term_.begin(), canon_term_.end(), canon_term_.begin(), towlower);
+    }
+    // Cache any wildcard globs we want to use.
+    switch (type_) {
+        case history_search_type_t::exact:
+        case history_search_type_t::contains:
+        case history_search_type_t::prefix:
+        case history_search_type_t::match_everything:
+            break;
+        case history_search_type_t::contains_glob: {
+            wildcard_ = parse_util_unescape_wildcards(canon_term_);
+            if (wildcard_.empty() || wildcard_.front() != ANY_STRING)
+                wildcard_.insert(0, 1, ANY_STRING);
+            if (wildcard_.back() != ANY_STRING) wildcard_.push_back(ANY_STRING);
+            break;
+        }
+        case history_search_type_t::prefix_glob: {
+            wildcard_ = parse_util_unescape_wildcards(canon_term_);
+            if (wildcard_.empty() || wildcard_.back() != ANY_STRING)
+                wildcard_.push_back(ANY_STRING);
+        }
+    }
+}
+
+bool history_item_predicate_t::matches(const history_item_t &item) const {
     // Note that 'term' has already been lowercased when constructing the
     // search object if we're doing a case insensitive search.
     wcstring contents_lower;
-    if (!case_sensitive) {
-        contents_lower = wcstolower(contents);
+    if (icase_) {
+        contents_lower = wcstolower(item.str());
     }
-    const wcstring &content_to_match = case_sensitive ? contents : contents_lower;
+    const wcstring &content_to_match = icase_ ? contents_lower : item.str();
 
-    switch (type) {
-        case history_search_type_t::exact: {
-            return term == content_to_match;
-        }
-        case history_search_type_t::contains: {
-            return content_to_match.find(term) != wcstring::npos;
-        }
-        case history_search_type_t::prefix: {
-            return string_prefixes_string(term, content_to_match);
-        }
-        case history_search_type_t::contains_glob: {
-            wcstring wcpattern1 = parse_util_unescape_wildcards(term);
-            if (wcpattern1.front() != ANY_STRING) wcpattern1.insert(0, 1, ANY_STRING);
-            if (wcpattern1.back() != ANY_STRING) wcpattern1.push_back(ANY_STRING);
-            return wildcard_match(content_to_match, wcpattern1);
-        }
-        case history_search_type_t::prefix_glob: {
-            wcstring wcpattern2 = parse_util_unescape_wildcards(term);
-            if (wcpattern2.back() != ANY_STRING) wcpattern2.push_back(ANY_STRING);
-            return wildcard_match(content_to_match, wcpattern2);
-        }
-        case history_search_type_t::match_everything: {
+    switch (type_) {
+        case history_search_type_t::exact:
+            return canon_term_ == content_to_match;
+        case history_search_type_t::contains:
+            return content_to_match.find(canon_term_) != wcstring::npos;
+        case history_search_type_t::prefix:
+            return string_prefixes_string(canon_term_, content_to_match);
+        case history_search_type_t::contains_glob:
+        case history_search_type_t::prefix_glob:
+            return wildcard_match(content_to_match, wildcard_);
+        case history_search_type_t::match_everything:
             return true;
-        }
     }
     DIE("unexpected history_search_type_t value");
 }
@@ -643,7 +658,7 @@ bool history_search_t::go_backwards() {
         }
 
         // Look for an item that matches and (if deduping) that we haven't seen before.
-        if (!item.matches_search(canon_term_, search_type_, !ignores_case())) {
+        if (!predicate_.matches(item)) {
             continue;
         }
 

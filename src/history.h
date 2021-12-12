@@ -85,10 +85,6 @@ class history_item_t {
     /// \return whether the text is empty.
     bool empty() const { return contents.empty(); }
 
-    /// \return wehther our contents matches a search term.
-    bool matches_search(const wcstring &term, enum history_search_type_t type,
-                        bool case_sensitive) const;
-
     /// \return the timestamp for creating this history item.
     time_t timestamp() const { return creation_timestamp; }
 
@@ -223,6 +219,32 @@ class history_t : noncopyable_t, nonmovable_t {
     size_t size();
 };
 
+/// A predicate for matching history items.
+class history_item_predicate_t {
+   public:
+    /// Construct matching a term, for a given type, optionally case insensitive.
+    history_item_predicate_t(wcstring term, history_search_type_t type, bool icase);
+
+    /// Construct as matching everything.
+    history_item_predicate_t() = default;
+
+    /// \return true if we match an item.
+    bool matches(const history_item_t &item) const;
+
+   private:
+    /// The term to match. If we are case insensitive, this has been lowercased.
+    wcstring canon_term_{};
+
+    /// If our match is of glob type, our cached wildcard.
+    wcstring wildcard_{};
+
+    /// How to match.
+    history_search_type_t type_{history_search_type_t::contains};
+
+    /// Whether we are case-insensitive.
+    bool icase_{false};
+};
+
 /// Flags for history searching.
 enum {
     /// If set, ignore case.
@@ -244,14 +266,11 @@ class history_search_t {
     /// The original search term.
     wcstring orig_term_;
 
-    /// The (possibly lowercased) search term.
-    wcstring canon_term_;
-
-   /// Our search type.
-    enum history_search_type_t search_type_ { history_search_type_t::contains };
-
     /// Our flags.
     history_search_flags_t flags_{0};
+
+    /// Predicate for matching history items.
+    history_item_predicate_t predicate_;
 
     /// The current history item.
     maybe_t<history_item_t> current_item_;
@@ -286,11 +305,10 @@ class history_search_t {
     history_search_t(history_t *hist, const wcstring &str,
                      enum history_search_type_t type = history_search_type_t::contains,
                      history_search_flags_t flags = 0)
-        : history_(hist), orig_term_(str), canon_term_(str), search_type_(type), flags_(flags) {
-        if (ignores_case()) {
-            std::transform(canon_term_.begin(), canon_term_.end(), canon_term_.begin(), towlower);
-        }
-    }
+        : history_(hist),
+          orig_term_(str),
+          flags_(flags),
+          predicate_(str, type, flags_ & history_search_ignore_case) {}
 
     /// Construct from a shared_ptr. TODO: this should be the only constructor.
     history_search_t(const std::shared_ptr<history_t> &hist, const wcstring &str,
