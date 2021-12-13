@@ -91,7 +91,8 @@ Interactive improvements
 - Running a command line consisting of just spaces now deletes an ephemeral (starting with space) history item again (:issue:`8232`).
 - Command substitutions no longer respect job control, instead running inside fish's own process group (:issue:`8172`). This more closely matches other shells, and improves :kbd:`Control-C` reliability inside a command substitution.
 - ``history`` and ``__fish_print_help`` now properly support ``less`` before version 530, including the version that ships with macOS. (:issue:`8157`).
-- ``builtin history delete`` now supports the same options as ``history search``, for example ``--prefix``. Note these searches is case-insensitive by default.
+- ``history delete`` now supports the ``--reverse``, to print matching items in reverse order (:issue:`8544`).
+- ``builtin history delete`` now supports the same options as ``history search``, for example ``--prefix``. Note these searches is case-insensitive by default. (:issue:`8544`)
 - ``help`` now knows which section is in which document again (:issue:`8245`).
 - fish's highlighter will now color options (starting with ``-`` or ``--``) with the color given in the new $fish_color_option, up to the first ``--``. It falls back on $fish_color_param, so nothing changes for existing setups (:issue:`8292`).
 - When executing a command, abbreviations are no longer expanded when the cursor is separated from the command by spaces, making it easier to suppress abbreviation expansion of commands without arguments. (:issue:`8423`).

@@ -19,8 +19,6 @@ function history --description "display or manipulate interactive command histor
     set -l options --exclusive 'c,e,p' --exclusive 'S,D,M,V,X'
     set -a options h/help c/contains e/exact p/prefix
     set -a options C/case-sensitive R/reverse z/null 't/show-time=?' 'n#max'
-    # The following options are deprecated and will be removed in the next major release.
-    # Note that they do not have usable short flags.
     set -a options S-search D-delete M-merge V-save X-clear
     argparse -n $cmd $options -- $argv
     or return
@@ -129,7 +127,12 @@ function history --description "display or manipulate interactive command histor
             set found_items (builtin history search $search_mode $_flag_case_sensitive --null -- $searchterm | string split0)
             if set -q found_items[1]
                 set -l found_items_count (count $found_items)
-                for i in (seq $found_items_count)
+                set -l indexes (seq $found_items_count)
+                # Support --reverse to print backwards (#8544)
+                if set -q _flag_reverse
+                    set indexes $indexes[-1..1]
+                end
+                for i in $indexes
                     printf "[%s] %s\n" $i $found_items[$i]
                 end
                 echo ""
