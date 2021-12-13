@@ -41,11 +41,11 @@ These flags can appear before or immediately after one of the sub-commands liste
 
 - ``-C`` or ``--case-sensitive`` does a case-sensitive search. The default is case-insensitive. Note that prior to fish 2.4.0 the default was case-sensitive.
 
-- ``-c`` or ``--contains`` searches or deletes items in the history that contain the specified text string. This is the default for the ``--search`` flag. This is not currently supported by the ``delete`` subcommand.
+- ``-c`` or ``--contains`` searches or deletes items in the history that contain the specified text string. This is the default for the ``--search`` flag.
 
 - ``-e`` or ``--exact`` searches or deletes items in the history that exactly match the specified text string. This is the default for the ``delete`` subcommand. Note that the match is case-insensitive by default. If you really want an exact match, including letter case, you must use the ``-C`` or ``--case-sensitive`` flag.
 
-- ``-p`` or ``--prefix`` searches or deletes items in the history that begin with the specified text string. This is not currently supported by the ``--delete`` flag.
+- ``-p`` or ``--prefix`` searches or deletes items in the history that begin with the specified text string.
 
 - ``-t`` or ``--show-time`` prepends each history entry with the date and time the entry was recorded. By default it uses the strftime format ``# %c%n``. You can specify another format; e.g., ``--show-time="%Y-%m-%d %H:%M:%S "`` or ``--show-time="%a%I%p"``. The short option, ``-t``, doesn't accept a strftime format string; it only uses the default format. Any strftime format is allowed, including ``%s`` to get the raw UNIX seconds since the epoch.
 

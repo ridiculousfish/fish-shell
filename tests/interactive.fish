@@ -45,7 +45,7 @@ function test_pexpect_file
         set test_duration (delta $starttime)
         say green "ok ($test_duration $unit)"
     else if test "$exit_status" -eq 127
-        say blue "SKIPPED"
+        say blue SKIPPED
         set exit_status 0
     end
     return $exit_status
@@ -59,10 +59,10 @@ if not python3 -c 'import pexpect'
 end
 for i in $pexpect_files_to_test
     if not test_pexpect_file $i
-        say yellow "Trying $i for a second time"
-        if not test_pexpect_file $i
-            set failed $failed $i
-        end
+        #say yellow "Trying $i for a second time"
+        #if not test_pexpect_file $i
+        set failed $failed $i
+        #end
     end
 end
 

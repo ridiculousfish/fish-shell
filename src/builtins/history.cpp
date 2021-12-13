@@ -206,6 +206,61 @@ static int parse_cmd_opts(history_cmd_opts_t &opts, int *optind,  //!OCLINT(high
     return STATUS_CMD_OK;
 }
 
+/// \return true if either we have no predicate, or we have at least one predicate which matches the
+/// given item.
+static bool passes_predicates(const history_item_t &item,
+                              const std::vector<history_item_predicate_t> &preds) {
+    return preds.empty() ||
+           std::any_of(preds.begin(), preds.end(),
+                       [&](const history_item_predicate_t &pred) { return pred.matches(item); });
+}
+
+// Formats a single history record, including a trailing newline, or nul char if null_terminate is
+// set.
+static void format_history_record(const history_item_t &item, const wchar_t *show_time_format,
+                                  bool null_terminate, wcstring *result) {
+    result->clear();
+    if (show_time_format) {
+        const time_t seconds = item.timestamp();
+        struct tm timestamp;
+        if (localtime_r(&seconds, &timestamp)) {
+            const int max_tstamp_length = 100;
+            wchar_t timestamp_string[max_tstamp_length + 1];
+            if (std::wcsftime(timestamp_string, max_tstamp_length, show_time_format, &timestamp) !=
+                0) {
+                result->append(timestamp_string);
+            }
+        }
+    }
+
+    result->append(item.str());
+    result->push_back(null_terminate ? L'\0' : L'\n');
+}
+
+/// Act on history items matching (any of) a list of predicates.
+/// Call the function (if non-empty) for each such item.
+/// \return the set of items acted upon, which we must compute anyways for deduplication.
+std::unordered_set<wcstring> for_each_matching_item(
+    const std::shared_ptr<history_t> &history, const std::vector<history_item_predicate_t> &preds,
+    size_t max_items, const cancel_checker_t &cancel_check,
+    const std::function<void(const history_item_t &func)> &func = nullptr) {
+    std::unordered_set<wcstring> matched;
+    size_t processed = 0;
+    size_t idx = 1;
+    for (idx = 1; processed < max_items; idx++) {
+        history_item_t item = history->item_at_index(idx);
+        if (cancel_check()) return {};
+        if (item.empty()) break;
+
+        // Did we match the predicate and is this the first time we've seen this item?
+        if (passes_predicates(item, preds) && matched.insert(item.str()).second) {
+            if (func) func(item);
+            processed++;
+        }
+    }
+    return matched;
+}
+
 /// Manipulate history of interactive commands executed by the user.
 maybe_t<int> builtin_history(parser_t &parser, io_streams_t &streams, const wchar_t **argv) {
     const wchar_t *cmd = argv[0];
@@ -240,10 +295,6 @@ maybe_t<int> builtin_history(parser_t &parser, io_streams_t &streams, const wcha
         }
     }
 
-    // Every argument that we haven't consumed already is an argument for a subcommand (e.g., a
-    // search term).
-    const wcstring_list_t args(argv + optind, argv + argc);
-
     // Establish appropriate defaults.
     if (opts.hist_cmd == HIST_UNDEF) opts.hist_cmd = HIST_SEARCH;
     if (!opts.history_search_type_defined) {
@@ -251,32 +302,47 @@ maybe_t<int> builtin_history(parser_t &parser, io_streams_t &streams, const wcha
         if (opts.hist_cmd == HIST_DELETE) opts.search_type = history_search_type_t::exact;
     }
 
+    // Every argument that we haven't consumed already is an argument for a subcommand (e.g., a
+    // search term).
+    wcstring_list_t args(argv + optind, argv + argc);
+
+    // Construct predicates to match them.
+    // Note if we have no arguments, we will match everything.
+    std::vector<history_item_predicate_t> preds;
+    for (const wcstring &arg : args) {
+        bool icase = !opts.case_sensitive;
+        preds.push_back(history_item_predicate_t(arg, opts.search_type, icase));
+    }
+
     int status = STATUS_CMD_OK;
     switch (opts.hist_cmd) {
         case HIST_SEARCH: {
-            if (!history->search(opts.search_type, args, opts.show_time_format, opts.max_items,
-                                 opts.case_sensitive, opts.null_terminate, opts.reverse,
-                                 parser.cancel_checker(), streams)) {
-                status = STATUS_CMD_ERROR;
+            // Format matching items.
+            // If we reverse, we have to temporarily hold them.
+            wcstring_list_t temp_formatted;
+            wcstring storage;
+            auto format = [&](const history_item_t &item) {
+                format_history_record(item, opts.show_time_format, opts.null_terminate, &storage);
+                if (!opts.reverse) {
+                    streams.out.append(storage);
+                } else {
+                    temp_formatted.push_back(std::move(storage));
+                }
+                storage.clear();
+            };
+            for_each_matching_item(history, preds, opts.max_items, parser.cancel_checker(), format);
+            if (opts.reverse) {
+                for (auto iter = temp_formatted.rbegin(); iter != temp_formatted.rend(); iter++) {
+                    streams.out.append(*iter);
+                }
             }
             break;
         }
         case HIST_DELETE: {
-            // TODO: Move this code to the history module and support the other search types
-            // including case-insensitive matches. At this time we expect the non-exact deletions to
-            // be handled only by the history function's interactive delete feature.
-            if (opts.search_type != history_search_type_t::exact) {
-                streams.err.append_format(_(L"builtin history delete only supports --exact\n"));
-                status = STATUS_INVALID_ARGS;
-                break;
-            }
-            if (!opts.case_sensitive) {
-                streams.err.append_format(
-                    _(L"builtin history delete --exact requires --case-sensitive\n"));
-                status = STATUS_INVALID_ARGS;
-                break;
-            }
-            for (const wcstring &delete_string : args) {
+            // Delete matching items.
+            auto matched =
+                for_each_matching_item(history, preds, opts.max_items, parser.cancel_checker());
+            for (const wcstring &delete_string : matched) {
                 history->remove(delete_string);
             }
             break;

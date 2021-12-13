@@ -1057,30 +1057,6 @@ void history_impl_t::save(bool vacuum) {
     }
 }
 
-// Formats a single history record, including a trailing newline.
-//
-// Returns nothing. The only possible failure involves formatting the timestamp. If that happens we
-// simply omit the timestamp from the output.
-static void format_history_record(const history_item_t &item, const wchar_t *show_time_format,
-                                  bool null_terminate, wcstring *result) {
-    result->clear();
-    if (show_time_format) {
-        const time_t seconds = item.timestamp();
-        struct tm timestamp;
-        if (localtime_r(&seconds, &timestamp)) {
-            const int max_tstamp_length = 100;
-            wchar_t timestamp_string[max_tstamp_length + 1];
-            if (std::wcsftime(timestamp_string, max_tstamp_length, show_time_format, &timestamp) !=
-                0) {
-                result->append(timestamp_string);
-            }
-        }
-    }
-
-    result->append(item.str());
-    result->push_back(null_terminate ? L'\0' : L'\n');
-}
-
 void history_impl_t::disable_automatic_saving() {
     disable_automatic_save_counter++;
     assert(disable_automatic_save_counter != 0);  // overflow!
@@ -1466,67 +1442,6 @@ void history_t::add_pending_with_file_detection(const std::shared_ptr<history_t>
 void history_t::resolve_pending() { impl()->resolve_pending(); }
 
 void history_t::save() { impl()->save(); }
-
-/// Perform a search of \p hist for \p search_string. Invoke a function \p func for each match. If
-/// \p func returns true, continue the search; else stop it.
-static void do_1_history_search(history_t *hist, history_search_type_t search_type,
-                                const wcstring &search_string, bool case_sensitive,
-                                const std::function<bool(const history_item_t &item)> &func,
-                                const cancel_checker_t &cancel_check) {
-    history_search_t searcher = history_search_t(hist, search_string, search_type,
-                                                 case_sensitive ? 0 : history_search_ignore_case);
-    while (!cancel_check() && searcher.go_backwards()) {
-        if (!func(searcher.current_item())) {
-            break;
-        }
-    }
-}
-
-// Searches history.
-bool history_t::search(history_search_type_t search_type, const wcstring_list_t &search_args,
-                       const wchar_t *show_time_format, size_t max_items, bool case_sensitive,
-                       bool null_terminate, bool reverse, const cancel_checker_t &cancel_check,
-                       io_streams_t &streams) {
-    wcstring_list_t collected;
-    wcstring formatted_record;
-    size_t remaining = max_items;
-
-    // The function we use to act on each item.
-    std::function<bool(const history_item_t &item)> func = [&](const history_item_t &item) -> bool {
-        if (remaining == 0) return false;
-        remaining -= 1;
-        format_history_record(item, show_time_format, null_terminate, &formatted_record);
-        if (reverse) {
-            // We need to collect this for later.
-            collected.push_back(std::move(formatted_record));
-        } else {
-            // We can output this immediately.
-            streams.out.append(formatted_record);
-        }
-        return true;
-    };
-
-    if (search_args.empty()) {
-        // The user had no search terms; just append everything.
-        do_1_history_search(this, history_search_type_t::match_everything, {}, false, func,
-                            cancel_check);
-    } else {
-        for (const wcstring &search_string : search_args) {
-            if (search_string.empty()) {
-                streams.err.append_format(L"Searching for the empty string isn't allowed");
-                return false;
-            }
-            do_1_history_search(this, search_type, search_string, case_sensitive, func,
-                                cancel_check);
-        }
-    }
-
-    // Output any items we collected (which only happens in reverse).
-    for (auto iter = collected.rbegin(); iter != collected.rend(); ++iter) {
-        streams.out.append(*iter);
-    }
-    return true;
-}
 
 void history_t::clear() { impl()->clear(); }
 

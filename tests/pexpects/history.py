@@ -148,14 +148,34 @@ expect_prompt("TERM")
 # Check that leading space makes an ephemeral item
 sendline(" echo ephemeral")
 expect_prompt("ephemeral")
-send("\x1b[A") # up-arrow
+send("\x1b[A")  # up-arrow
 expect_re(" echo ephemeral")
 sendline("")
 expect_prompt("ephemeral")
 sendline(" ")
 expect_prompt()
 send("\x1b[A")
-expect_re("echo TERM") # not ephemeral!
+expect_re("echo TERM")  # not ephemeral!
+send("\x7F" * 16)  # clear commandline
+
+# Verify deletion options (#8544).
+sendline("true that stuff")
+expect_prompt()
+sendline("echo true that stuff")
+expect_prompt("true that stuff")
+sendline("builtin history search 'true that'")
+expect_prompt("echo true that stuff\r\ntrue that stuff")
+sendline("builtin history delete --prefix 'true that'")
+expect_prompt()
+sendline("builtin history search 'true that'")
+expect_prompt(
+    "builtin history delete --prefix 'true that'\r\n" + "echo true that stuff"
+)
+sendline("builtin history delete --contains 'true that'")
+expect_prompt()
+sendline("builtin history search 'true that'")
+expect_prompt("builtin history delete --contains 'true that'")
+
 
 # Verify that clear-session works as expected
 # Note: This test depends on that history merge resets the session from history clear-sessions point of view.
@@ -173,7 +193,7 @@ expect_prompt()
 # create after history
 sendline("echo after")
 expect_prompt()
-#clear session
+# clear session
 sendline("history clear-session")
 expect_prompt()
 sendline("history search --exact 'echo after' | cat")
