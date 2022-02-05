@@ -397,7 +397,8 @@ static constexpr builtin_data_t builtin_datas[] = {
     {L"printf", &builtin_printf, N_(L"Prints formatted text")},
     {L"pwd", &builtin_pwd, N_(L"Print the working directory")},
     {L"random", &builtin_random, N_(L"Generate random number")},
-    {L"read", &builtin_read, N_(L"Read a line of input into variables")},
+    {L"read", &builtin_read, N_(L"Read a line of input into variables"),
+     false /* not concurrent */},
     {L"realpath", &builtin_realpath, N_(L"Show absolute path sans symlinks")},
     {L"return", &builtin_return, N_(L"Stop the currently evaluated function")},
     {L"set", &builtin_set, N_(L"Handle environment variables")},
@@ -439,6 +440,11 @@ void builtin_init() {
 
 /// Is there a builtin command with the given name?
 bool builtin_exists(const wcstring &cmd) { return static_cast<bool>(builtin_lookup(cmd)); }
+
+bool builtin_prefers_concurrent(const wcstring &cmd) {
+    const auto *info = builtin_lookup(cmd);
+    return info && info->prefers_concurrent;
+}
 
 /// Is the command a keyword we need to special-case the handling of `-h` and `--help`.
 static const wchar_t *const help_builtins[] = {L"for", L"while",  L"function", L"if",
