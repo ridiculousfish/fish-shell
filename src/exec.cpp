@@ -988,7 +988,7 @@ static launch_result_t exec_process_in_job(parser_t &parser, process_t *p,
 
         case process_type_t::builtin: {
             launch_result_t result;
-            if (concurrent_procs) {
+            if (concurrent_procs && builtin_prefers_concurrent(p->argv().front())) {
                 result = exec_concurrent_builtin_process(parser, j, p, process_net_io_chain);
             } else {
                 result = exec_builtin_process(parser, j, p, process_net_io_chain,

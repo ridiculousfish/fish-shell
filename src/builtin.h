@@ -14,14 +14,24 @@ class output_stream_t;
 struct io_streams_t;
 using completion_list_t = std::vector<completion_t>;
 
+/// The type of a builtin function poitner.
+using builtin_func_ptr_t = maybe_t<int> (*)(parser_t &parser, io_streams_t &streams,
+                                            const wchar_t **argv);
+
 /// Data structure to describe a builtin.
 struct builtin_data_t {
     // Name of the builtin.
     const wchar_t *name;
     // Function pointer to the builtin implementation.
-    maybe_t<int> (*func)(parser_t &parser, io_streams_t &streams, const wchar_t **argv);
+    builtin_func_ptr_t func;
     // Description of what the builtin does.
     const wchar_t *desc;
+    // Whether this builtin prefers to run concurrently when in a pipeline. True for most builtins.
+    bool prefers_concurrent;
+
+    constexpr builtin_data_t(const wchar_t *name, builtin_func_ptr_t func, const wchar_t *desc,
+                             bool prefers_concurrent = true)
+        : name(name), func(func), desc(desc), prefers_concurrent(prefers_concurrent) {}
 };
 
 /// The default prompt for the read command.
@@ -78,6 +88,7 @@ struct builtin_data_t {
 #define FG_MSG _(L"Send job %d (%ls) to foreground\n")
 
 bool builtin_exists(const wcstring &cmd);
+bool builtin_prefers_concurrent(const wcstring &cmd);
 
 proc_status_t builtin_run(parser_t &parser, const wcstring_list_t &argv, io_streams_t &streams);
 
