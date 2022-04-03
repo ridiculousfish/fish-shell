@@ -8,6 +8,7 @@ if(POLICY CMP0067)
 endif()
 
 include(cmake/Mac.cmake)
+include(cmake/Rust.cmake)
 
 project(fish)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -112,7 +113,7 @@ set(FISH_SRCS
     src/parser.cpp src/parser_keywords.cpp src/path.cpp src/postfork.cpp
     src/proc.cpp src/reader.cpp src/redirection.cpp src/screen.cpp
     src/signal.cpp src/termsize.cpp src/timer.cpp src/tinyexpr.cpp
-    src/tokenizer.cpp src/topic_monitor.cpp src/trace.cpp src/utf8.cpp src/util.cpp
+    src/tokenizer.cpp src/trace.cpp src/utf8.cpp src/util.cpp
     src/wait_handle.cpp src/wcstringutil.cpp src/wgetopt.cpp src/wildcard.cpp 
     src/wutil.cpp src/fds.cpp
 )
@@ -126,6 +127,11 @@ include(cmake/gettext.cmake)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config_cmake.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
+
+# Pull in our src directory for headers searches, but only quoted ones.
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -iquote ${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+
 
 # Set up standard directories.
 include(GNUInstallDirs)
@@ -170,7 +176,8 @@ add_library(fishlib STATIC ${FISH_SRCS} ${FISH_BUILTIN_SRCS})
 target_sources(fishlib PRIVATE ${FISH_HEADERS})
 target_link_libraries(fishlib
   ${CURSES_LIBRARY} ${CURSES_EXTRA_LIBRARY} Threads::Threads ${CMAKE_DL_LIBS}
-  ${PCRE2_LIB} ${Intl_LIBRARIES} ${ATOMIC_LIBRARY})
+  ${PCRE2_LIB} ${Intl_LIBRARIES} ${ATOMIC_LIBRARY}
+  "fish-rust")
 target_include_directories(fishlib PRIVATE
   ${CURSES_INCLUDE_DIRS})
 

@@ -1,0 +1,22 @@
+[package]
+name = "fish-rust"
+version = "0.1.0"
+edition = "2021"
+links = "pointless" # necessary to satisfy the cxx
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libc = "0.2"
+unixstring = "0.2.7"
+wchar = {version = "0.11.0", wchar_t="i32"}
+errno = "0.2.8"
+nix = "0.23.1"
+cxx = { path = "/Users/peter/github/cxx"}
+
+
+[build-dependencies]
+cxx-build = { path = "/Users/peter/github/cxx/gen/build" }
+
+[lib]
+crate-type=["staticlib"]

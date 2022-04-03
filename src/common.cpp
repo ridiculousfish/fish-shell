@@ -418,6 +418,10 @@ std::string wcs2string(const wchar_t *in, size_t len) {
     return result;
 }
 
+std::unique_ptr<wcstring> str2wcstring_ffi(const char *in, size_t len) {
+    return make_unique<wcstring>(str2wcstring(in, len));
+}
+
 void wcs2string_appending(const wchar_t *in, size_t len, std::string *receiver) {
     assert(receiver && "Null receiver");
     receiver->reserve(receiver->size() + len);

@@ -137,6 +137,10 @@ struct autoclose_pipes_t {
 /// \return pipes on success, none() on error.
 maybe_t<autoclose_pipes_t> make_autoclose_pipes();
 
+/// Create pipes, transferring ownership in out_read and out_write.
+/// Upon failure both values will be negative.
+void make_pipes_ffi(int &out_read, int &out_write);
+
 /// An event signaller implemented using a file descriptor, so it can plug into select().
 /// This is like a binary semaphore. A call to post() will signal an event, making the fd readable.
 /// Multiple calls to post() may be coalesced. On Linux this uses eventfd(); on other systems this

@@ -6532,7 +6532,8 @@ void test_dirname_basename() {
 
 static void test_topic_monitor() {
     say(L"Testing topic monitor");
-    topic_monitor_t monitor;
+    auto monitor_box = new_topic_monitor();
+    topic_monitor_t &monitor = *monitor_box;
     generation_list_t gens{};
     constexpr auto t = topic_t::sigchld;
     gens.sigchld = 0;
@@ -6556,12 +6557,13 @@ static void test_topic_monitor() {
 
 static void test_topic_monitor_torture() {
     say(L"Torture-testing topic monitor");
-    topic_monitor_t monitor;
+    auto monitor_box = new_topic_monitor();
+    topic_monitor_t &monitor = *monitor_box;
     const size_t thread_count = 64;
     constexpr auto t1 = topic_t::sigchld;
     constexpr auto t2 = topic_t::sighupint;
     std::vector<generation_list_t> gens;
-    gens.resize(thread_count, generation_list_t::invalids());
+    gens.resize(thread_count, invalid_generations());
     std::atomic<uint32_t> post_count{};
     for (auto &gen : gens) {
         gen = monitor.current_generations();
@@ -6933,6 +6935,7 @@ int main(int argc, char **argv) {
     say(L"Testing low-level functionality");
     set_main_thread();
     setup_fork_guards();
+    topic_monitor_init();
     proc_init();
     builtin_init();
     env_init();

@@ -274,6 +274,7 @@ static void process_input(bool continuous_mode, bool verbose) {
     set_interactive_session(true);
     set_main_thread();
     setup_fork_guards();
+    topic_monitor_init();
     env_init();
     reader_init();
     parser_t &parser = parser_t::principal_parser();

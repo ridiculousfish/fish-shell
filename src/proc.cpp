@@ -179,7 +179,7 @@ void internal_proc_t::mark_exited(proc_status_t status) {
     assert(!exited() && "Process is already exited");
     status_.store(status, std::memory_order_relaxed);
     exited_.store(true, std::memory_order_release);
-    topic_monitor_t::principal().post(topic_t::internal_exit);
+    topic_monitor_principal().post(topic_t::internal_exit);
     FLOG(proc_internal_proc, L"Internal proc", internal_proc_id_, L"exited with status",
          status.status_value());
 }
@@ -248,7 +248,7 @@ static void handle_child_status(const shared_ptr<job_t> &job, process_t *proc,
 process_t::process_t() = default;
 
 void process_t::check_generations_before_launch() {
-    gens_ = topic_monitor_t::principal().current_generations();
+    gens_ = topic_monitor_principal().current_generations();
 }
 
 void process_t::mark_aborted_before_launch() {
@@ -362,7 +362,7 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
     // The exit generation tells us if we have an exit; the signal generation allows for detecting
     // SIGHUP and SIGINT.
     // Go through each process and figure out if and how it wants to be reaped.
-    generation_list_t reapgens = generation_list_t::invalids();
+    generation_list_t reapgens = invalid_generations();
     for (const auto &j : parser.jobs()) {
         for (const auto &proc : j->processes) {
             if (!j->can_reap(proc)) continue;
@@ -381,7 +381,7 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
     }
 
     // Now check for changes, optionally waiting.
-    if (!topic_monitor_t::principal().check(&reapgens, block_ok)) {
+    if (!topic_monitor_principal().check(&reapgens, block_ok)) {
         // Nothing changed.
         return;
     }
@@ -939,8 +939,7 @@ bool job_t::resume() {
 }
 
 void job_t::continue_job(parser_t &parser) {
-    FLOGF(proc_job_run, L"Run job %d (%ls), %ls, %ls",
-          job_id(), command_wcstr(),
+    FLOGF(proc_job_run, L"Run job %d (%ls), %ls, %ls", job_id(), command_wcstr(),
           is_completed() ? L"COMPLETED" : L"UNCOMPLETED",
           parser.libdata().is_interactive ? L"INTERACTIVE" : L"NON-INTERACTIVE");
 

@@ -284,6 +284,16 @@ maybe_t<autoclose_pipes_t> make_autoclose_pipes() {
     return autoclose_pipes_t(std::move(read_end), std::move(write_end));
 }
 
+void make_pipes_ffi(int &out_read, int &out_write) {
+    if (auto pipes = make_autoclose_pipes()) {
+        out_read = pipes->read.acquire();
+        out_write = pipes->write.acquire();
+    } else {
+        out_read = -1;
+        out_write = -1;
+    }
+}
+
 int set_cloexec(int fd, bool should_set) {
     // Note we don't want to overwrite existing flags like O_NONBLOCK which may be set. So fetch the
     // existing flags and modify them.
