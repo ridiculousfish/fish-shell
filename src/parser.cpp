@@ -25,6 +25,7 @@
 #include "fds.h"
 #include "flog.h"
 #include "function.h"
+#include "iothread.h"
 #include "job_group.h"
 #include "parse_constants.h"
 #include "parse_execution.h"
@@ -42,6 +43,9 @@ static wcstring user_presentable_path(const wcstring &path, const environment_t 
 parser_t::parser_t(std::shared_ptr<env_stack_t> vars, bool is_principal)
     : variables(std::move(vars)), is_principal_(is_principal) {
     assert(variables.get() && "Null variables in parser initializer");
+    if (is_principal_) {
+        bind_thread();
+    }
     int cwd = open_cloexec(".", O_RDONLY);
     if (cwd < 0) {
         perror("Unable to open the current working directory");
@@ -60,7 +64,16 @@ parser_t &parser_t::principal_parser() {
     return *principal;
 }
 
-void parser_t::assert_can_execute() const { ASSERT_IS_MAIN_THREAD(); }
+void parser_t::bind_thread() {
+    assert(bound_thread_ == 0 && "Thread already bound");
+    bound_thread_ = thread_id();
+    assert_can_execute();
+}
+
+void parser_t::assert_can_execute() const {
+    assert(bound_thread_ != 0 && "Thread not bound");
+    assert(bound_thread_ == thread_id() && "Cannot execute on this thread");
+}
 
 int parser_t::set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
     int res = vars().set(key, mode, std::move(vals));

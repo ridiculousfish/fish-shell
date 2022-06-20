@@ -295,6 +295,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// If set, we are the principal parser.
     bool is_principal_{false};
 
+    /// Each parser is bound to a thread and can only execute in that thread.
+    uint64_t bound_thread_{0};
+
     /// List of profile items.
     /// This must be a deque because we return pointers to them to callers,
     /// who may hold them across blocks (which would cause reallocations internal
@@ -320,6 +323,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Get the "principal" parser, whatever that is.
     static parser_t &principal_parser();
+
+    /// Bind this parser to the current thread; it will assert if executing on another thread.
+    void bind_thread();
 
     /// Assert that this parser is allowed to execute on the current thread.
     void assert_can_execute() const;
