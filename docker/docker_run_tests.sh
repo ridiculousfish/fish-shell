@@ -1,7 +1,7 @@
 #!/bin/bash
 
 usage() {
-    cat << EOF
+    cat <<EOF
 Usage: $(basename $0) [--shell-before] [--shell-after] DOCKERFILE
 Options:
     --shell-before   Before the tests start, run a bash shell
@@ -18,20 +18,20 @@ export DOCKER_BUILDKIT=1
 set -e
 
 # Get fish source directory.
-FISH_SRC_DIR=$(cd "$( dirname "${BASH_SOURCE[0]}" )"/.. >/dev/null && pwd)
+FISH_SRC_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. >/dev/null && pwd)
 
 # Parse args.
 while [ $# -gt 1 ]; do
     case "$1" in
-        --shell-before)
-            DOCKER_EXTRA_ARGS="$DOCKER_EXTRA_ARGS --env FISH_RUN_SHELL_BEFORE_TESTS=1"
-            ;;
-        --shell-after)
-            DOCKER_EXTRA_ARGS="$DOCKER_EXTRA_ARGS --env FISH_RUN_SHELL_AFTER_TESTS=1"
-            ;;
-        *)
-            usage
-            ;;
+    --shell-before)
+        DOCKER_EXTRA_ARGS="$DOCKER_EXTRA_ARGS --env FISH_RUN_SHELL_BEFORE_TESTS=1"
+        ;;
+    --shell-after)
+        DOCKER_EXTRA_ARGS="$DOCKER_EXTRA_ARGS --env FISH_RUN_SHELL_AFTER_TESTS=1"
+        ;;
+    *)
+        usage
+        ;;
     esac
     shift
 done
