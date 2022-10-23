@@ -6,6 +6,10 @@
 cd ~/fish-build
 cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug /fish-source
 
+# Our git directory is owned by someone else as it is a volume mount.
+# Ensure git does not complain.
+git config --global --add safe.directory '/fish-source'
+
 # Spawn a shell if FISH_RUN_SHELL_BEFORE_TESTS is set.
 if test -n "$FISH_RUN_SHELL_BEFORE_TESTS"
 then
