@@ -46,8 +46,13 @@ docker build \
     -f "$DOCKERFILE" \
     "$FISH_SRC_DIR"/docker/context/
 
+# Use -it if we're in a TTY.
+if [ -t 0 ]; then
+    DOCKER_EXTRA_ARGS="$DOCKER_EXTRA_ARGS -it"
+fi
+
 # Run tests in it, allowing them to fail without failing this script.
-docker run -it \
+docker run \
     --mount type=bind,source="$FISH_SRC_DIR",target=/fish-source,readonly \
     $DOCKER_EXTRA_ARGS \
     "$IMG_TAGNAME"
