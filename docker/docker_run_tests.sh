@@ -40,7 +40,7 @@ DOCKERFILE=${@:$OPTIND:1}
 test -n "$DOCKERFILE" || usage
 
 # Construct a docker image.
-IMG_TAGNAME="fish_$(basename -s .Dockerfile "$DOCKERFILE")"
+IMG_TAGNAME="fish_$(basename "$DOCKERFILE" .Dockerfile)"
 docker build \
     -t "$IMG_TAGNAME" \
     -f "$DOCKERFILE" \
