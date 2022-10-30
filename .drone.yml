@@ -1,0 +1,77 @@
+---
+kind: pipeline
+name: run-docker-tests
+
+steps:
+    - &step
+      name: alpine
+      image: ridiculousfish/fish-shell-ci-runner:latest
+      volumes:
+          - name: dockersock
+            path: /var/run/
+      commands:
+          - ./docker/docker_run_tests_ci.sh ./docker/$${DOCKERFILE}.Dockerfile
+      environment: { DOCKERFILE: alpine }
+      when:
+          status:
+              - failure
+              - success
+    - <<: *step
+      name: bionic-asan-clang
+      environment: { DOCKERFILE: bionic-asan-clang }
+    - <<: *step
+      name: bionic-tsan-clang
+      environment: { DOCKERFILE: bionic-tsan-clang }
+    - <<: *step
+      name: bionic-tsan
+      environment: { DOCKERFILE: bionic-tsan }
+    - <<: *step
+      name: bionic
+      environment: { DOCKERFILE: bionic }
+    - <<: *step
+      name: centos7
+      environment: { DOCKERFILE: centos7 }
+    - <<: *step
+      name: centos8
+      environment: { DOCKERFILE: centos8 }
+    - <<: *step
+      name: fedora
+      environment: { DOCKERFILE: fedora }
+    - <<: *step
+      name: focal-32bit
+      environment: { DOCKERFILE: focal-32bit }
+    - <<: *step
+      name: xenial
+      environment: { DOCKERFILE: xenial }
+
+volumes:
+    - name: dockersock
+      host:
+          path: /var/run/
+
+---
+kind: pipeline
+name: run-vagrant-tests
+
+steps:
+    - &step
+      name: freebsd-13-1-release
+      image: ridiculousfish/fish-shell-vagrant-runner:latest
+      commands:
+          - ls /dev/vboxdrv
+          - echo $${VAGRANT_DIR}
+          - $${VAGRANT_DIR}/run_tests_in_box.sh $${DRONE_WORKSPACE} fish-freebsd-13-1-release
+      devices:
+          - name: vboxdrv
+            path: /dev/vboxdrv
+
+volumes:
+    - name: vboxdrv
+      host:
+          name: vboxdrv
+          path: /dev/vboxdrv
+      path: /dev/vboxdrv
+
+devices:
+    - name: vboxdrv
+      path: /dev/vboxdrv
