@@ -12,8 +12,8 @@ platform:
 
 server:
     image: docker-20-04
-    size: s-4vcpu-8gb-intel
-    region: nyc
+    size: c-4
+    region: nyc1
 
 steps:
     - &step
