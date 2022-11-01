@@ -5,7 +5,10 @@ import os
 import platform
 import sys
 
-sp = SpawnedProc()
+# Under sanitizers the time required here may be extremely long,
+# as this effectively is a quadratic algorithm: every nested eval()
+# creates a new job and each job is tested coming and going.
+sp = SpawnedProc(timeout=180)
 send, sendline, sleep, expect_prompt, expect_re, expect_str = (
     sp.send,
     sp.sendline,
@@ -23,12 +26,14 @@ sendline("eval (string replace dog tiger -- $history[1])")
 expect_prompt("cat tiger")
 
 sendline("eval (string replace dog tiger -- $history[1])")
-expect_re("fish: The call stack limit has been exceeded.*"
-          + "\r\nin command substitution"
-          + "\r\nfish: Unable to evaluate string substitution"
-          + re.escape("\r\neval (string replace dog tiger -- $history[1])")
-          + "\r\n *\^~+\^\w*")
+expect_re(
+    "fish: The call stack limit has been exceeded.*"
+    + "\r\nin command substitution"
+    + "\r\nfish: Unable to evaluate string substitution"
+    + re.escape("\r\neval (string replace dog tiger -- $history[1])")
+    + "\r\n *\^~+\^\w*"
+)
 expect_prompt()
 
-sendline("\x04") # <c-d>
+sendline("\x04")  # <c-d>
 sys.exit(0)
