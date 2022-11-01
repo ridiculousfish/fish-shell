@@ -390,65 +390,69 @@ static void process_mark_finished_children(parser_t &parser, bool block_ok) {
     // Update the hup/int generations and reap any reapable processes.
     // We structure this as two loops for some simplicity.
     // First reap all pids.
-    for (const auto &j : parser.jobs()) {
-        for (const auto &proc : j->processes) {
-            // Does this proc have a pid that is reapable?
-            if (proc->pid <= 0 || !j->can_reap(proc)) continue;
+    if (reapgens.is_valid(topic_t::sigchld)) {
+        for (const auto &j : parser.jobs()) {
+            for (const auto &proc : j->processes) {
+                // Does this proc have a pid that is reapable?
+                if (proc->pid <= 0 || !j->can_reap(proc)) continue;
 
-            // Always update the signal hup/int gen.
-            proc->gens_.sighupint = reapgens.sighupint;
+                // Always update the signal hup/int gen.
+                proc->gens_.sighupint = reapgens.sighupint;
 
-            // Nothing to do if we did not get a new sigchld.
-            if (proc->gens_.sigchld == reapgens.sigchld) continue;
-            proc->gens_.sigchld = reapgens.sigchld;
+                // Nothing to do if we did not get a new sigchld.
+                if (proc->gens_.sigchld == reapgens.sigchld) continue;
+                proc->gens_.sigchld = reapgens.sigchld;
 
-            // Ok, we are reapable. Run waitpid()!
-            int statusv = -1;
-            pid_t pid = waitpid(proc->pid, &statusv, WNOHANG | WUNTRACED | WCONTINUED);
-            assert((pid <= 0 || pid == proc->pid) && "Unexpcted waitpid() return");
-            if (pid <= 0) continue;
+                // Ok, we are reapable. Run waitpid()!
+                int statusv = -1;
+                pid_t pid = waitpid(proc->pid, &statusv, WNOHANG | WUNTRACED | WCONTINUED);
+                assert((pid <= 0 || pid == proc->pid) && "Unexpcted waitpid() return");
+                if (pid <= 0) continue;
 
-            // The process has stopped or exited! Update its status.
-            proc_status_t status = proc_status_t::from_waitpid(statusv);
-            handle_child_status(j, proc.get(), status);
-            if (status.stopped()) {
-                j->group->set_is_foreground(false);
-            }
-            if (status.continued()) {
-                j->mut_flags().notified_of_stop = false;
-            }
-            if (status.normal_exited() || status.signal_exited()) {
-                FLOGF(proc_reap_external, "Reaped external process '%ls' (pid %d, status %d)",
-                      proc->argv0(), pid, proc->status.status_value());
-            } else {
-                assert(status.stopped() || status.continued());
-                FLOGF(proc_reap_external, "External process '%ls' (pid %d, %s)", proc->argv0(),
-                      proc->pid, proc->status.stopped() ? "stopped" : "continued");
+                // The process has stopped or exited! Update its status.
+                proc_status_t status = proc_status_t::from_waitpid(statusv);
+                handle_child_status(j, proc.get(), status);
+                if (status.stopped()) {
+                    j->group->set_is_foreground(false);
+                }
+                if (status.continued()) {
+                    j->mut_flags().notified_of_stop = false;
+                }
+                if (status.normal_exited() || status.signal_exited()) {
+                    FLOGF(proc_reap_external, "Reaped external process '%ls' (pid %d, status %d)",
+                          proc->argv0(), pid, proc->status.status_value());
+                } else {
+                    assert(status.stopped() || status.continued());
+                    FLOGF(proc_reap_external, "External process '%ls' (pid %d, %s)", proc->argv0(),
+                          proc->pid, proc->status.stopped() ? "stopped" : "continued");
+                }
             }
         }
     }
 
     // We are done reaping pids.
     // Reap internal processes.
-    for (const auto &j : parser.jobs()) {
-        for (const auto &proc : j->processes) {
-            // Does this proc have an internal process that is reapable?
-            if (!proc->internal_proc_ || !j->can_reap(proc)) continue;
+    if (reapgens.is_valid(topic_t::internal_exit)) {
+        for (const auto &j : parser.jobs()) {
+            for (const auto &proc : j->processes) {
+                // Does this proc have an internal process that is reapable?
+                if (!proc->internal_proc_ || !j->can_reap(proc)) continue;
 
-            // Always update the signal hup/int gen.
-            proc->gens_.sighupint = reapgens.sighupint;
+                // Always update the signal hup/int gen.
+                proc->gens_.sighupint = reapgens.sighupint;
 
-            // Nothing to do if we did not get a new internal exit.
-            if (proc->gens_.internal_exit == reapgens.internal_exit) continue;
-            proc->gens_.internal_exit = reapgens.internal_exit;
+                // Nothing to do if we did not get a new internal exit.
+                if (proc->gens_.internal_exit == reapgens.internal_exit) continue;
+                proc->gens_.internal_exit = reapgens.internal_exit;
 
-            // Has the process exited?
-            if (!proc->internal_proc_->exited()) continue;
+                // Has the process exited?
+                if (!proc->internal_proc_->exited()) continue;
 
-            // The process gets the status from its internal proc.
-            handle_child_status(j, proc.get(), proc->internal_proc_->get_status());
-            FLOGF(proc_reap_internal, "Reaped internal process '%ls' (id %llu, status %d)",
-                  proc->argv0(), proc->internal_proc_->get_id(), proc->status.status_value());
+                // The process gets the status from its internal proc.
+                handle_child_status(j, proc.get(), proc->internal_proc_->get_status());
+                FLOGF(proc_reap_internal, "Reaped internal process '%ls' (id %llu, status %d)",
+                      proc->argv0(), proc->internal_proc_->get_id(), proc->status.status_value());
+            }
         }
     }
 
