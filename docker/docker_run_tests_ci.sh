@@ -36,4 +36,5 @@ CONTAINER_ID=$(
 )
 
 docker cp "$FISH_SRC_DIR/." "$CONTAINER_ID":/fish-source/
+docker exec --user root "$CONTAINER_ID" chown -R fishuser /fish-source
 docker start -a "$CONTAINER_ID"
