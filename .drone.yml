@@ -7,7 +7,7 @@ token:
     from_secret: DO_token
 
 server:
-    image: ridiculousfish/fish-shell-vagrant-runner
+    image: 120123183 # virtualbox-ubuntu-c-4-8gib-2
     size: c-4
     region: nyc1
 
