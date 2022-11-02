@@ -65,12 +65,24 @@ volumes:
 
 ---
 kind: pipeline
+type: digitalocean
 name: run-vagrant-tests
+
+token:
+    from_secret: DO_token
+
+server:
+    image: ridiculousfish/fish-shell-vagrant-runner:latest
+    size: c-4
+    region: nyc1
+
+platform:
+    os: linux
+    arch: amd64
 
 steps:
     - &step
       name: freebsd-13-1-release
-      image: ridiculousfish/fish-shell-vagrant-runner:latest
       commands:
           - ls /dev/vboxdrv
           - echo $${VAGRANT_DIR}
