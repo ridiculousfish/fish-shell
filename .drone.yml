@@ -62,3 +62,30 @@ volumes:
     - name: dockersock
       host:
           path: /var/run/
+
+---
+kind: pipeline
+name: run-vagrant-tests
+
+steps:
+    - &step
+      name: freebsd-13-1-release
+      image: ridiculousfish/fish-shell-vagrant-runner:latest
+      commands:
+          - ls /dev/vboxdrv
+          - echo $${VAGRANT_DIR}
+          - $${VAGRANT_DIR}/run_tests_in_box.sh $${DRONE_WORKSPACE} fish-freebsd-13-1-release
+      devices:
+          - name: vboxdrv
+            path: /dev/vboxdrv
+
+volumes:
+    - name: vboxdrv
+      host:
+          name: vboxdrv
+          path: /dev/vboxdrv
+      path: /dev/vboxdrv
+
+devices:
+    - name: vboxdrv
+      path: /dev/vboxdrv
