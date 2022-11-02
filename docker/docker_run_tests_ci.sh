@@ -2,7 +2,7 @@
 
 usage() {
     cat <<EOF
-Usage: $(basename $0) DOCKERFILE
+Usage: $(basename $0) DOCKER-IMAGE-TAG
 EOF
     exit 1
 }
@@ -15,15 +15,7 @@ set -e
 # Get fish source directory.
 FISH_SRC_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. >/dev/null && pwd)
 
-DOCKERFILE=${@:$OPTIND:1}
-test -n "$DOCKERFILE" || usage
-
-# Construct a docker image.
-IMG_TAGNAME="fish_$(basename "$DOCKERFILE" .Dockerfile)"
-docker build \
-    -t "$IMG_TAGNAME" \
-    -f "$DOCKERFILE" \
-    "$FISH_SRC_DIR"/docker/context/
+DOCKERIMAGE=${@:$OPTIND:1}
 
 # Use -it if we're in a TTY.
 if [ -t 0 ]; then
@@ -37,7 +29,7 @@ CONTAINER_ID=$(
     docker create \
         --rm \
         $DOCKER_EXTRA_ARGS \
-        "$IMG_TAGNAME"
+        "$DOCKERIMAGE"
 )
 
 docker cp "$FISH_SRC_DIR/." "$CONTAINER_ID":/fish-source/
