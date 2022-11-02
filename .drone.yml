@@ -27,6 +27,7 @@ steps:
           - name: dockersock
             path: /var/run/
       commands:
+          - echo ${REGISTRY}
           - ./docker/docker_run_tests_ci.sh $${REGISTRY}/$${DOCKERIMAGE}
       environment: { DOCKERIMAGE: alpine }
       when:

@@ -16,6 +16,7 @@ set -e
 FISH_SRC_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. >/dev/null && pwd)
 
 DOCKERIMAGE=${@:$OPTIND:1}
+echo "Using Docker image: $DOCKERIMAGE"
 
 # Use -it if we're in a TTY.
 if [ -t 0 ]; then
