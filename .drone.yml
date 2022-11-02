@@ -22,9 +22,9 @@ steps:
           - ls /dev/vboxdrv
           - echo $${VAGRANT_DIR}
           - $${VAGRANT_DIR}/run_tests_in_box.sh $${DRONE_WORKSPACE} fish-freebsd-13-1-release
-      devices:
-          - name: vboxdrv
-            path: /dev/vboxdrv
+      # devices:
+      #     - name: vboxdrv
+      #       path: /dev/vboxdrv
 
 volumes:
     - name: vboxdrv
