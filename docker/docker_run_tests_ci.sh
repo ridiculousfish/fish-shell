@@ -27,15 +27,17 @@ fi
 
 # Run tests in it, allowing them to fail without failing this script.
 # If we are running docker-in-docker, as we are in CI, then our fish source
-# directory will not mount properly in the inner image. So use create/copy/start instead.
+# directory will not mount properly in the inner image. So use run with sleep
+# instead, then later exec.
 CONTAINER_ID=$(
-    docker create \
+    docker run \
+        --detach \
         --rm \
         $DOCKER_EXTRA_ARGS \
         "$DOCKER_IMAGE"
+        sleep infinity
 )
 
 docker cp "$FISH_SRC_DIR/." "$CONTAINER_ID":/fish-source/
-docker exec --user root "$CONTAINER_ID" cat /fish_run_tests.sh
-#docker exec --user root "$CONTAINER_ID" chown -R fishuser /fish-source
-docker start -a "$CONTAINER_ID"
+docker exec --user root "$CONTAINER_ID" chown -R fishuser /fish-source
+docker exec --user fishuser "$CONTAINER_ID" /fish_run_tests.sh
