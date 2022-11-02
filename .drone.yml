@@ -7,7 +7,7 @@ token:
     from_secret: DO_token
 
 server:
-    image: ridiculousfish/fish-shell-vagrant-runner:latest
+    image: ridiculousfish/fish-shell-vagrant-runner
     size: c-4
     region: nyc1
 
