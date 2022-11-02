@@ -15,10 +15,6 @@ server:
     size: c-4
     region: nyc1
 
-environment:
-    # Our Docker registry.
-    REGISTRY: ghcr.io/fish-shell/fish-ci/
-
 steps:
     - &step
       name: alpine
@@ -28,7 +24,7 @@ steps:
             path: /var/run/
       commands:
           - echo ${REGISTRY}
-          - ./docker/docker_run_tests_ci.sh $${REGISTRY}/$${DOCKERIMAGE}
+          - ./docker/docker_run_tests_ci.sh $${DOCKERIMAGE}
       environment: { DOCKERIMAGE: alpine }
       when:
           status:
