@@ -15,6 +15,10 @@ server:
     size: c-4
     region: nyc1
 
+environment:
+    # Our Docker registry.
+    REGISTRY: ghcr.io/fish-shell/fish-ci/
+
 steps:
     - &step
       name: alpine
@@ -23,39 +27,39 @@ steps:
           - name: dockersock
             path: /var/run/
       commands:
-          - ./docker/docker_run_tests_ci.sh ./docker/$${DOCKERFILE}.Dockerfile
-      environment: { DOCKERFILE: alpine }
+          - ./docker/docker_run_tests_ci.sh $${REGISTRY}/$${DOCKERIMAGE}
+      environment: { DOCKERIMAGE: alpine }
       when:
           status:
               - failure
               - success
     - <<: *step
       name: bionic-asan-clang
-      environment: { DOCKERFILE: bionic-asan-clang }
+      environment: { DOCKERIMAGE: bionic-asan-clang }
     - <<: *step
       name: bionic-tsan-clang
-      environment: { DOCKERFILE: bionic-tsan-clang }
+      environment: { DOCKERIMAGE: bionic-tsan-clang }
     - <<: *step
       name: bionic-tsan
-      environment: { DOCKERFILE: bionic-tsan }
+      environment: { DOCKERIMAGE: bionic-tsan }
     - <<: *step
       name: bionic
-      environment: { DOCKERFILE: bionic }
+      environment: { DOCKERIMAGE: bionic }
     - <<: *step
       name: centos7
-      environment: { DOCKERFILE: centos7 }
+      environment: { DOCKERIMAGE: centos7 }
     - <<: *step
       name: centos8
-      environment: { DOCKERFILE: centos8 }
+      environment: { DOCKERIMAGE: centos8 }
     - <<: *step
       name: fedora
-      environment: { DOCKERFILE: fedora }
+      environment: { DOCKERIMAGE: fedora }
     - <<: *step
       name: focal-32bit
-      environment: { DOCKERFILE: focal-32bit }
+      environment: { DOCKERIMAGE: focal-32bit }
     - <<: *step
       name: xenial
-      environment: { DOCKERFILE: xenial }
+      environment: { DOCKERIMAGE: xenial }
 
 volumes:
     - name: dockersock
