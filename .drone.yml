@@ -7,7 +7,7 @@ token:
     from_secret: DO_token
 
 server:
-    image: 120123183 # "120123183" # virtualbox-ubuntu-c-4-8gib-2 or docker-20-04
+    image: 120194041 # snapshot ID for fish-ci-virtualbox-1
     size: c-4
     region: nyc1
 
