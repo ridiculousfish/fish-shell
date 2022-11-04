@@ -1,0 +1,19 @@
+# Note: this is defined to be run through envsubst.
+# We actually construct a Vagrantfile rather than just using Ruby ENV
+# because otherwise `vagrant destroy` fails if the environment variables
+# no longer exist.
+Vagrant.configure("2") do |config|
+    config.vm.box = "${VAGRANT_BOXNAME}"
+    config.vm.provider "virtualbox" do |v|
+        v.cpus = ${VAGRANT_CPUCOUNT}
+    end
+
+    # Disable default synced folder.
+    config.vm.synced_folder '.', '/vagrant', disabled: true
+
+    # With default mount type, sometimes directories are replaced by one of their file contents (!!)
+    # This is a bizarre error. rsync to the rescue.
+    config.vm.synced_folder "${VAGRANT_FISH_SRC_DIR}", "/fish-source",
+        type: "rsync", rsync__args: ["--archive"], rsync__auto: false
+end
+

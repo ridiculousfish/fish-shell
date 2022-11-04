@@ -20,5 +20,5 @@ steps:
       name: freebsd-13-1-release
       commands:
           - ls /dev/vboxdrv
-          - echo $${VAGRANT_DIR}
-          - $${VAGRANT_DIR}/run_tests_in_box.sh $${DRONE_WORKSPACE} fish-freebsd-13-1-release
+          - ./vagrant/vagrant_run_in_docker.sh $${BOXNAME}
+      environment: { BOXNAME: fish-freebsd-13-1-release }
