@@ -11,12 +11,12 @@ platform:
     arch: amd64
 
 server:
-    image: docker-20-04
+    image: 120194041
     size: s-2vcpu-2gb-intel # c-4
     region: nyc1
 
 steps:
-    - &step
+    - &docker-step
       name: alpine
       image: ridiculousfish/fish-shell-ci-runner:latest
       volumes:
@@ -30,60 +30,46 @@ steps:
           status:
               - failure
               - success
-    - <<: *step
+    - <<: *docker-step
       name: bionic-asan-clang
       environment: { DOCKERIMAGE: bionic-asan-clang }
-    - <<: *step
+    - <<: *docker-step
       name: bionic-tsan-clang
       environment: { DOCKERIMAGE: bionic-tsan-clang }
-    - <<: *step
+    - <<: *docker-step
       name: bionic-tsan
       environment: { DOCKERIMAGE: bionic-tsan }
-    - <<: *step
+    - <<: *docker-step
       name: bionic
       environment: { DOCKERIMAGE: bionic }
-    - <<: *step
+    - <<: *docker-step
       name: centos7
       environment: { DOCKERIMAGE: centos7 }
-    - <<: *step
+    - <<: *docker-step
       name: centos8
       environment: { DOCKERIMAGE: centos8 }
-    - <<: *step
+    - <<: *docker-step
       name: fedora
       environment: { DOCKERIMAGE: fedora }
-    - <<: *step
+    - <<: *docker-step
       name: focal-32bit
       environment: { DOCKERIMAGE: focal-32bit }
-    - <<: *step
+    - <<: *docker-step
       name: xenial
       environment: { DOCKERIMAGE: xenial }
 
-volumes:
-    - name: dockersock
-      host:
-          path: /var/run/
-
----
-kind: pipeline
-type: digitalocean
-name: run-vagrant-tests
-
-token:
-    from_secret: DO_token
-
-server:
-    image: 120194041 # snapshot ID for fish-ci-virtualbox-1
-    size: s-2vcpu-2gb-intel # c-4
-    region: nyc1
-
-platform:
-    os: linux
-    arch: amd64
-
-steps:
-    - &step
+    - &vagrant-step
       name: freebsd-13-1-release
       commands:
           - ls /dev/vboxdrv
           - ./vagrant/vagrant_run_in_docker.sh $${BOXNAME}
       environment: { BOXNAME: fish-freebsd-13-1-release }
+      when:
+          status:
+              - failure
+              - success
+
+volumes:
+    - name: dockersock
+      host:
+          path: /var/run/
