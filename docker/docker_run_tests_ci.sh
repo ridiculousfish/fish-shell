@@ -16,8 +16,8 @@ set -x
 # Get fish source directory.
 FISH_SRC_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. >/dev/null && pwd)
 
-DOCKER_REGISTRY=${DOCKER_REGISTRY:-ghcr.io/fish-shell/fish-ci}
-DOCKER_IMAGE=${DOCKER_REGISTRY}/${@:$OPTIND:1}
+DOCKER_IMAGE=$1
+test -n "$DOCKER_IMAGE" || usage
 
 echo "Using Docker image: $DOCKER_IMAGE"
 
