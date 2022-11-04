@@ -24,7 +24,7 @@ echo $"Building in $(pwd)"
 envsubst < "${VAGRANT_FISH_SRC_DIR}/vagrant/Vagrantfile.base" > ./Vagrantfile
 
 # Unfortunately multi-line commands appear to fail with vagrant ssh.
-BUILD_CMD='uname -a; set -e; set -x; mkdir build && cd build; cmake -DCMAKE_BUILD_TYPE=Debug /fish-source && make -j 2 && make test'
+BUILD_CMD="uname -a; set -e; set -x; mkdir build && cd build; cmake -DCMAKE_BUILD_TYPE=Debug /fish-source && make -j $(nproc) && make test"
 
 vagrant up
 RES=0
