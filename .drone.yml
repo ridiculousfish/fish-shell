@@ -12,7 +12,7 @@ platform:
 
 server:
     image: 120194041
-    size: s-2vcpu-2gb-intel # c-4
+    size: c-4
     region: nyc1
 
 steps:
