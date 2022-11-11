@@ -51,8 +51,10 @@ env:
 #         - ninja fish_run_tests
 
 linux_arm_task:
-    arm_container: &arm_step
-        image: ghcr.io/fish-shell/fish-ci/focal-arm64
+    matrix:
+        - name:
+          arm_container: &arm_step
+              image: ghcr.io/fish-shell/fish-ci/focal-arm64
 
     tests_script:
         # cirrus at times gives us 32 procs and 2 GB of RAM
