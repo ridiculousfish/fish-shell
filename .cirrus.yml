@@ -52,9 +52,13 @@ env:
 
 linux_arm_task:
     matrix:
-        - name:
+        - name: focal-arm64
           arm_container: &arm_step
               image: ghcr.io/fish-shell/fish-ci/focal-arm64
+        - name: focal-armv7-32bit
+          arm_container:
+              <<: *arm_step
+              image: ghcr.io/fish-shell/fish-ci/focal-armv7-32bit
 
     tests_script:
         # cirrus at times gives us 32 procs and 2 GB of RAM
@@ -64,6 +68,7 @@ linux_arm_task:
         - mkdir build && cd build
         - cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCTEST_PARALLEL_LEVEL=6 ..
         - ninja -j 6 fish fish_tests
+        - file ./fish
         - ninja fish_run_tests
 # freebsd_task:
 #     matrix:
