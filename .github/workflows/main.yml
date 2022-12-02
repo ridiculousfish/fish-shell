@@ -75,7 +75,7 @@ jobs:
       env:
           CC: clang
           CXX: clang++
-          CXXFLAGS: "-fsanitize=address"
+          CXXFLAGS: ""
       run: |
         mkdir build && cd build
         cmake ..
