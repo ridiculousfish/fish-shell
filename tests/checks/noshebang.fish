@@ -9,17 +9,10 @@ cd $testdir
 true >file.fish
 sleep 0.1
 chmod a+x file.fish
-set -g fish_use_posix_spawn 0
-./file.fish
-echo $status
 set -g fish_use_posix_spawn 1
 ./file.fish
 echo $status
 rm file.fish
-#CHECK: 126
-#CHECKERR: exec: {{.*}}{{.*}}
-#CHECKERR: exec: {{.*}}
-
 #CHECK: 126
 #CHECKERR: exec: {{.*}}
 #CHECKERR: exec: {{.*}}
