@@ -138,16 +138,6 @@ else()
   set(CMAKE_SKIPPED_HACK)
 endif()
 
-foreach(LTEST ${LOW_LEVEL_TESTS})
-  add_test(
-    NAME ${LTEST}
-    COMMAND sh ${CMAKE_CURRENT_BINARY_DIR}/tests/test_env.sh
-               ${CMAKE_BINARY_DIR}/fish_tests ${LTEST}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(${LTEST} PROPERTIES SKIP_RETURN_CODE ${SKIP_RETURN_CODE})
-  add_test_target("${LTEST}")
-endforeach(LTEST)
 
 FILE(GLOB FISH_CHECKS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/checks/*.fish)
 foreach(CHECK ${FISH_CHECKS})
@@ -163,15 +153,3 @@ foreach(CHECK ${FISH_CHECKS})
   add_test_target("${CHECK_NAME}")
 endforeach(CHECK)
 
-FILE(GLOB PEXPECTS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/pexpects/*.py)
-foreach(PEXPECT ${PEXPECTS})
-  get_filename_component(PEXPECT ${PEXPECT} NAME)
-  add_test(NAME ${PEXPECT}
-    COMMAND ${CMAKE_SKIPPED_HACK} sh ${CMAKE_CURRENT_BINARY_DIR}/tests/test_driver.sh
-      ${CMAKE_CURRENT_BINARY_DIR}/tests/interactive.fish ${PEXPECT}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests
-  )
-  set_tests_properties(${PEXPECT} PROPERTIES SKIP_RETURN_CODE ${SKIP_RETURN_CODE})
-  set_tests_properties(${PEXPECT} PROPERTIES ENVIRONMENT FISH_FORCE_COLOR=1)
-  add_test_target("${PEXPECT}")
-endforeach(PEXPECT)
