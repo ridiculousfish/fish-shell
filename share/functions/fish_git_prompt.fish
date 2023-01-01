@@ -183,10 +183,15 @@ if string match -q Darwin -- "$(uname)" && type -q xcode-select && type -q xcrun
         command git --version &>/dev/null &
         disown $last_pid &>/dev/null
         function __fish_git_prompt_ready
-            path is "$(xcrun --show-cache-path 2>/dev/null)" || return 1
-            # git is ready, erase the function.
-            functions -e __fish_git_prompt_ready
-            return 0
+            # xcrun creates a 16 byte cache file immediately. Assume the cache is populated if >16 bytes.
+            # Note this also checks for cache file existence.
+            set -l filesize (command stat -f '%z' -- (xcrun --show-cache-path) 2>/dev/null)
+            if test "$filesize" -gt 16 2>/dev/null
+                # git is ready, erase the function.
+                functions -e __fish_git_prompt_ready
+                return 0
+            end
+            return 1
         end
     end
 end
