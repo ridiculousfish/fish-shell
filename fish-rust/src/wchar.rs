@@ -10,6 +10,9 @@ pub use ffi::{wchar_t, wcharz_t};
 pub use widestring::utf32str;
 pub use widestring::{Utf32Str as wstr, Utf32String as WString};
 
+/// Pull in our extensions.
+pub use crate::wchar_ext::{IntoCharIter, WExt};
+
 /// Creates a wstr string slice, like the "L" prefix of C++.
 /// The result is of type wstr.
 /// It is NOT nul-terminated.
@@ -30,9 +33,6 @@ pub(crate) use L;
 /// ```
 /// Note: the resulting string is NOT nul-terminated.
 pub use widestring_suffix::widestrs;
-
-/// Pull in our extensions.
-pub use crate::wchar_ext::{CharPrefixSuffix, WExt};
 
 // These are in the Unicode private-use range. We really shouldn't use this
 // range but have little choice in the matter given how our lexer/parser works.

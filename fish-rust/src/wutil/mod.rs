@@ -1,6 +1,8 @@
+pub mod errors;
 pub mod format;
 pub mod gettext;
-mod wcstoi;
+pub mod wcstod;
+pub mod wcstoi;
 
 use std::io::Write;
 
