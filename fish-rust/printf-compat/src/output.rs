@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use super::{ArgList, Argument, DoubleFormat, Flags, Specifier};
+use super::{ArgList, Argument, DoubleFormat, Flags, Locale, Specifier};
 use crate::{wstr, WString};
 use std::fmt::Write;
 
@@ -82,6 +82,103 @@ fn write_str(
             width as usize,
             prec = precision as usize
         )
+    }
+}
+
+fn apply_locale(input: &mut WString, locale: &Locale, flags: Flags) {
+    // Given that we have formatted a value into a string in a locale-oblivious way, apply a locale to it.
+    // That means inserting thousands separators if needed, and perhaps replacing the decimal point.
+    // We expect to have (optionally) a leading +/-/space.
+    // Note locales are not used for hex output.
+
+    // Replace up to one decimal point if needed.
+    if locale.decimal_point != '.' {
+        for c in input.as_char_slice_mut().iter_mut() {
+            if *c == '.' {
+                *c = locale.decimal_point;
+                break;
+            }
+        }
+    }
+
+    // Apply thousands separators if needed.
+    if flags.contains(Flags::THOUSANDS_GROUPING) && locale.thousands_sep.is_some() {
+        let thousands_sep = locale.thousands_sep.unwrap();
+
+        // Find the first sequence of digits.
+        let chars = input.as_char_slice();
+        let mut digits_start = 0;
+        while digits_start < chars.len() && !chars[digits_start].is_ascii_digit() {
+            digits_start += 1;
+        }
+
+        // Find the one past the last digit.
+        let mut digits_end = digits_start;
+        while digits_end < chars.len() && chars[digits_end].is_ascii_digit() {
+            digits_end += 1;
+        }
+
+        let digits = &chars[digits_start..digits_end];
+        let mut digits_with_sep = WString::with_capacity(digits.len() + digits.len() / 3);
+
+        // Go right to left; we construct in reverse.
+        let mut group_iter = locale.digit_group_iter();
+        let mut remaining_in_group = group_iter.next();
+        for digit in digits.iter().rev() {
+            assert!(digit.is_ascii_digit());
+            if remaining_in_group == 0 {
+                digits_with_sep.push(thousands_sep);
+                remaining_in_group = group_iter.next();
+            }
+            remaining_in_group -= 1;
+            digits_with_sep.push(*digit);
+        }
+
+        // Reverse and replace the given range.
+        digits_with_sep.as_char_slice_mut().reverse();
+        input.replace_range(digits_start..digits_end, &digits_with_sep);
+    }
+}
+
+// Insert the given character into the string the given number of times at the given index.
+fn insert_chars(input: &mut WString, idx: usize, c: char, count: usize) {
+    // TODO: we can avoid a temporary if we use unsafe.
+    let tmp = WString::from_chars(std::iter::repeat(c).take(count).collect::<Vec<_>>());
+    input.insert_utfstr(idx, &tmp);
+}
+
+fn apply_padding(input: &mut WString, width: u64, flags: Flags) {
+    // Given that we have have formatted a string and applied its locale bits,
+    // pad the string to at least the given width, respecting the flags.
+    // There are three possible padding types:
+    //   1. Pad on right with spaces.
+    //   2. Pad on left with spaces.
+    //   3. Pad on left with zeros, inserting them before any +/-/space sign.
+    let padding_req = width.saturating_sub(input.as_char_slice().len() as u64);
+    if padding_req == 0 {
+        return;
+    }
+
+    // Limit our padding to usize::MAX.
+    let padding_req = padding_req.min(usize::MAX as u64) as usize;
+
+    // Handle left-or-right alignment with spaces.
+    // Left-adjust takes precedence over zero-padding.
+    if flags.contains(Flags::LEFT_ALIGN) {
+        // Left align, insert at end.
+        insert_chars(input, input.as_char_slice().len(), ' ', padding_req);
+    } else if !flags.contains(Flags::PREPEND_ZERO) {
+        // Right align, insert at start.
+        insert_chars(input, 0, ' ', padding_req);
+    } else {
+        // Zero pad, insert before any +/-/space sign.
+        let chars = input.as_char_slice();
+        let sign_idx = if !chars.is_empty() && matches!(chars[0], '+' | '-' | ' ') {
+            1
+        } else {
+            0
+        };
+        insert_chars(input, sign_idx, '0', padding_req);
     }
 }
 
@@ -511,15 +608,16 @@ fn write_1_arg(arg: Argument, w: &mut impl WideWrite) -> fmt::Result {
         Specifier::Double { value, format } => {
             match format {
                 any_format if !value.is_finite() => {
+                    // Our double is +/- inf, or nan.
                     // C produces nan/inf and NAN/INF for %f and %F, respectively.
                     // Rust gives us NaN and inf.
-                    // This matters if we are not finite.
                     format_non_finite(w, value, flags, width, any_format.is_upper())
                 }
-                DoubleFormat::Normal
-                | DoubleFormat::Hex
-                | DoubleFormat::UpperNormal
-                | DoubleFormat::UpperHex => {
+                DoubleFormat::Hex | DoubleFormat::UpperNormal | DoubleFormat::UpperHex => {
+                    define_numeric!(w, value, flags, width, precision.unwrap_or(6))
+                }
+
+                DoubleFormat::Normal => {
                     define_numeric!(w, value, flags, width, precision.unwrap_or(6))
                 }
 
@@ -553,6 +651,29 @@ fn write_1_arg(arg: Argument, w: &mut impl WideWrite) -> fmt::Result {
     }
 }
 
+/// Write a single argument to the writer, respecting the given locale.
+fn write_1_arg_locale(arg: Argument, locale: &Locale, w: &mut impl WideWrite) -> fmt::Result {
+    // Rust has no facility for non-period decimal point, or thousands grouping.
+    let needs_thousands_sep = locale.thousands_sep.is_some()
+        && arg.flags.contains(Flags::THOUSANDS_GROUPING)
+        && arg.specifier.may_use_thousands_separator();
+    let needs_decimal_sep = arg.specifier.may_use_decimal_point() && locale.decimal_point != '.';
+    if !needs_thousands_sep && !needs_decimal_sep {
+        // We do not need special locale handling; Rust's "native" formatting is sufficient.
+        write_1_arg(arg, w)
+    } else {
+        // Rust's "native" formatting is not sufficient.
+        // Create a fake argument without any width-padding, fix up its locale bits, then pad it.
+        let mut tmp_str = WString::new();
+        let mut tmp_arg = arg.clone();
+        tmp_arg.width = 0;
+        write_1_arg(tmp_arg, &mut tmp_str)?;
+        apply_locale(&mut tmp_str, locale, arg.flags);
+        apply_padding(&mut tmp_str, arg.width, arg.flags);
+        w.write_wstr(&tmp_str)
+    }
+}
+
 /// Apply some special cases to the given argument, to avoid replicating this logic.
 fn munge_arg(mut arg: Argument) -> Argument {
     // "If a precision is given with a numeric conversion (d, i, o, u, x, and X), the 0 flag is ignored."
@@ -578,8 +699,11 @@ fn munge_arg(mut arg: Argument) -> Argument {
 /// - same for `a`/`A` (hex floating point)
 /// - the `n` format specifier, [`Specifier::WriteBytesWritten`], is not
 ///   implemented and will cause an error if encountered.
-pub fn wide_write(w: &mut impl WideWrite) -> impl FnMut(Argument) -> fmt::Result + '_ {
-    move |arg| write_1_arg(munge_arg(arg), w)
+pub fn wide_write<'a>(
+    w: &'a mut impl WideWrite,
+    locale: &'a Locale,
+) -> impl FnMut(Argument) -> fmt::Result + 'a {
+    move |arg| write_1_arg_locale(munge_arg(arg), locale, w)
 }
 
 // Adapts `fmt::Write` to `WideWrite`.
@@ -606,8 +730,11 @@ where
 }
 
 /// Write to a struct that implements [`fmt::Write`].
-pub fn fmt_write(w: &mut impl fmt::Write) -> impl FnMut(Argument) -> fmt::Result + '_ {
-    move |arg| write_1_arg(munge_arg(arg), &mut FmtWrite(w))
+pub fn fmt_write<'a>(
+    w: &'a mut impl fmt::Write,
+    locale: &'a Locale,
+) -> impl FnMut(Argument) -> fmt::Result + 'a {
+    move |arg| write_1_arg_locale(munge_arg(arg), locale, &mut FmtWrite(w))
 }
 
 /// Returns an object that implements [`Display`][fmt::Display] for safely
@@ -615,20 +742,33 @@ pub fn fmt_write(w: &mut impl fmt::Write) -> impl FnMut(Argument) -> fmt::Result
 /// [`fmt_write`], but may be the only option.
 ///
 /// This shares the same caveats as [`fmt_write`].
-pub unsafe fn display<'a, 'b>(format: &'a wstr, args: ArgList<'b>) -> ArgListDisplay<'a, 'b> {
-    ArgListDisplay { format, args }
+pub unsafe fn display<'a, 'b, 'c>(
+    format: &'a wstr,
+    locale: &'b Locale,
+    args: ArgList<'c>,
+) -> ArgListDisplay<'a, 'b, 'c> {
+    ArgListDisplay {
+        format,
+        locale,
+        args,
+    }
 }
 
 /// Helper struct created by [`display`] for safely printing `printf`-style
 /// formatting with [`format!`] and `{}`. This can be used with anything that
 /// uses [`format_args!`], such as [`println!`] or the `log` crate.
-pub struct ArgListDisplay<'a, 'b> {
+pub struct ArgListDisplay<'a, 'b, 'c> {
     format: &'a wstr,
-    args: ArgList<'b>,
+    locale: &'b Locale,
+    args: ArgList<'c>,
 }
 
-impl<'a, 'b> fmt::Display for ArgListDisplay<'a, 'b> {
+impl<'a, 'b, 'c> fmt::Display for ArgListDisplay<'a, 'b, 'c> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        super::format(self.format, &mut self.args.clone(), fmt_write(f))
+        super::format(
+            self.format,
+            &mut self.args.clone(),
+            fmt_write(f, &self.locale),
+        )
     }
 }

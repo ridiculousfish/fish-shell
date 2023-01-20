@@ -4,6 +4,9 @@
 #![allow(clippy::needless_return)]
 #![allow(clippy::manual_is_ascii_check)]
 
+#[macro_use]
+extern crate lazy_static;
+
 mod common;
 mod fd_monitor;
 mod fd_readable_set;
@@ -18,6 +21,7 @@ mod ffi_init;
 mod ffi_tests;
 mod flog;
 mod future_feature_flags;
+mod locale;
 mod nix;
 mod parse_constants;
 mod redirection;

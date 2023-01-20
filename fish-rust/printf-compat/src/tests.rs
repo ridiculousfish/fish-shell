@@ -1,11 +1,12 @@
 use crate::args::{Arg, ArgList, ToArg};
+use crate::locale::{Locale, C_LOCALE, EN_US_LOCALE};
 use crate::wstr;
 use widestring::{utf32str, Utf32Str};
 
-fn rust_fmt<'a>(str: &wstr, args: &[Arg<'a>]) -> String {
+fn rust_fmt<'a>(str: &wstr, locale: &Locale, args: &[Arg<'a>]) -> String {
     let mut s = String::new();
     let mut args = ArgList::new(args);
-    let res = crate::format(str, &mut args, crate::output::fmt_write(&mut s));
+    let res = crate::format(str, &mut args, crate::output::fmt_write(&mut s, locale));
     if res.is_err() {
         panic!("Formatting failed");
     }
@@ -15,9 +16,15 @@ fn rust_fmt<'a>(str: &wstr, args: &[Arg<'a>]) -> String {
     s
 }
 
+macro_rules! assert_eq_fmt_locale {
+    ($expected: expr, $locale: expr, $format:literal $(, $p:expr)* $(,)?) => {
+        assert_eq!($expected, rust_fmt(utf32str!($format), $locale, &[$($p.to_arg()),*]))
+    };
+}
+
 macro_rules! assert_eq_fmt {
-    ($expected: expr, $format:literal $(, $p:expr)*) => {
-        assert_eq!($expected,  rust_fmt(utf32str!($format), &[$($p.to_arg()),*]))
+    ($expected: expr, $format:literal $(, $p:expr)* $(,)?) => {
+        assert_eq_fmt_locale!($expected, &crate::locale::C_LOCALE, $format $(, $p)*)
     };
 }
 
@@ -260,6 +267,7 @@ fn test_exhaustive(rust_fmt: &Utf32Str, c_fmt: *const i8) {
     let mut rust_str = String::with_capacity(128);
     let mut c_storage = [0u8; 128];
     let c_storage_ptr = c_storage.as_mut_ptr() as *mut i8;
+    let locale = &C_LOCALE;
 
     for i in 0..=u32::MAX {
         if i % 1000000 == 0 {
@@ -272,7 +280,11 @@ fn test_exhaustive(rust_fmt: &Utf32Str, c_fmt: *const i8) {
             let mut args = ArgList::new(argv);
 
             rust_str.clear();
-            let _ = crate::format(rust_fmt, &mut args, crate::output::fmt_write(&mut rust_str));
+            let _ = crate::format(
+                rust_fmt,
+                &mut args,
+                crate::output::fmt_write(&mut rust_str, locale),
+            );
 
             let printf_str = unsafe {
                 let len = libc::snprintf(c_storage_ptr, c_storage.len(), c_fmt, preci, ff);
@@ -334,17 +346,43 @@ fn test_str_concat() {
 #[test]
 #[should_panic]
 fn test_bad_format() {
-    rust_fmt(utf32str!("%s"), &[123.to_arg()]);
+    rust_fmt(utf32str!("%s"), &C_LOCALE, &[123.to_arg()]);
 }
 
 #[test]
 #[should_panic]
 fn test_missing_arg() {
-    rust_fmt(utf32str!("%s-%s"), &["abc".to_arg()]);
+    rust_fmt(utf32str!("%s-%s"), &C_LOCALE, &["abc".to_arg()]);
 }
 
 #[test]
 #[should_panic]
 fn test_too_many_args() {
-    rust_fmt(utf32str!("%d"), &[1.to_arg(), 2.to_arg(), 3.to_arg()]);
+    rust_fmt(
+        utf32str!("%d"),
+        &C_LOCALE,
+        &[1.to_arg(), 2.to_arg(), 3.to_arg()],
+    );
+}
+
+#[test]
+fn test_locale() {
+    let mut locale = C_LOCALE;
+    locale.decimal_point = ',';
+    locale.thousands_sep = Some('!');
+    locale.grouping = [3, 1, 0, 0];
+
+    assert_eq_fmt_locale!("-46,380000", &locale, "%f", -46.38);
+    assert_eq_fmt_locale!("00000001,200", &locale, "%012.3f", 1.2);
+    assert_eq_fmt_locale!("1234", &locale, "%d", 1234);
+
+    assert_eq_fmt_locale!("12345!6!789", &locale, "%'d", 123456789);
+
+    // Padding does NOT use thousands sep.
+    assert_eq_fmt_locale!(
+        "000000000000000001,234,565,678",
+        &EN_US_LOCALE,
+        "%'0.30d",
+        1234565678,
+    );
 }

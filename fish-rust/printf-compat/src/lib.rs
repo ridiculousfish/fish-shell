@@ -6,12 +6,15 @@ extern crate alloc;
 
 use core::fmt;
 
-mod args;
+pub mod args;
+pub mod locale;
 pub mod output;
 mod parser;
+pub mod printf;
 #[cfg(test)]
 mod tests;
 use argument::*;
+pub use locale::{Locale, C_LOCALE};
 pub use parser::format;
 
 pub use args::ArgList;
@@ -301,6 +304,26 @@ pub mod argument {
     }
 
     impl Specifier<'_> {
+        /// Return whether this specifier may use a decimal point.
+        pub fn may_use_decimal_point(&self) -> bool {
+            matches!(self, Specifier::Double { .. })
+        }
+
+        /// Return whether this specifier may use thousands separators.
+        pub fn may_use_thousands_separator(&self) -> bool {
+            match self {
+                Specifier::Int(_) | Specifier::Uint(_) | Specifier::Double { .. } => true,
+                Specifier::Percent
+                | Specifier::Octal(_)
+                | Specifier::Literals(_)
+                | Specifier::String(_)
+                | Specifier::Char(_)
+                | Specifier::Hex(_)
+                | Specifier::UpperHex(_)
+                | Specifier::Pointer(_) => false,
+            }
+        }
+
         /// Return whether we are integer-numeric (d, i, o, u, x, X).
         pub fn is_int_numeric(&self) -> bool {
             match self {
