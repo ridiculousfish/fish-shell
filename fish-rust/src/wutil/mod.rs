@@ -3,6 +3,7 @@ pub mod gettext;
 pub mod printf;
 pub mod wcstod;
 pub mod wcstoi;
+pub mod wutil;
 
 pub(crate) use gettext::{wgettext, wgettext_fmt};
 pub(crate) use printf::sprintf;
@@ -24,3 +25,4 @@ pub fn perror(s: &str) {
     let _ = stderr.write_all(slice);
     let _ = stderr.write_all(b"\n");
 }
+pub use wutil::*;

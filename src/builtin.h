@@ -116,5 +116,6 @@ enum RustBuiltin : int32_t {
     Random,
     Return,
     Wait,
+    Printf,
 };
 #endif
