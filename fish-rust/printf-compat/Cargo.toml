@@ -1,0 +1,17 @@
+[package]
+name = "printf-compat"
+description = "printf reimplemented in Rust"
+version = "0.1.1"
+repository = "https://github.com/lights0123/printf-compat"
+authors = ["lights0123 <developer@lights0123.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+
+[dependencies]
+bitflags = "1.2.1"
+itertools = { version = "0.9.0", default-features = false }
+
+[features]
+default = ["std"]
+std = []
