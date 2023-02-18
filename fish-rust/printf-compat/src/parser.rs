@@ -1,23 +1,22 @@
-use core::ffi::*;
-
-use crate::{Argument, DoubleFormat, Flags, SignedInt, Specifier, UnsignedInt};
+use super::{ArgList, Argument, DoubleFormat, Flags, SignedInt, Specifier, UnsignedInt};
+use crate::wstr;
 use itertools::Itertools;
 
-fn next_char(sub: &[u8]) -> &[u8] {
+fn next_char(sub: &[char]) -> &[char] {
     sub.get(1..).unwrap_or(&[])
 }
 
 /// Parse the [Flags field](https://en.wikipedia.org/wiki/Printf_format_string#Flags_field).
-fn parse_flags(mut sub: &[u8]) -> (Flags, &[u8]) {
+fn parse_flags(mut sub: &[char]) -> (Flags, &[char]) {
     let mut flags: Flags = Flags::empty();
     while let Some(&ch) = sub.get(0) {
         flags.insert(match ch {
-            b'-' => Flags::LEFT_ALIGN,
-            b'+' => Flags::PREPEND_PLUS,
-            b' ' => Flags::PREPEND_SPACE,
-            b'0' => Flags::PREPEND_ZERO,
-            b'\'' => Flags::THOUSANDS_GROUPING,
-            b'#' => Flags::ALTERNATE_FORM,
+            '-' => Flags::LEFT_ALIGN,
+            '+' => Flags::PREPEND_PLUS,
+            ' ' => Flags::PREPEND_SPACE,
+            '0' => Flags::PREPEND_ZERO,
+            '\'' => Flags::THOUSANDS_GROUPING,
+            '#' => Flags::ALTERNATE_FORM,
             _ => break,
         });
         sub = next_char(sub)
@@ -26,15 +25,15 @@ fn parse_flags(mut sub: &[u8]) -> (Flags, &[u8]) {
 }
 
 /// Parse the [Width field](https://en.wikipedia.org/wiki/Printf_format_string#Width_field).
-unsafe fn parse_width<'a>(mut sub: &'a [u8], args: &mut VaList) -> (c_int, &'a [u8]) {
-    let mut width: c_int = 0;
-    if sub.get(0) == Some(&b'*') {
-        return (args.arg(), next_char(sub));
+fn parse_width<'a>(mut sub: &'a [char], args: &mut ArgList) -> (u64, &'a [char]) {
+    let mut width: u64 = 0;
+    if sub.get(0) == Some(&'*') {
+        return (args.arg_u64(), next_char(sub));
     }
     while let Some(&ch) = sub.get(0) {
         match ch {
             // https://rust-malaysia.github.io/code/2020/07/11/faster-integer-parsing.html#the-bytes-solution
-            b'0'..=b'9' => width = width * 10 + (ch & 0x0f) as c_int,
+            '0'..='9' => width = width * 10 + ((ch as u64) & 0x0f),
             _ => break,
         }
         sub = next_char(sub);
@@ -43,9 +42,9 @@ unsafe fn parse_width<'a>(mut sub: &'a [u8], args: &mut VaList) -> (c_int, &'a [
 }
 
 /// Parse the [Precision field](https://en.wikipedia.org/wiki/Printf_format_string#Precision_field).
-unsafe fn parse_precision<'a>(sub: &'a [u8], args: &mut VaList) -> (Option<c_int>, &'a [u8]) {
+fn parse_precision<'a>(sub: &'a [char], args: &mut ArgList) -> (Option<u64>, &'a [char]) {
     match sub.get(0) {
-        Some(&b'.') => {
+        Some(&'.') => {
             let (prec, sub) = parse_width(next_char(sub), args);
             (Some(prec), sub)
         }
@@ -71,59 +70,55 @@ enum Length {
 }
 
 impl Length {
-    unsafe fn parse_signed(self, args: &mut VaList) -> SignedInt {
+    fn parse_signed(self, args: &mut ArgList) -> SignedInt {
         match self {
-            Length::Int => SignedInt::Int(args.arg()),
-            Length::Char => SignedInt::Char(args.arg()),
-            Length::Short => SignedInt::Short(args.arg()),
-            Length::Long => SignedInt::Long(args.arg()),
-            Length::LongLong => SignedInt::LongLong(args.arg()),
+            Length::Int => SignedInt::Int(args.arg_i32()),
+            Length::Char => SignedInt::Char(args.arg_i8()),
+            Length::Short => SignedInt::Short(args.arg_i16()),
+            Length::Long => SignedInt::Long(args.arg_i64()),
+            Length::LongLong => SignedInt::LongLong(args.arg_i64()),
             // for some reason, these exist as different options, yet produce the same output
-            Length::Usize | Length::Isize => SignedInt::Isize(args.arg()),
+            Length::Usize | Length::Isize => SignedInt::Isize(args.arg_i64()),
         }
     }
-    unsafe fn parse_unsigned(self, args: &mut VaList) -> UnsignedInt {
+
+    fn parse_unsigned(self, args: &mut ArgList) -> UnsignedInt {
         match self {
-            Length::Int => UnsignedInt::Int(args.arg()),
-            Length::Char => UnsignedInt::Char(args.arg()),
-            Length::Short => UnsignedInt::Short(args.arg()),
-            Length::Long => UnsignedInt::Long(args.arg()),
-            Length::LongLong => UnsignedInt::LongLong(args.arg()),
+            Length::Int => UnsignedInt::Int(args.arg_u32()),
+            Length::Char => UnsignedInt::Char(args.arg_u8()),
+            Length::Short => UnsignedInt::Short(args.arg_u16()),
+            Length::Long => UnsignedInt::Long(args.arg_u64()),
+            Length::LongLong => UnsignedInt::LongLong(args.arg_u64()),
             // for some reason, these exist as different options, yet produce the same output
-            Length::Usize | Length::Isize => UnsignedInt::Isize(args.arg()),
+            Length::Usize | Length::Isize => UnsignedInt::Isize(args.arg_u64()),
         }
     }
 }
 
 /// Parse the [Length field](https://en.wikipedia.org/wiki/Printf_format_string#Length_field).
-fn parse_length(sub: &[u8]) -> (Length, &[u8]) {
+fn parse_length(sub: &[char]) -> (Length, &[char]) {
     match sub.get(0).copied() {
-        Some(b'h') => match sub.get(1).copied() {
-            Some(b'h') => (Length::Char, sub.get(2..).unwrap_or(&[])),
+        Some('h') => match sub.get(1).copied() {
+            Some('h') => (Length::Char, sub.get(2..).unwrap_or(&[])),
             _ => (Length::Short, next_char(sub)),
         },
-        Some(b'l') => match sub.get(1).copied() {
-            Some(b'l') => (Length::LongLong, sub.get(2..).unwrap_or(&[])),
+        Some('l') => match sub.get(1).copied() {
+            Some('l') => (Length::LongLong, sub.get(2..).unwrap_or(&[])),
             _ => (Length::Long, next_char(sub)),
         },
-        Some(b'z') => (Length::Usize, next_char(sub)),
-        Some(b't') => (Length::Isize, next_char(sub)),
+        Some('z') => (Length::Usize, next_char(sub)),
+        Some('t') => (Length::Isize, next_char(sub)),
         _ => (Length::Int, sub),
     }
 }
 
 /// Parse a format parameter and write it somewhere.
-///
-/// # Safety
-///
-/// [`VaList`]s are *very* unsafe. The passed `format` and `args` parameter must be a valid [`printf` format string](http://www.cplusplus.com/reference/cstdio/printf/).
-pub unsafe fn format(
-    format: *const c_char,
-    mut args: VaList,
-    mut handler: impl FnMut(Argument) -> c_int,
-) -> c_int {
-    let str = CStr::from_ptr(format).to_bytes();
-    let mut iter = str.split(|&c| c == b'%');
+pub fn format<'a, 'b>(
+    format: &'a wstr,
+    args: &mut ArgList<'b>,
+    mut handler: impl FnMut(Argument) -> isize,
+) -> isize {
+    let mut iter = format.as_char_slice().split(|&c| c == '%');
     let mut written = 0;
 
     macro_rules! err {
@@ -132,12 +127,12 @@ pub unsafe fn format(
             if res < 0 {
                 return -1;
             } else {
-                written += res;
+                written += res as isize;
             }
         }};
     }
     if let Some(begin) = iter.next() {
-        err!(handler(Specifier::Bytes(begin).into()));
+        err!(handler(Specifier::Literals(begin).into()));
     }
     let mut last_was_percent = false;
     for (sub, next) in iter.map(Some).chain(core::iter::once(None)).tuple_windows() {
@@ -146,55 +141,55 @@ pub unsafe fn format(
             None => break,
         };
         if last_was_percent {
-            err!(handler(Specifier::Bytes(sub).into()));
+            err!(handler(Specifier::Literals(sub).into()));
             last_was_percent = false;
             continue;
         }
         let (flags, sub) = parse_flags(sub);
-        let (width, sub) = parse_width(sub, &mut args);
-        let (precision, sub) = parse_precision(sub, &mut args);
+        let (width, sub) = parse_width(sub, args);
+        let (precision, sub) = parse_precision(sub, args);
         let (length, sub) = parse_length(sub);
         let ch = sub
             .get(0)
-            .unwrap_or(if next.is_some() { &b'%' } else { &0 });
+            .unwrap_or(if next.is_some() { &'%' } else { &'\0' });
         err!(handler(Argument {
             flags,
             width,
             precision,
             specifier: match ch {
-                b'%' => {
+                '%' => {
                     last_was_percent = true;
                     Specifier::Percent
                 }
-                b'd' | b'i' => Specifier::Int(length.parse_signed(&mut args)),
-                b'x' => Specifier::Hex(length.parse_unsigned(&mut args)),
-                b'X' => Specifier::UpperHex(length.parse_unsigned(&mut args)),
-                b'u' => Specifier::Uint(length.parse_unsigned(&mut args)),
-                b'o' => Specifier::Octal(length.parse_unsigned(&mut args)),
-                b'f' | b'F' => Specifier::Double {
-                    value: args.arg(),
+                'd' | 'i' => Specifier::Int(length.parse_signed(args)),
+                'x' => Specifier::Hex(length.parse_unsigned(args)),
+                'X' => Specifier::UpperHex(length.parse_unsigned(args)),
+                'u' => Specifier::Uint(length.parse_unsigned(args)),
+                'o' => Specifier::Octal(length.parse_unsigned(args)),
+                'f' | 'F' => Specifier::Double {
+                    value: args.arg_f64(),
                     format: DoubleFormat::Normal.set_upper(ch.is_ascii_uppercase()),
                 },
-                b'e' | b'E' => Specifier::Double {
-                    value: args.arg(),
+                'e' | 'E' => Specifier::Double {
+                    value: args.arg_f64(),
                     format: DoubleFormat::Scientific.set_upper(ch.is_ascii_uppercase()),
                 },
-                b'g' | b'G' => Specifier::Double {
-                    value: args.arg(),
+                'g' | 'G' => Specifier::Double {
+                    value: args.arg_f64(),
                     format: DoubleFormat::Auto.set_upper(ch.is_ascii_uppercase()),
                 },
-                b'a' | b'A' => Specifier::Double {
-                    value: args.arg(),
+                'a' | 'A' => Specifier::Double {
+                    value: args.arg_f64(),
                     format: DoubleFormat::Hex.set_upper(ch.is_ascii_uppercase()),
                 },
-                b's' => Specifier::String(CStr::from_ptr(args.arg())),
-                b'c' => Specifier::Char(args.arg()),
-                b'p' => Specifier::Pointer(args.arg()),
-                b'n' => Specifier::WriteBytesWritten(written, args.arg()),
+                's' => Specifier::String(args.arg_str()),
+                'c' => Specifier::Char(args.arg_c()),
+                'p' => Specifier::Pointer(args.arg_p()),
+                //'n' => Specifier::WriteBytesWritten(written, args.arg()),
                 _ => return -1,
             },
         }));
-        err!(handler(Specifier::Bytes(next_char(sub)).into()));
+        err!(handler(Specifier::Literals(next_char(sub)).into()));
     }
     written
 }

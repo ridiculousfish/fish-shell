@@ -11,6 +11,10 @@ readme = "README.md"
 [dependencies]
 bitflags = "1.2.1"
 itertools = { version = "0.9.0", default-features = false }
+widestring = "1.0.2"
+
+[dev-dependencies]
+libc = "0.2"
 
 [features]
 default = ["std"]
