@@ -7,7 +7,7 @@ use crate::builtins::shared::{
 use crate::ffi::parser_t;
 use crate::wchar::{wstr, L};
 use crate::wgetopt::{wgetopter_t, wopt, woption, woption_argument_t};
-use crate::wutil::{self, fish_wcstoi_radix_all, format::printf::sprintf, wgettext_fmt};
+use crate::wutil::{self, fish_wcstoi_radix_all, sprintf, wgettext_fmt};
 use num_traits::PrimInt;
 use once_cell::sync::Lazy;
 use rand::rngs::SmallRng;
@@ -170,6 +170,6 @@ pub fn random(
         .and_then(|x| x.try_into().ok())
         .unwrap();
 
-    streams.out.append(sprintf!(L!("%d\n"), result));
+    streams.out.append(sprintf!(L!("%lld\n"), result));
     return STATUS_CMD_OK;
 }

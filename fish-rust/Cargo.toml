@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 widestring-suffix = { path = "./widestring-suffix/" }
+printf-compat = { path = "./printf-compat/" }
 
 autocxx = "0.23.1"
 cxx = "1.0"
