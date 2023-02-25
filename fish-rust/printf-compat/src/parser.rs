@@ -32,10 +32,11 @@ fn parse_width<'a>(mut sub: &'a [char], args: &mut ArgList) -> (u64, &'a [char])
         return (args.arg_u64(), next_char(sub));
     }
     while let Some(&ch) = sub.get(0) {
-        match ch {
-            // https://rust-malaysia.github.io/code/2020/07/11/faster-integer-parsing.html#the-bytes-solution
-            '0'..='9' => width = width * 10 + ((ch as u64) & 0x0f),
-            _ => break,
+        if let Some(d) = ch.to_digit(10) {
+            // TODO-RUST: handle overflow.
+            width = width * 10 + d as u64;
+        } else {
+            break;
         }
         sub = next_char(sub);
     }

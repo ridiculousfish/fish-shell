@@ -299,4 +299,23 @@ pub mod argument {
         // `n`
         //WriteBytesWritten(c_int, *const c_int),
     }
+
+    impl Specifier<'_> {
+        /// Return whether we are integer-numeric (d, i, o, u, x, X).
+        pub fn is_int_numeric(&self) -> bool {
+            match self {
+                Specifier::Int(_)
+                | Specifier::Uint(_)
+                | Specifier::Octal(_)
+                | Specifier::Hex(_)
+                | Specifier::UpperHex(_) => true,
+                Specifier::Percent
+                | Specifier::Double { .. }
+                | Specifier::Literals(_)
+                | Specifier::String(_)
+                | Specifier::Char(_)
+                | Specifier::Pointer(_) => false,
+            }
+        }
+    }
 }

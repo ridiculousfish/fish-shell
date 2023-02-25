@@ -201,8 +201,10 @@ fn test_int_2() {
     assert_eq_fmt!("                    1234565678", "%30d", 1234565678);
     assert_eq_fmt!("000000000000000000001234565678", "%030d", 1234565678);
     assert_eq_fmt!("          00000000001234565678", "%30.20d", 1234565678);
-    // Here we specify both a precision and request zero-padding; the zero-padding is ignored (!).
+    // Here we specify both a precision and request zero-padding.
+    // "If a precision is given with a numeric conversion (d, i, o, u, x, and X), the 0 flag is ignored."
     assert_eq_fmt!("          00000000001234565678", "%030.20d", 1234565678);
+    assert_eq_fmt!("                    1234565678", "%030.0d", 1234565678);
 }
 
 #[test]
@@ -245,6 +247,9 @@ fn test_float2() {
 
     assert_eq_fmt!("0", "%g", 0.0);
     assert_eq_fmt!("0", "%G", 0.0);
+
+    assert_eq_fmt!("    1234565678.000000000000000", "%30.15f", 1234565678.0);
+    assert_eq_fmt!("00001234565678.000000000000000", "%030.15f", 1234565678.0);
 }
 
 fn test_exhaustive(rust_fmt: &Utf32Str, c_fmt: *const i8) {
@@ -311,6 +316,14 @@ fn test_str2() {
         "FOO"
     );
     assert_eq_fmt!("test char ~", "test char %c", '~');
+
+    // Precision gives the maximum number of characters to print from a string.
+    assert_eq_fmt!("", "%.0s", "test");
+    assert_eq_fmt!("t", "%.1s", "test");
+    assert_eq_fmt!("tes", "%.3s", "test");
+    assert_eq_fmt!("  tes", "%5.3s", "test");
+    assert_eq_fmt!("test", "%.4s", "test");
+    assert_eq_fmt!("test", "%.100s", "test");
 }
 
 #[test]

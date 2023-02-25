@@ -553,6 +553,15 @@ fn write_1_arg(arg: Argument, w: &mut impl WideWrite) -> fmt::Result {
     }
 }
 
+/// Apply some special cases to the given argument, to avoid replicating this logic.
+fn munge_arg(mut arg: Argument) -> Argument {
+    // "If a precision is given with a numeric conversion (d, i, o, u, x, and X), the 0 flag is ignored."
+    if arg.specifier.is_int_numeric() && arg.precision.is_some() {
+        arg.flags.remove(Flags::PREPEND_ZERO);
+    }
+    arg
+}
+
 /// Write to a struct that implements [`WideWrite`].
 ///
 /// # Differences
@@ -570,7 +579,7 @@ fn write_1_arg(arg: Argument, w: &mut impl WideWrite) -> fmt::Result {
 /// - the `n` format specifier, [`Specifier::WriteBytesWritten`], is not
 ///   implemented and will cause an error if encountered.
 pub fn wide_write(w: &mut impl WideWrite) -> impl FnMut(Argument) -> fmt::Result + '_ {
-    move |arg| write_1_arg(arg, w)
+    move |arg| write_1_arg(munge_arg(arg), w)
 }
 
 // Adapts `fmt::Write` to `WideWrite`.
@@ -598,7 +607,7 @@ where
 
 /// Write to a struct that implements [`fmt::Write`].
 pub fn fmt_write(w: &mut impl fmt::Write) -> impl FnMut(Argument) -> fmt::Result + '_ {
-    move |arg| write_1_arg(arg, &mut FmtWrite(w))
+    move |arg| write_1_arg(munge_arg(arg), &mut FmtWrite(w))
 }
 
 /// Returns an object that implements [`Display`][fmt::Display] for safely
