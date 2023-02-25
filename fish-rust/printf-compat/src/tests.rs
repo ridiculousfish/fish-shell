@@ -5,8 +5,10 @@ use widestring::{utf32str, Utf32Str};
 fn rust_fmt<'a>(str: &wstr, args: &[Arg<'a>]) -> String {
     let mut s = String::new();
     let mut args = ArgList::new(args);
-    let bytes_written = crate::format(str, &mut args, crate::output::fmt_write(&mut s));
-    assert!(bytes_written >= 0);
+    let res = crate::format(str, &mut args, crate::output::fmt_write(&mut s));
+    if res.is_err() {
+        panic!("Formatting failed");
+    }
     if args.remaining() > 0 {
         panic!("too many args");
     }
@@ -265,7 +267,7 @@ fn test_exhaustive(rust_fmt: &Utf32Str, c_fmt: *const i8) {
             let mut args = ArgList::new(argv);
 
             rust_str.clear();
-            crate::format(rust_fmt, &mut args, crate::output::fmt_write(&mut rust_str));
+            let _ = crate::format(rust_fmt, &mut args, crate::output::fmt_write(&mut rust_str));
 
             let printf_str = unsafe {
                 let len = libc::snprintf(c_storage_ptr, c_storage.len(), c_fmt, preci, ff);

@@ -1,11 +1,9 @@
 //! Various ways to output formatting data.
 
-use core::cell::Cell;
 use core::fmt;
 
 use super::{ArgList, Argument, DoubleFormat, Flags, Specifier};
 use crate::{wstr, WString};
-use std::convert::TryInto;
 use std::fmt::Write;
 
 /// Adapter for implementing `fmt::Write` for `WideWrite`, avoiding orphan rule.
@@ -44,30 +42,18 @@ impl WideWrite for WString {
     }
 }
 
-/// A WideWrite which does nothing.
-struct NullWriter;
+/// A Writer which counts how many chars are written.
+struct WriteCounter(usize);
 
-impl WideWrite for NullWriter {
-    fn write_wstr(&mut self, _s: &wstr) -> fmt::Result {
-        Ok(())
-    }
-
-    fn write_str(&mut self, _s: &str) -> fmt::Result {
-        Ok(())
-    }
-}
-
-struct WriteCounter<'a, T: WideWrite>(&'a mut T, usize);
-
-impl<'a, T: WideWrite> WideWrite for WriteCounter<'a, T> {
+impl WideWrite for WriteCounter {
     fn write_wstr(&mut self, s: &wstr) -> fmt::Result {
-        self.1 += s.as_char_slice().len();
-        self.0.write_wstr(s)
+        self.0 += s.as_char_slice().len();
+        Ok(())
     }
 
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.1 += s.chars().count();
-        self.0.write_str(s)
+        self.0 += s.chars().count();
+        Ok(())
     }
 }
 
@@ -150,15 +136,14 @@ macro_rules! define_numeric {
             }
         } else if $flags.contains(Flags::PREPEND_ZERO) {
             if $flags.contains(Flags::PREPEND_SPACE) && !$data.is_sign_negative() {
-                let mut null_write = NullWriter;
-                let mut d = WriteCounter(&mut null_write, 0);
+                let mut d = WriteCounter(0);
                 let _ = write!(
                     d,
                     concat!("{:.prec$", $ty, "}"),
                     $data,
                     prec = $precision as usize
                 );
-                if d.1 + 1 > $width as usize {
+                if d.0 + 1 > $width as usize {
                     $width += 1;
                 }
                 write!(
@@ -179,16 +164,15 @@ macro_rules! define_numeric {
             }
         } else {
             if $flags.contains(Flags::PREPEND_SPACE) && !$data.is_sign_negative() {
-                let mut null_write = NullWriter;
-                let mut d = WriteCounter(&mut null_write, 0);
+                let mut d = WriteCounter(0);
                 let _ = write!(
                     d,
                     concat!("{:.prec$", $ty, "}"),
                     $data,
                     prec = $precision as usize
                 );
-                if (d.1 as u64) + 1 > $width as u64 {
-                    $width = d.1 as u64 + 1;
+                if (d.0 as u64) + 1 > $width as u64 {
+                    $width = d.0 as u64 + 1;
                 }
             }
             write!(
@@ -500,16 +484,14 @@ fn write_scientific(
 
 /// Write a single argument to the writer.
 /// Returns the number of bytes written, or -1 on failure.
-fn write_1_arg(arg: Argument, w: &mut impl WideWrite) -> isize {
+fn write_1_arg(arg: Argument, w: &mut impl WideWrite) -> fmt::Result {
     let Argument {
         flags,
         mut width,
         precision,
         specifier,
     } = arg;
-    let mut w = WriteCounter(w, 0);
-    let w = &mut w;
-    let res = match specifier {
+    match specifier {
         Specifier::Percent => w.write_str("%"),
         Specifier::Literals(data) => write_str(w, flags, width, precision, data),
         Specifier::String(data) => write_str(w, flags, width, precision, data.as_char_slice()),
@@ -568,10 +550,6 @@ fn write_1_arg(arg: Argument, w: &mut impl WideWrite) -> isize {
                 write!(w, "{:width$p}", data, width = width as usize)
             }
         } //Specifier::WriteBytesWritten(_, _) => Err(Default::default()),
-    };
-    match res {
-        Ok(_) => w.1 as isize,
-        Err(_) => -1,
     }
 }
 
@@ -591,7 +569,7 @@ fn write_1_arg(arg: Argument, w: &mut impl WideWrite) -> isize {
 /// - same for `a`/`A` (hex floating point)
 /// - the `n` format specifier, [`Specifier::WriteBytesWritten`], is not
 ///   implemented and will cause an error if encountered.
-pub fn wide_write(w: &mut impl WideWrite) -> impl FnMut(Argument) -> isize + '_ {
+pub fn wide_write(w: &mut impl WideWrite) -> impl FnMut(Argument) -> fmt::Result + '_ {
     move |arg| write_1_arg(arg, w)
 }
 
@@ -619,7 +597,7 @@ where
 }
 
 /// Write to a struct that implements [`fmt::Write`].
-pub fn fmt_write(w: &mut impl fmt::Write) -> impl FnMut(Argument) -> isize + '_ {
+pub fn fmt_write(w: &mut impl fmt::Write) -> impl FnMut(Argument) -> fmt::Result + '_ {
     move |arg| write_1_arg(arg, &mut FmtWrite(w))
 }
 
@@ -629,11 +607,7 @@ pub fn fmt_write(w: &mut impl fmt::Write) -> impl FnMut(Argument) -> isize + '_ 
 ///
 /// This shares the same caveats as [`fmt_write`].
 pub unsafe fn display<'a, 'b>(format: &'a wstr, args: ArgList<'b>) -> ArgListDisplay<'a, 'b> {
-    ArgListDisplay {
-        format,
-        args,
-        written: Cell::new(0),
-    }
+    ArgListDisplay { format, args }
 }
 
 /// Helper struct created by [`display`] for safely printing `printf`-style
@@ -642,25 +616,10 @@ pub unsafe fn display<'a, 'b>(format: &'a wstr, args: ArgList<'b>) -> ArgListDis
 pub struct ArgListDisplay<'a, 'b> {
     format: &'a wstr,
     args: ArgList<'b>,
-    written: Cell<isize>,
-}
-
-impl ArgListDisplay<'_, '_> {
-    /// Get the number of bytes written, or 0 if there was an error.
-    pub fn bytes_written(&self) -> isize {
-        self.written.get()
-    }
 }
 
 impl<'a, 'b> fmt::Display for ArgListDisplay<'a, 'b> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = super::format(self.format, &mut self.args.clone(), fmt_write(f));
-        self.written
-            .set(bytes.try_into().expect("bytes written is too large"));
-        if bytes < 0 {
-            Err(fmt::Error)
-        } else {
-            Ok(())
-        }
+        super::format(self.format, &mut self.args.clone(), fmt_write(f))
     }
 }

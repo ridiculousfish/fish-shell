@@ -1,6 +1,7 @@
 use super::{ArgList, Argument, DoubleFormat, Flags, SignedInt, Specifier, UnsignedInt};
 use crate::wstr;
 use itertools::Itertools;
+use std::fmt;
 
 fn next_char(sub: &[char]) -> &[char] {
     sub.get(1..).unwrap_or(&[])
@@ -116,23 +117,12 @@ fn parse_length(sub: &[char]) -> (Length, &[char]) {
 pub fn format<'a, 'b>(
     format: &'a wstr,
     args: &mut ArgList<'b>,
-    mut handler: impl FnMut(Argument) -> isize,
-) -> isize {
+    mut handler: impl FnMut(Argument) -> fmt::Result,
+) -> fmt::Result {
     let mut iter = format.as_char_slice().split(|&c| c == '%');
-    let mut written = 0;
 
-    macro_rules! err {
-        ($ex: expr) => {{
-            let res = $ex;
-            if res < 0 {
-                return -1;
-            } else {
-                written += res as isize;
-            }
-        }};
-    }
     if let Some(begin) = iter.next() {
-        err!(handler(Specifier::Literals(begin).into()));
+        handler(Specifier::Literals(begin).into())?;
     }
     let mut last_was_percent = false;
     for (sub, next) in iter.map(Some).chain(core::iter::once(None)).tuple_windows() {
@@ -141,7 +131,7 @@ pub fn format<'a, 'b>(
             None => break,
         };
         if last_was_percent {
-            err!(handler(Specifier::Literals(sub).into()));
+            handler(Specifier::Literals(sub).into())?;
             last_was_percent = false;
             continue;
         }
@@ -152,7 +142,7 @@ pub fn format<'a, 'b>(
         let ch = sub
             .get(0)
             .unwrap_or(if next.is_some() { &'%' } else { &'\0' });
-        err!(handler(Argument {
+        handler(Argument {
             flags,
             width,
             precision,
@@ -186,10 +176,10 @@ pub fn format<'a, 'b>(
                 'c' => Specifier::Char(args.arg_c()),
                 'p' => Specifier::Pointer(args.arg_p()),
                 //'n' => Specifier::WriteBytesWritten(written, args.arg()),
-                _ => return -1,
+                _ => return Result::Err(fmt::Error),
             },
-        }));
-        err!(handler(Specifier::Literals(next_char(sub)).into()));
+        })?;
+        handler(Specifier::Literals(next_char(sub)).into())?;
     }
-    written
+    Result::Ok(())
 }
