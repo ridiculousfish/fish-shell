@@ -1,4 +1,4 @@
-use fast_float::{parse, parse_partial, FastFloat};
+use fast_float::{bytes_iter as b_iter, parse, parse_partial, FastFloat};
 
 macro_rules! check_ok {
     ($s:expr, $x:expr) => {
@@ -9,8 +9,11 @@ macro_rules! check_ok {
         check_ok!(s.as_bytes(), $x, f64);
     };
     ($s:expr, $x:expr, $ty:ty) => {
-        assert_eq!(<$ty>::parse_float($s).unwrap(), $x);
-        assert_eq!(<$ty>::parse_float_partial($s).unwrap(), ($x, $s.len()));
+        assert_eq!(<$ty>::parse_float(b_iter($s), '.').unwrap(), $x);
+        assert_eq!(
+            <$ty>::parse_float_partial(b_iter($s), '.').unwrap(),
+            ($x, $s.len())
+        );
         assert_eq!(parse::<$ty, _>($s).unwrap(), $x);
         assert_eq!(parse_partial::<$ty, _>($s).unwrap(), ($x, $s.len()));
     };
@@ -25,8 +28,11 @@ macro_rules! check_ok_partial {
         check_ok_partial!(s.as_bytes(), $x, $n, f64);
     };
     ($s:expr, $x:expr, $n:expr, $ty:ty) => {
-        assert!(<$ty>::parse_float($s).is_err());
-        assert_eq!(<$ty>::parse_float_partial($s).unwrap(), ($x, $n));
+        assert!(<$ty>::parse_float(b_iter($s), '.').is_err());
+        assert_eq!(
+            <$ty>::parse_float_partial(b_iter($s), '.').unwrap(),
+            ($x, $n)
+        );
         assert!(parse::<$ty, _>($s).is_err());
         assert_eq!(parse_partial::<$ty, _>($s).unwrap(), ($x, $n));
     };
@@ -41,8 +47,8 @@ macro_rules! check_err {
         check_err!(s.as_bytes(), f64);
     };
     ($s:expr, $ty:ty) => {
-        assert!(<$ty>::parse_float($s).is_err());
-        assert!(<$ty>::parse_float_partial($s).is_err());
+        assert!(<$ty>::parse_float(b_iter($s), '.').is_err());
+        assert!(<$ty>::parse_float_partial(b_iter($s), '.').is_err());
         assert!(parse::<$ty, _>($s).is_err());
         assert!(parse_partial::<$ty, _>($s).is_err());
     };

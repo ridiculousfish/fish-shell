@@ -1,17 +1,20 @@
 use crate::binary::compute_float;
+use crate::common::Chars;
 use crate::float::Float;
 use crate::number::{parse_inf_nan, parse_number};
 use crate::simple::parse_long_mantissa;
+use crate::InputIterator;
 
 #[inline]
-pub fn parse_float<F: Float>(s: &[u8]) -> Option<(F, usize)> {
+pub fn parse_float<F: Float, Iter: InputIterator>(s: &mut Chars<Iter>) -> Option<(F, usize)> {
     if s.is_empty() {
         return None;
     }
 
+    let mut saved = s.clone();
     let (num, rest) = match parse_number(s) {
         Some(r) => r,
-        None => return parse_inf_nan(s),
+        None => return parse_inf_nan(saved),
     };
     if let Some(value) = num.try_fast_path::<F>() {
         return Some((value, rest));
@@ -22,7 +25,7 @@ pub fn parse_float<F: Float>(s: &[u8]) -> Option<(F, usize)> {
         am.power2 = -1;
     }
     if am.power2 < 0 {
-        am = parse_long_mantissa::<F>(s);
+        am = parse_long_mantissa::<F, Iter>(&mut saved);
     }
 
     let mut word = am.mantissa;

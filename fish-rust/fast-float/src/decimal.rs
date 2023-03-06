@@ -1,6 +1,7 @@
+use crate::InputIterator;
 use core::fmt::{self, Debug};
 
-use crate::common::{is_8digits, parse_digits, ByteSlice};
+use crate::common::{is_8digits, parse_digits, ByteSlice, Chars};
 
 #[derive(Clone)]
 pub struct Decimal {
@@ -186,23 +187,40 @@ impl Decimal {
     }
 }
 
+/// Return how many trailing zeros are in \p s, ending at the given \p end number of characters.
+fn count_trailing_zeros_before<Iter: InputIterator>(s: &Chars<Iter>, end: usize) -> usize {
+    let start = s.get_consumed();
+    debug_assert!(start <= end);
+    let mut zeros = 0;
+    let mut iter = s.clone_iter();
+    let decimal_sep = s.get_decimal_sep();
+    for _ in 0..(end - start) {
+        match iter.next().expect("Should not have exhausted the iterator") {
+            '0' => zeros += 1,
+            c if c != decimal_sep => zeros = 0,
+            _ => (),
+        }
+    }
+    zeros
+}
+
 #[inline]
-pub fn parse_decimal(mut s: &[u8]) -> Decimal {
+pub fn parse_decimal<Iter: InputIterator>(s: &mut Chars<Iter>) -> Decimal {
     // can't fail since it follows a call to parse_number
     let mut d = Decimal::default();
-    let start = s;
+    let start = s.clone();
     let c = s.get_first();
-    d.negative = c == b'-';
-    if c == b'-' || c == b'+' {
-        s = s.advance(1);
+    d.negative = c == '-';
+    if c == '-' || c == '+' {
+        s.advance(1);
     }
-    s = s.skip_chars(b'0');
-    parse_digits(&mut s, |digit| d.try_add_digit(digit));
-    if s.check_first(b'.') {
-        s = s.advance(1);
-        let first = s;
+    s.skip_chars('0');
+    parse_digits(s, |digit| d.try_add_digit(digit));
+    if s.check_first(s.get_decimal_sep()) {
+        s.advance(1);
+        let first = s.get_consumed();
         if d.num_digits == 0 {
-            s = s.skip_chars(b'0');
+            s.skip_chars('0');
         }
         while s.len() >= 8 && d.num_digits + 8 < Decimal::MAX_DIGITS {
             let v = s.read_u64();
@@ -211,21 +229,14 @@ pub fn parse_decimal(mut s: &[u8]) -> Decimal {
             }
             d.digits[d.num_digits..].write_u64(v - 0x3030_3030_3030_3030);
             d.num_digits += 8;
-            s = s.advance(8);
+            s.advance(8);
         }
-        parse_digits(&mut s, |digit| d.try_add_digit(digit));
-        d.decimal_point = s.len() as i32 - first.len() as i32;
+        parse_digits(s, |digit| d.try_add_digit(digit));
+        d.decimal_point = first as i32 - s.get_consumed() as i32; // will be negative
     }
     if d.num_digits != 0 {
         // Ignore the trailing zeros if there are any
-        let mut n_trailing_zeros = 0;
-        for &c in start[..(start.len() - s.len())].iter().rev() {
-            if c == b'0' {
-                n_trailing_zeros += 1;
-            } else if c != b'.' {
-                break;
-            }
-        }
+        let n_trailing_zeros = count_trailing_zeros_before(&start, s.get_consumed());
         d.decimal_point += n_trailing_zeros as i32;
         d.num_digits -= n_trailing_zeros;
         d.decimal_point += d.num_digits as i32;
@@ -234,17 +245,17 @@ pub fn parse_decimal(mut s: &[u8]) -> Decimal {
             d.num_digits = Decimal::MAX_DIGITS;
         }
     }
-    if s.check_first2(b'e', b'E') {
-        s = s.advance(1);
+    if s.check_first_either('e', 'E') {
+        s.advance(1);
         let mut neg_exp = false;
-        if s.check_first(b'-') {
+        if s.check_first('-') {
             neg_exp = true;
-            s = s.advance(1);
-        } else if s.check_first(b'+') {
-            s = s.advance(1);
+            s.advance(1);
+        } else if s.check_first('+') {
+            s.advance(1);
         }
         let mut exp_num = 0_i32;
-        parse_digits(&mut s, |digit| {
+        parse_digits(s, |digit| {
             if exp_num < 0x10000 {
                 exp_num = 10 * exp_num + digit as i32;
             }

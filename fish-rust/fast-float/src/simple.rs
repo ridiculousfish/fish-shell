@@ -1,9 +1,10 @@
-use crate::common::AdjustedMantissa;
+use crate::common::{AdjustedMantissa, Chars};
 use crate::decimal::{parse_decimal, Decimal};
 use crate::float::Float;
+use crate::InputIterator;
 
 #[inline]
-pub fn parse_long_mantissa<F: Float>(s: &[u8]) -> AdjustedMantissa {
+pub fn parse_long_mantissa<F: Float, Iter: InputIterator>(s: &mut Chars<Iter>) -> AdjustedMantissa {
     const MAX_SHIFT: usize = 60;
     const NUM_POWERS: usize = 19;
     const POWERS: [u8; 19] = [

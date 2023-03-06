@@ -45,6 +45,7 @@
 )]
 
 use core::fmt::{self, Display};
+use core::iter::FusedIterator;
 
 mod binary;
 mod common;
@@ -54,6 +55,18 @@ mod number;
 mod parse;
 mod simple;
 mod table;
+
+/// Iterator type that ParseFloat expects.
+pub trait InputIterator: FusedIterator<Item = char> + Clone {}
+impl<T> InputIterator for T where T: FusedIterator<Item = char> + Clone {}
+
+/// A helpful function to create an InputIterator from a byte slice.
+pub fn bytes_iter<S>(bytes: &S) -> impl InputIterator + '_
+where
+    S: AsRef<[u8]> + ?Sized,
+{
+    bytes.as_ref().iter().map(|&b| b as char).fuse()
+}
 
 /// Opaque error type for fast-float parsing functions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -84,10 +97,9 @@ pub trait FastFloat: float::Float {
     /// Will return an error either if the string is not a valid decimal number.
     /// or if any characters are left remaining unparsed.
     #[inline]
-    fn parse_float<S: AsRef<[u8]>>(s: S) -> Result<Self> {
-        let s = s.as_ref();
-        match Self::parse_float_partial(s) {
-            Ok((v, n)) if n == s.len() => Ok(v),
+    fn parse_float<Iter: InputIterator>(iter: Iter, decimal_sep: char) -> Result<Self> {
+        match Self::parse_float_partial(iter.clone(), decimal_sep) {
+            Ok((v, n)) if n == iter.count() => Ok(v),
             _ => Err(Error),
         }
     }
@@ -102,8 +114,12 @@ pub trait FastFloat: float::Float {
     /// Will return an error either if the string doesn't start with a valid decimal number
     /// – that is, if no zero digits were processed.
     #[inline]
-    fn parse_float_partial<S: AsRef<[u8]>>(s: S) -> Result<(Self, usize)> {
-        parse::parse_float(s.as_ref()).ok_or(Error)
+    fn parse_float_partial<Iter: InputIterator>(
+        iter: Iter,
+        decimal_sep: char,
+    ) -> Result<(Self, usize)> {
+        let mut chars = common::Chars::new(iter.peekable(), decimal_sep);
+        parse::parse_float(&mut chars).ok_or(Error)
     }
 }
 
@@ -118,7 +134,7 @@ impl FastFloat for f64 {}
 /// or if any characters are left remaining unparsed.
 #[inline]
 pub fn parse<T: FastFloat, S: AsRef<[u8]>>(s: S) -> Result<T> {
-    T::parse_float(s)
+    T::parse_float(bytes_iter(&s), '.')
 }
 
 /// Parse a decimal number from string into float (partial).
@@ -132,5 +148,33 @@ pub fn parse<T: FastFloat, S: AsRef<[u8]>>(s: S) -> Result<T> {
 /// – that is, if no zero digits were processed.
 #[inline]
 pub fn parse_partial<T: FastFloat, S: AsRef<[u8]>>(s: S) -> Result<(T, usize)> {
-    T::parse_float_partial(s)
+    T::parse_float_partial(bytes_iter(&s), '.')
+}
+
+/// Parse a decimal number from iterator into float (full).
+///
+/// # Errors
+///
+/// Will return an error either if the string is not a valid decimal number
+/// or if any characters are left remaining unparsed.
+#[inline]
+pub fn parse_iter<T: FastFloat, Iter: InputIterator>(iter: Iter, decimal_sep: char) -> Result<T> {
+    T::parse_float(iter, decimal_sep)
+}
+
+/// Parse a decimal number from iterator into float (partial).
+///
+/// This function parses as many characters as possible and returns the resulting number along
+/// with the number of digits processed (in case of success, this number is always positive).
+///
+/// # Errors
+///
+/// Will return an error either if the string doesn't start with a valid decimal number
+/// – that is, if no zero digits were processed.
+#[inline]
+pub fn parse_partial_iter<T: FastFloat, Iter: InputIterator>(
+    iter: Iter,
+    decimal_sep: char,
+) -> Result<(T, usize)> {
+    T::parse_float_partial(iter, decimal_sep)
 }
