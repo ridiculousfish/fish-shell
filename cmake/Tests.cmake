@@ -206,3 +206,10 @@ add_test(
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/fish-rust/widestring-suffix/"
 )
 add_test_target("cargo-test-widestring")
+
+add_test(
+    NAME "cargo-test-fast-float"
+    COMMAND cargo test --target-dir target
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/fish-rust/fast-float/"
+)
+add_test_target("cargo-test-fast-float")
