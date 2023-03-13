@@ -13,10 +13,6 @@ autobenches = false
 edition = "2018"
 exclude = ["benches/*", "extras/*"]
 
-[features]
-default = ["std"]
-std = []
-
 [dev-dependencies]
 lexical-core = "0.7"
 hexf-parse = "0.1"
@@ -24,12 +20,5 @@ ryu = "1.0"
 fastrand = "1.4"
 num-bigint = "0.3"
 
-[workspace]
-members = [".", "extras/data-tests", "extras/simple-bench"]
-
-[profile.release]
-lto = "fat"
-codegen-units = 1
-
-[package.metadata.docs.rs]
-features = ["std"]
+[lib]
+doctest = false
