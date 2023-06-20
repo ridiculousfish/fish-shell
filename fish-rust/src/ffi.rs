@@ -145,6 +145,7 @@ include_cpp! {
     generate!("set_interactive_session")
     generate!("screen_set_midnight_commander_hack")
     generate!("screen_clear_layout_cache_ffi")
+    generate!("escape_code_length_ffi")
     generate!("reader_schedule_prompt_repaint")
     generate!("reader_change_history")
     generate!("history_session_id")

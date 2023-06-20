@@ -1,5 +1,6 @@
 use crate::builtins::{printf, wait};
 use crate::ffi::{self, parser_t, wcstring_list_ffi_t, Repin, RustBuiltin};
+use crate::io::OutputStream;
 use crate::wchar::{wstr, WString, L};
 use crate::wchar_ffi::{c_str, empty_wstring, ToCppWString, WCharFromFFI};
 use crate::wgetopt::{wgetopter_t, wopt, woption, woption_argument_t};
@@ -51,6 +52,10 @@ pub const BUILTIN_ERR_MAX_ARG_COUNT1: &str = "%ls: expected <= %d arguments; got
 pub const BUILTIN_ERR_COMBO: &str = "%ls: invalid option combination\n";
 pub const BUILTIN_ERR_COMBO2: &str = "%ls: invalid option combination, %ls\n";
 
+/// Command that requires a subcommand was invoked without a recognized subcommand.
+pub const BUILTIN_ERR_MISSING_SUBCMD: &str = "%ls: missing subcommand\n";
+pub const BUILTIN_ERR_INVALID_SUBCMD: &str = "%ls: %ls: invalid subcommand\n";
+
 // Return values (`$status` values for fish scripts) for various situations.
 
 /// The status code used for normal exit in a command.
@@ -94,6 +99,12 @@ impl output_stream_t {
     /// Append a char.
     pub fn append1(&mut self, c: char) -> bool {
         self.append(wstr::from_char_slice(&[c]))
+    }
+}
+
+impl OutputStream for output_stream_t {
+    fn append(&mut self, s: &wstr) -> bool {
+        self.append(s)
     }
 }
 
@@ -188,6 +199,7 @@ pub fn run_builtin(
         RustBuiltin::Realpath => super::realpath::realpath(parser, streams, args),
         RustBuiltin::Return => super::r#return::r#return(parser, streams, args),
         RustBuiltin::SetColor => super::set_color::set_color(parser, streams, args),
+        RustBuiltin::String => super::string::string(parser, streams, args),
         RustBuiltin::Test => super::test::test(parser, streams, args),
         RustBuiltin::Type => super::r#type::r#type(parser, streams, args),
         RustBuiltin::Wait => wait::wait(parser, streams, args),

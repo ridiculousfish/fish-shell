@@ -379,11 +379,11 @@ pub fn bool_from_string(x: &wstr) -> bool {
 pub fn split_about<'haystack>(
     haystack: &'haystack wstr,
     needle: &wstr,
-    max: Option<i64>,
+    max: usize,
     no_empty: bool,
 ) -> Vec<&'haystack wstr> {
     let mut output = vec![];
-    let mut remaining = max.unwrap_or(i64::MAX);
+    let mut remaining = max;
     let mut haystack = haystack.as_char_slice();
     while remaining > 0 && !haystack.is_empty() {
         let split_point = if needle.is_empty() {
