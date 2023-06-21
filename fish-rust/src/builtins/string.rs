@@ -148,12 +148,7 @@ trait SubCmdHandler {
         optind: &mut usize,
         args: &mut [&wstr],
     ) -> Option<c_int>;
-}
 
-trait ArgTaker
-where
-    Self: SubCmdHandler + Sized,
-{
     #[allow(unused_variables)]
     fn take_args(
         &mut self,
@@ -171,7 +166,6 @@ trait StringSubCommand {
     fn short_options(&self) -> &'static wstr;
     fn long_options(&self) -> &'static [woption<'static>];
     fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError>;
-    #[allow(unused_variables)]
     fn take_args(
         &mut self,
         optind: &mut usize,
@@ -189,7 +183,7 @@ trait StringSubCommand {
 
 impl<T> StringSubCommand for T
 where
-    T: SubCmdOptions + SubCmdHandler + ArgTaker,
+    T: SubCmdOptions + SubCmdHandler,
 {
     fn short_options(&self) -> &'static wstr {
         Self::SHORT_OPTIONS
@@ -203,14 +197,13 @@ where
         self.parse_options(optarg, c)
     }
 
-    #[allow(unused_variables)]
     fn take_args(
         &mut self,
         optind: &mut usize,
         args: &[&wstr],
         streams: &mut io_streams_t,
     ) -> Option<c_int> {
-        ArgTaker::take_args(self, optind, args, streams)
+        self.take_args(optind, args, streams)
     }
 
     fn handle(
@@ -363,7 +356,6 @@ impl SubCmdOptions for Collect {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":Na");
 }
-impl ArgTaker for Collect {}
 
 impl SubCmdHandler for Collect {
     fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
@@ -437,7 +429,6 @@ impl SubCmdOptions for Escape {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":n");
 }
-impl ArgTaker for Escape {}
 
 impl SubCmdHandler for Escape {
     fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
@@ -508,8 +499,7 @@ impl SubCmdOptions for Join {
     const SHORT_OPTIONS: &'static wstr = L!(":qn");
 }
 
-impl ArgTaker for Join {
-    // impl<'args, 'opts, 'cmd> ArgTaker for &'cmd Join<'args> where 'args: 'cmd {
+impl SubCmdHandler for Join {
     fn take_args(
         &mut self,
         optind: &mut usize,
@@ -521,17 +511,14 @@ impl ArgTaker for Join {
         }
 
         let Some(arg) = args.get(*optind).copied() else {
-            string_error!(streams, BUILTIN_ERR_ARG_COUNT0, args[0]);
-            return STATUS_INVALID_ARGS;
-        };
+           string_error!(streams, BUILTIN_ERR_ARG_COUNT0, args[0]);
+           return STATUS_INVALID_ARGS;
+       };
         *optind += 1;
         self.sep = arg.to_owned();
 
         STATUS_CMD_OK
     }
-}
-
-impl SubCmdHandler for Join {
     fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'q' => self.quiet = true,
@@ -597,7 +584,6 @@ impl SubCmdOptions for Length {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":qV");
 }
-impl ArgTaker for Length {}
 
 impl SubCmdHandler for Length {
     fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
@@ -670,7 +656,6 @@ impl SubCmdOptions for Transform {
         &[wopt(L!("quiet"), woption_argument_t::no_argument, 'q')];
     const SHORT_OPTIONS: &'static wstr = L!(":q");
 }
-impl ArgTaker for Transform {}
 
 impl SubCmdHandler for Transform {
     fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
@@ -926,7 +911,8 @@ impl SubCmdOptions for Match {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":aegivqrn");
 }
-impl ArgTaker for Match {
+
+impl SubCmdHandler for Match {
     fn take_args(
         &mut self,
         optind: &mut usize,
@@ -935,16 +921,13 @@ impl ArgTaker for Match {
     ) -> Option<c_int> {
         let cmd = args[0];
         let Some(arg) = args.get(*optind).copied() else {
-                string_error!(streams, BUILTIN_ERR_ARG_COUNT0, cmd);
-                return STATUS_INVALID_ARGS;
-            };
+               string_error!(streams, BUILTIN_ERR_ARG_COUNT0, cmd);
+               return STATUS_INVALID_ARGS;
+           };
         *optind += 1;
         self.pattern = arg.to_owned();
         STATUS_CMD_OK
     }
-}
-
-impl SubCmdHandler for Match {
     fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'a' => self.all = true,
@@ -1102,7 +1085,6 @@ impl SubCmdOptions for Pad {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":c:qrw:");
 }
-impl ArgTaker for Pad {}
 
 impl SubCmdHandler for Pad {
     fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
@@ -1299,7 +1281,7 @@ impl SubCmdOptions for Split {
     const SHORT_OPTIONS: &'static wstr = L!(":qrm:nf:a");
 }
 
-impl ArgTaker for Split {
+impl SubCmdHandler for Split {
     fn take_args(
         &mut self,
         optind: &mut usize,
@@ -1317,9 +1299,6 @@ impl ArgTaker for Split {
         self.sep = arg.to_owned();
         return STATUS_CMD_OK;
     }
-}
-
-impl SubCmdHandler for Split {
     fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'q' => self.quiet = true,
@@ -1474,7 +1453,6 @@ impl SubCmdOptions for Repeat {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":n:m:qN");
 }
-impl ArgTaker for Repeat {}
 
 impl SubCmdHandler for Repeat {
     fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
@@ -1762,7 +1740,7 @@ impl SubCmdOptions for Replace {
     const SHORT_OPTIONS: &'static wstr = L!(":afiqr");
 }
 
-impl ArgTaker for Replace {
+impl SubCmdHandler for Replace {
     fn take_args(
         &mut self,
         optind: &mut usize,
@@ -1785,9 +1763,6 @@ impl ArgTaker for Replace {
         self.replacement = replacement.to_owned();
         return STATUS_CMD_OK;
     }
-}
-
-impl SubCmdHandler for Replace {
     fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'a' => self.all = true,
@@ -1883,7 +1858,6 @@ impl SubCmdOptions for Shorten {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":q:m:Nlq");
 }
-impl ArgTaker for Shorten {}
 
 impl SubCmdHandler for Shorten {
     fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
@@ -2116,7 +2090,6 @@ impl SubCmdOptions for Sub {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":l:qs:e:");
 }
-impl ArgTaker for Sub {}
 
 impl SubCmdHandler for Sub {
     fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
@@ -2242,7 +2215,6 @@ impl SubCmdOptions for Trim {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":c:lrq");
 }
-impl ArgTaker for Trim {}
 
 impl SubCmdHandler for Trim {
     fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
@@ -2327,7 +2299,6 @@ impl SubCmdOptions for Unescape {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":q");
 }
-impl ArgTaker for Unescape {}
 
 impl SubCmdHandler for Unescape {
     fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
