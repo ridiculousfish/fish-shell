@@ -120,7 +120,7 @@ const SUBCOMMANDS: &[(&wstr, fn() -> Box<dyn StringSubCommand>)] = &[
         Box::new(cmd)
     }),
 ];
-// TODO: assert sorted at compile tiem (might not be possible, if so write a test)
+assert_sorted_by_name!(SUBCOMMANDS, 0);
 
 fn string_unknown_option(
     parser: &mut parser_t,
