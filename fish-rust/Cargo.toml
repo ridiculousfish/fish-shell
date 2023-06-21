@@ -61,6 +61,9 @@ cc = { git = "https://github.com/mqudsi/cc-rs", branch = "fish" }
 [patch.'https://github.com/fish-shell/autocxx']
 cc = { git = "https://github.com/mqudsi/cc-rs", branch = "fish" }
 
+[patch.'httos://github.com/fish-shell/rust-pcre2']
+pcre2 = { git = "https://github.com/henrikhorluck/rust-pcre2", branch = "feat/replace" }
+
 #cxx = { path = "../../cxx" }
 #cxx-gen = { path="../../cxx/gen/lib" }
 #autocxx = { path = "../../autocxx" }

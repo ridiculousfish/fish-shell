@@ -371,15 +371,14 @@ fn escape_string_url(input: &wstr) -> WString {
 }
 
 /// Escape a string in a fashion suitable for using as a fish var name. Store the result in out_str.
-#[widestrs]
 fn escape_string_var(input: &wstr) -> WString {
     let mut prev_was_hex_encoded = false;
     let narrow = wcs2string(input);
     let mut out = WString::new();
-    for byte in narrow.into_iter() {
+    for byte in narrow {
         if (byte & 0x80) == 0 {
             let c = char::from_u32(u32::from(byte)).unwrap();
-            if c.is_alphanumeric() && (!prev_was_hex_encoded || c.to_digit(16).is_none()) {
+            if c.is_alphanumeric() {
                 // ASCII alphanumerics don't need to be encoded.
                 if prev_was_hex_encoded {
                     out.push('_');
@@ -388,15 +387,19 @@ fn escape_string_var(input: &wstr) -> WString {
                 out.push(c);
                 continue;
             }
-        } else if byte == b'_' {
+        }
+        if byte == b'_' {
             // Underscores are encoded by doubling them.
-            out += "__"L;
+            out += L!("__");
             prev_was_hex_encoded = false;
             continue;
         }
         // All other chars need to have their UTF-8 representation encoded in hex.
-        out += &sprintf!("_%02X"L, byte)[..];
+        out.push_utfstr(&sprintf!("_%02X", byte));
         prev_was_hex_encoded = true;
+    }
+    if prev_was_hex_encoded {
+        out.push('_');
     }
     out
 }

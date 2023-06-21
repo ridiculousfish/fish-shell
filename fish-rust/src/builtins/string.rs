@@ -38,6 +38,8 @@ use crate::wildcard::ANY_STRING;
 use crate::wutil::{fish_wcstol, fish_wcswidth, wgettext_fmt};
 use libc::c_int;
 
+use super::shared::BUILTIN_ERR_TOO_MANY_ARGUMENTS;
+
 macro_rules! string_error {
     (
     $streams:expr,
@@ -45,7 +47,7 @@ macro_rules! string_error {
     $(, $args:expr)+
     $(,)?
     ) => {
-        $streams.err.append(L!("string: "));
+        $streams.err.append(L!("string "));
         $streams.err.append(wgettext_fmt!($string, $($args),*));
     };
 }
@@ -126,28 +128,18 @@ fn string_unknown_option(
     subcmd: &wstr,
     opt: &wstr,
 ) {
-    streams.err.append(L!("string "));
-    streams
-        .err
-        .append(wgettext_fmt!(BUILTIN_ERR_UNKNOWN, subcmd, opt));
+    string_error!(streams, BUILTIN_ERR_UNKNOWN, subcmd, opt);
     builtin_print_error_trailer(parser, streams, L!("string"));
 }
 
 trait SubCmdOptions {
+    // most of what is below is a (as minimally convoluted) way of making StringSubCommand object safe
     const SHORT_OPTIONS: &'static wstr;
     const LONG_OPTIONS: &'static [woption<'static>];
 }
 
 trait SubCmdHandler {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int>;
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError>;
 
     fn handle(
         &mut self,
@@ -158,22 +150,34 @@ trait SubCmdHandler {
     ) -> Option<c_int>;
 }
 
+trait ArgTaker
+where
+    Self: SubCmdHandler + Sized,
+{
+    #[allow(unused_variables)]
+    fn take_args(
+        &mut self,
+        optind: &mut usize,
+        args: &[&wstr],
+        streams: &mut io_streams_t,
+    ) -> Option<c_int> {
+        STATUS_CMD_OK
+    }
+}
+
 trait StringSubCommand {
     // has to be funcs instead of associated consts to be object safe
     // having it as two traits with blanket impls works though
     fn short_options(&self) -> &'static wstr;
     fn long_options(&self) -> &'static [woption<'static>];
-
-    fn parse_options<'args>(
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError>;
+    #[allow(unused_variables)]
+    fn take_args(
         &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
+        optind: &mut usize,
+        args: &[&wstr],
         streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
     ) -> Option<c_int>;
-
     fn handle(
         &mut self,
         parser: &mut parser_t,
@@ -185,7 +189,7 @@ trait StringSubCommand {
 
 impl<T> StringSubCommand for T
 where
-    T: SubCmdOptions + SubCmdHandler,
+    T: SubCmdOptions + SubCmdHandler + ArgTaker,
 {
     fn short_options(&self) -> &'static wstr {
         Self::SHORT_OPTIONS
@@ -195,16 +199,18 @@ where
         Self::LONG_OPTIONS
     }
 
-    fn parse_options<'args>(
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
+        self.parse_options(optarg, c)
+    }
+
+    #[allow(unused_variables)]
+    fn take_args(
         &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
+        optind: &mut usize,
+        args: &[&wstr],
         streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
     ) -> Option<c_int> {
-        self.parse_options(args, parser, streams, optarg, optind, c)
+        ArgTaker::take_args(self, optind, args, streams)
     }
 
     fn handle(
@@ -242,10 +248,10 @@ fn parse_opts(
                 return STATUS_INVALID_ARGS;
             }
             c => {
-                let retval =
-                    subcmd.parse_options(&mut args_read, parser, streams, w.woptarg, w.woptind, c);
-                if retval != STATUS_CMD_OK {
-                    return retval;
+                let retval = subcmd.parse_options(w.woptarg, c);
+                if let Err(e) = retval {
+                    e.print_error(&mut args_read, parser, streams, w.woptarg, w.woptind);
+                    return e.retval();
                 }
             }
         }
@@ -302,6 +308,54 @@ struct Collect {
     no_trim_newlines: bool,
 }
 
+enum ParseError {
+    InvalidArgs(&'static str),
+    NotANumber,
+    UnknownOption,
+}
+
+impl ParseError {
+    fn description(&self) -> &str {
+        match self {
+            ParseError::InvalidArgs(_) => "Invalid arguments",
+            ParseError::NotANumber => "Not a number",
+            ParseError::UnknownOption => "Unknown option",
+        }
+    }
+}
+
+impl ParseError {
+    fn print_error(
+        &self,
+        args: &mut [&wstr],
+        parser: &mut parser_t,
+        streams: &mut io_streams_t,
+        optarg: Option<&wstr>,
+        optind: usize,
+    ) {
+        match self {
+            ParseError::InvalidArgs(s) => {
+                let error_msg =
+                    wgettext_fmt!("%ls: Invalid %ls '%ls'\n", args[0], s, optarg.unwrap());
+                // TODO: might be +1 from unknown opt's thingy, is actually optarg
+
+                streams.err.append(L!("string "));
+                streams.err.append(error_msg);
+            }
+            ParseError::NotANumber => {
+                string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg.unwrap());
+            }
+            ParseError::UnknownOption => {
+                string_unknown_option(parser, streams, args[0], args[optind - 1]);
+            }
+        }
+    }
+
+    fn retval(&self) -> Option<c_int> {
+        STATUS_INVALID_ARGS
+    }
+}
+
 impl SubCmdOptions for Collect {
     const LONG_OPTIONS: &'static [woption<'static>] = &[
         wopt(L!("allow-empty"), woption_argument_t::no_argument, 'a'),
@@ -309,26 +363,16 @@ impl SubCmdOptions for Collect {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":Na");
 }
+impl ArgTaker for Collect {}
 
 impl SubCmdHandler for Collect {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        _optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'a' => self.allow_empty = true,
             'N' => self.no_trim_newlines = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        Ok(())
     }
 
     fn handle(
@@ -393,39 +437,21 @@ impl SubCmdOptions for Escape {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":n");
 }
+impl ArgTaker for Escape {}
 
 impl SubCmdHandler for Escape {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'n' => self.no_quoted = true,
             '\u{1}' => {
                 let optarg = optarg.expect("option --style requires an argument");
-                self.style = if let Ok(x) = EscapeStringStyle::try_from(optarg) {
-                    x
-                } else {
-                    string_error!(
-                        streams,
-                        "%ls: Invalid escape style '%ls'\n",
-                        args[0],
-                        optarg
-                    );
-                    return STATUS_INVALID_ARGS;
-                };
+
+                self.style = EscapeStringStyle::try_from(optarg)
+                    .map_err(|_| ParseError::InvalidArgs("escape style"))?;
             }
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -435,6 +461,8 @@ impl SubCmdHandler for Escape {
         optind: &mut usize,
         args: &mut [&wstr],
     ) -> Option<c_int> {
+        // Currently, only the script style supports options.
+        // Ignore them for other styles for now.
         let style = match self.style {
             EscapeStringStyle::Script(..) if self.no_quoted => {
                 EscapeStringStyle::Script(EscapeFlags::NO_QUOTED)
@@ -445,8 +473,6 @@ impl SubCmdHandler for Escape {
         let mut escaped_any = false;
         let mut iter = Arguments::new(args, optind, false);
         while let Some(arg) = iter.next(streams) {
-            // Currently, only the script style supports options.
-            // Ignore them for other styles for now.
             let mut escaped = escape_string(&arg, style);
 
             if iter.want_newline() {
@@ -470,6 +496,8 @@ struct Join {
     quiet: bool,
     no_empty: bool,
     is_join0: bool,
+    // we _could_ just take a reference, but the life-time parameters are a bit much
+    sep: WString,
 }
 
 impl SubCmdOptions for Join {
@@ -480,25 +508,37 @@ impl SubCmdOptions for Join {
     const SHORT_OPTIONS: &'static wstr = L!(":qn");
 }
 
-impl SubCmdHandler for Join {
-    fn parse_options<'args>(
+impl ArgTaker for Join {
+    // impl<'args, 'opts, 'cmd> ArgTaker for &'cmd Join<'args> where 'args: 'cmd {
+    fn take_args(
         &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
+        optind: &mut usize,
+        args: &[&wstr],
         streams: &mut io_streams_t,
-        _optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
     ) -> Option<c_int> {
+        if self.is_join0 {
+            return STATUS_CMD_OK;
+        }
+
+        let Some(arg) = args.get(*optind).copied() else {
+            string_error!(streams, BUILTIN_ERR_ARG_COUNT0, args[0]);
+            return STATUS_INVALID_ARGS;
+        };
+        *optind += 1;
+        self.sep = arg.to_owned();
+
+        STATUS_CMD_OK
+    }
+}
+
+impl SubCmdHandler for Join {
+    fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'q' => self.quiet = true,
             'n' => self.no_empty = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -508,20 +548,7 @@ impl SubCmdHandler for Join {
         optind: &mut usize,
         args: &mut [&wstr],
     ) -> Option<c_int> {
-        let arg = match self.is_join0 {
-            true => None,
-            false => {
-                let arg = args.get(*optind).copied();
-                if arg.is_none() {
-                    string_error!(streams, BUILTIN_ERR_ARG_COUNT0, args[0]);
-                    return STATUS_INVALID_ARGS;
-                };
-                *optind += 1;
-                arg
-            }
-        };
-
-        let sep = arg.unwrap_or_else(|| L!(""));
+        let sep = &self.sep;
         let mut nargs = 0usize;
         let mut iter = Arguments::new(args, optind, true);
         while let Some(arg) = iter.next(streams) {
@@ -570,26 +597,16 @@ impl SubCmdOptions for Length {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":qV");
 }
+impl ArgTaker for Length {}
 
 impl SubCmdHandler for Length {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        _optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'q' => self.quiet = true,
             'V' => self.visible = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -653,25 +670,15 @@ impl SubCmdOptions for Transform {
         &[wopt(L!("quiet"), woption_argument_t::no_argument, 'q')];
     const SHORT_OPTIONS: &'static wstr = L!(":q");
 }
+impl ArgTaker for Transform {}
 
 impl SubCmdHandler for Transform {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        _optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'q' => self.quiet = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -705,18 +712,6 @@ impl SubCmdHandler for Transform {
     }
 }
 
-#[derive(Default)]
-struct Match {
-    all: bool,
-    entire: bool,
-    groups_only: bool,
-    ignore_case: bool,
-    invert_match: bool,
-    quiet: bool,
-    regex: bool,
-    index: bool,
-}
-
 enum StringMatcher<'opts> {
     Regex {
         regex: Box<Regex>,
@@ -742,14 +737,10 @@ fn report_match<'a>(
     opts: &Match,
     streams: &mut io_streams_t,
 ) -> Result<MatchResult<'a>, pcre2::Error> {
-    let matched: Option<_> = match matches.next() {
-        Some(Ok(c)) => Some(c),
-        Some(Err(e)) => return Err(e),
-        _ => None,
-    };
-    let cg = match matched {
+    let cg = match matches.next() {
         // 0th capture group corresponds to entire match
-        Some(cg) if cg.get(0).is_some() => cg,
+        Some(Ok(cg)) if cg.get(0).is_some() => cg,
+        Some(Err(e)) => return Err(e),
         _ => {
             if opts.invert_match && !opts.quiet {
                 if opts.index {
@@ -837,7 +828,6 @@ impl StringMatcher<'_> {
 
                 let mut populate_captures = false;
                 if let MatchResult::Match(actual) = &rc {
-                    // C++ checks if total_matched == 0, but total_matched is always 0 beforehand?
                     populate_captures = *total_matched == 0;
                     *total_matched += 1;
 
@@ -847,12 +837,11 @@ impl StringMatcher<'_> {
                 }
 
                 if !opts.invert_match && opts.all {
-                    for res in iter {
-                        let cg = res?;
-                        if let MatchResult::Match(..) = rc {
-                            if populate_captures {
-                                populate_captures_from_match(opts, first_match_captures, &Some(cg));
-                            }
+                    // we are guaranteed to match as long as ops.invert_match is false
+                    while let MatchResult::Match(cg) = report_match(arg, &mut iter, opts, streams)?
+                    {
+                        if populate_captures {
+                            populate_captures_from_match(opts, first_match_captures, &cg);
                         }
                     }
                 }
@@ -863,11 +852,11 @@ impl StringMatcher<'_> {
                 opts,
             } => {
                 use crate::ffi::wildcard_match;
-                let arg = match opts.ignore_case {
+                let subject = match opts.ignore_case {
                     true => arg.to_lowercase(),
                     false => arg.to_owned(),
                 };
-                let m = wildcard_match(&arg.to_ffi(), &pattern.to_ffi(), false);
+                let m = wildcard_match(&subject.to_ffi(), &pattern.to_ffi(), false);
 
                 if m ^ opts.invert_match {
                     *total_matched += 1;
@@ -875,7 +864,7 @@ impl StringMatcher<'_> {
                         if opts.index {
                             streams.out.append(wgettext_fmt!("1 %lu\n", arg.len()));
                         } else {
-                            streams.out.append(&arg);
+                            streams.out.append(arg);
                             streams.out.append1('\n');
                         }
                     }
@@ -911,6 +900,19 @@ impl Match {
     }
 }
 
+#[derive(Default)]
+struct Match {
+    all: bool,
+    entire: bool,
+    groups_only: bool,
+    ignore_case: bool,
+    invert_match: bool,
+    quiet: bool,
+    regex: bool,
+    index: bool,
+    pattern: WString,
+}
+
 impl SubCmdOptions for Match {
     const LONG_OPTIONS: &'static [woption<'static>] = &[
         wopt(L!("all"), woption_argument_t::no_argument, 'a'),
@@ -924,17 +926,26 @@ impl SubCmdOptions for Match {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":aegivqrn");
 }
+impl ArgTaker for Match {
+    fn take_args(
+        &mut self,
+        optind: &mut usize,
+        args: &[&wstr],
+        streams: &mut io_streams_t,
+    ) -> Option<c_int> {
+        let cmd = args[0];
+        let Some(arg) = args.get(*optind).copied() else {
+                string_error!(streams, BUILTIN_ERR_ARG_COUNT0, cmd);
+                return STATUS_INVALID_ARGS;
+            };
+        *optind += 1;
+        self.pattern = arg.to_owned();
+        STATUS_CMD_OK
+    }
+}
 
 impl SubCmdHandler for Match {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        _optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'a' => self.all = true,
             'e' => self.entire = true,
@@ -944,12 +955,9 @@ impl SubCmdHandler for Match {
             'q' => self.quiet = true,
             'r' => self.regex = true,
             'n' => self.index = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -960,11 +968,6 @@ impl SubCmdHandler for Match {
         args: &mut [&wstr],
     ) -> Option<c_int> {
         let cmd = args[0];
-        let Some(pattern) = args.get(*optind).copied() else {
-            string_error!(streams, BUILTIN_ERR_ARG_COUNT0, cmd);
-            return STATUS_INVALID_ARGS;
-        };
-        *optind += 1;
 
         if self.entire && self.index {
             streams.err.append(wgettext_fmt!(
@@ -994,7 +997,7 @@ impl SubCmdHandler for Match {
         }
 
         let mut matcher = if !self.regex {
-            let mut wcpattern = parse_util_unescape_wildcards(pattern);
+            let mut wcpattern = parse_util_unescape_wildcards(&self.pattern);
             if self.ignore_case {
                 wcpattern = wcpattern.to_lowercase();
             }
@@ -1016,7 +1019,7 @@ impl SubCmdHandler for Match {
                 opts: self,
             }
         } else {
-            let Some(regex) = try_compile_regex(pattern, self.ignore_case, cmd, streams) else {
+            let Some(regex) = try_compile_regex(&self.pattern, self.ignore_case, cmd, streams) else {
                     return STATUS_INVALID_ARGS;
             };
             if !Self::validate_capture_group_names(regex.capture_names(), streams) {
@@ -1069,7 +1072,7 @@ impl SubCmdHandler for Match {
 struct Pad {
     char_to_pad: char,
     pad_char_width: usize,
-    direction: Direction,
+    pad_from: Direction,
     width: usize,
 }
 
@@ -1078,7 +1081,7 @@ impl Default for Pad {
         Self {
             char_to_pad: ' ',
             pad_char_width: 1,
-            direction: Direction::Left,
+            pad_from: Direction::Left,
             width: 0,
         }
     }
@@ -1099,63 +1102,40 @@ impl SubCmdOptions for Pad {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":c:qrw:");
 }
+impl ArgTaker for Pad {}
 
 impl SubCmdHandler for Pad {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'c' => {
                 let optarg = optarg.expect("option -c requires an argument");
                 if optarg.len() != 1 {
-                    string_error!(
-                        streams,
-                        "%ls: Padding should be a character '%ls'\n",
-                        args[0],
-                        optarg
-                    );
-                    return STATUS_INVALID_ARGS;
+                    return Err(ParseError::InvalidArgs(
+                        "Padding should be a single character",
+                    ));
                 }
                 let pad_char_width = fish_wcswidth(optarg.slice_to(1));
                 // can we ever have negative width?
                 if pad_char_width <= 0 {
-                    string_error!(
-                        streams,
-                        "%ls: Invalid padding character of width zero\n",
-                        args[0]
-                    );
-                    return STATUS_INVALID_ARGS;
+                    return Err(ParseError::InvalidArgs(
+                        "Invalid padding character of width zero",
+                    ));
                 }
                 self.pad_char_width = pad_char_width as usize;
                 self.char_to_pad = optarg.char_at(0);
             }
-            'r' => self.direction = Direction::Right,
+            'r' => self.pad_from = Direction::Right,
             'w' => {
                 let optarg = optarg.expect("option --width requires an argument");
                 self.width = match fish_wcstol(optarg) {
                     Ok(w) if w >= 0 => w as usize,
-                    Ok(_) => {
-                        string_error!(streams, "%ls: Invalid width '%ls'\n", args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
-                    Err(_) => {
-                        string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
+                    Ok(_) => return Err(ParseError::InvalidArgs("Invalid width")),
+                    Err(_) => return Err(ParseError::NotANumber),
                 }
             }
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle<'args>(
@@ -1185,7 +1165,7 @@ impl SubCmdHandler for Pad {
 
             let pad = (pad_width - width) / self.pad_char_width;
             let remaining_width = (pad_width - width) % self.pad_char_width;
-            let mut padded: WString = match self.direction {
+            let mut padded: WString = match self.pad_from {
                 Direction::Left => repeat(self.char_to_pad)
                     .take(pad)
                     .chain(repeat(' ').take(remaining_width))
@@ -1211,24 +1191,26 @@ impl SubCmdHandler for Pad {
 
 struct Split {
     quiet: bool,
-    direction: Direction,
+    split_from: Direction,
     max: usize,
     no_empty: bool,
     fields: Fields,
     allow_empty: bool,
     is_split0: bool,
+    sep: WString,
 }
 
 impl Default for Split {
     fn default() -> Self {
         Self {
             quiet: false,
-            direction: Direction::Left,
+            split_from: Direction::Left,
             max: usize::MAX,
             no_empty: false,
             fields: Fields(Vec::new()),
             allow_empty: false,
             is_split0: false,
+            sep: WString::new(),
         }
     }
 }
@@ -1317,31 +1299,37 @@ impl SubCmdOptions for Split {
     const SHORT_OPTIONS: &'static wstr = L!(":qrm:nf:a");
 }
 
-impl SubCmdHandler for Split {
-    fn parse_options<'args>(
+impl ArgTaker for Split {
+    fn take_args(
         &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
+        optind: &mut usize,
+        args: &[&wstr],
         streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
     ) -> Option<c_int> {
+        if self.is_split0 {
+            return STATUS_CMD_OK;
+        }
+        let Some(arg) = args.get(*optind).copied() else {
+            string_error!(streams, BUILTIN_ERR_ARG_COUNT0, args[0]);
+            return STATUS_INVALID_ARGS;
+        };
+        *optind += 1;
+        self.sep = arg.to_owned();
+        return STATUS_CMD_OK;
+    }
+}
+
+impl SubCmdHandler for Split {
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'q' => self.quiet = true,
-            'r' => self.direction = Direction::Right,
+            'r' => self.split_from = Direction::Right,
             'm' => {
                 let optarg = optarg.expect("option --max requires an argument");
                 self.max = match fish_wcstol(optarg) {
                     Ok(n) if n >= 0 => n as usize,
-                    Ok(_) => {
-                        string_error!(streams, "%ls: Invalid max value '%ls'\n", args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
-                    _ => {
-                        string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
+                    Ok(_) => return Err(ParseError::InvalidArgs("Invalid max value")),
+                    Err(_) => return Err(ParseError::NotANumber),
                 };
             }
             'n' => self.no_empty = true,
@@ -1349,37 +1337,19 @@ impl SubCmdHandler for Split {
                 let optarg = optarg.expect("option --fields requires an argument");
                 self.fields = match optarg.try_into() {
                     Ok(f) => f,
-                    Err(FieldParseError::Number) => {
-                        string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
+                    Err(FieldParseError::Number) => return Err(ParseError::NotANumber),
                     Err(FieldParseError::Range) => {
-                        string_error!(
-                            streams,
-                            "%ls: Invalid range value for field '%ls'\n",
-                            args[0],
-                            optarg
-                        );
-                        return STATUS_INVALID_ARGS;
+                        return Err(ParseError::InvalidArgs("Invalid range value for field"))
                     }
                     Err(FieldParseError::Field) => {
-                        string_error!(
-                            streams,
-                            "%ls: Invalid fields value '%ls'\n",
-                            args[0],
-                            optarg
-                        );
-                        return STATUS_INVALID_ARGS;
+                        return Err(ParseError::InvalidArgs("Invalid range value for field"))
                     }
                 };
             }
             'a' => self.allow_empty = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -1389,19 +1359,6 @@ impl SubCmdHandler for Split {
         optind: &mut usize,
         args: &mut [&wstr],
     ) -> Option<c_int> {
-        let arg = match self.is_split0 {
-            true => None,
-            false => {
-                let arg = args.get(*optind).copied();
-                if arg.is_none() {
-                    string_error!(streams, BUILTIN_ERR_ARG_COUNT0, args[0]);
-                    return STATUS_INVALID_ARGS;
-                };
-                *optind += 1;
-                arg
-            }
-        };
-
         if self.fields.is_empty() && self.allow_empty {
             streams.err.append(wgettext_fmt!(
                 BUILTIN_ERR_COMBO2,
@@ -1411,17 +1368,14 @@ impl SubCmdHandler for Split {
             return STATUS_INVALID_ARGS;
         }
 
-        let sep = match self.is_split0 {
-            true => L!(""),
-            false => arg.unwrap(),
-        };
+        let sep = &self.sep;
         let mut all_splits: Vec<Vec<WString>> = Vec::new();
         let mut split_count = 0usize;
         let mut arg_count = 0usize;
 
         let mut iter = Arguments::new(args, optind, true);
         while let Some(arg) = iter.next(streams) {
-            let splits: Vec<WString> = match self.direction {
+            let splits: Vec<WString> = match self.split_from {
                 Direction::Right => {
                     let mut rev = arg.into_owned();
                     rev.as_char_slice_mut().reverse();
@@ -1447,7 +1401,7 @@ impl SubCmdHandler for Split {
 
         for mut splits in all_splits {
             // If we are from the right, split_about gave us reversed strings, in reversed order!
-            if self.direction == Direction::Right {
+            if self.split_from == Direction::Right {
                 for split in splits.iter_mut() {
                     split.as_char_slice_mut().reverse();
                 }
@@ -1520,54 +1474,32 @@ impl SubCmdOptions for Repeat {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":n:m:qN");
 }
+impl ArgTaker for Repeat {}
 
 impl SubCmdHandler for Repeat {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'n' => {
                 let optarg = optarg.expect("option --count requires an argument");
                 self.count = match fish_wcstol(optarg) {
                     Ok(n) if n >= 0 => n as usize,
-                    Ok(_) => {
-                        string_error!(streams, "%ls: Invalid count value '%ls'\n", args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
-                    Err(_) => {
-                        string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
+                    Ok(_) => return Err(ParseError::InvalidArgs("count value")),
+                    Err(_) => return Err(ParseError::NotANumber),
                 }
             }
             'm' => {
                 let optarg = optarg.expect("option --max requires an argument");
                 self.max = match fish_wcstol(optarg) {
                     Ok(m) if m >= 0 => m as usize,
-                    Ok(_) => {
-                        string_error!(streams, "%ls: Invalid max value '%ls'\n", args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
-                    Err(_) => {
-                        string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
+                    Ok(_) => return Err(ParseError::InvalidArgs("max value")),
+                    Err(_) => return Err(ParseError::NotANumber),
                 }
             }
             'q' => self.quiet = true,
             'N' => self.no_newline = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -1588,8 +1520,8 @@ impl SubCmdHandler for Repeat {
         let mut first = true;
 
         let mut iter = Arguments::new(args, optind, true);
-        while let Some(arg) = iter.next(streams) {
-            if arg.is_empty() {
+        while let Some(w) = iter.next(streams) {
+            if w.is_empty() {
                 continue;
             }
 
@@ -1604,8 +1536,6 @@ impl SubCmdHandler for Repeat {
                 streams.out.push('\n');
             }
             first = false;
-
-            let w = arg;
 
             // The maximum size of the string is either the "max" characters,
             // or it's the "count" repetitions, whichever ends up lower.
@@ -1670,20 +1600,23 @@ impl SubCmdHandler for Repeat {
             streams.out.push('\n');
         }
 
-        STATUS_CMD_OK
+        if all_empty {
+            STATUS_CMD_ERROR
+        } else {
+            STATUS_CMD_OK
+        }
     }
 }
 
 enum StringReplacer<'args, 'opts> {
     Regex {
-        pattern: &'args wstr,
         replacement: WString,
         regex: Box<Regex>,
         opts: &'opts Replace,
     },
     Literal {
-        pattern: &'args wstr,
-        replacement: &'args wstr,
+        pattern: Cow<'args, wstr>,
+        replacement: Cow<'args, wstr>,
         opts: &'opts Replace,
     },
 }
@@ -1727,60 +1660,81 @@ impl<'args, 'opts> StringReplacer<'args, 'opts> {
                 Self::interpret_escape(replacement)?
             };
             Some(Self::Regex {
-                pattern,
                 replacement,
                 regex: Box::new(regex),
                 opts,
             })
         } else {
-            Some(Self::Literal {
-                pattern,
-                replacement,
-                opts,
+            Some(if opts.ignore_case {
+                Self::Literal {
+                    pattern: Cow::Owned(pattern.to_lowercase()),
+                    replacement: Cow::Owned(replacement.to_lowercase()),
+                    opts,
+                }
+            } else {
+                Self::Literal {
+                    pattern: Cow::Borrowed(pattern),
+                    replacement: Cow::Borrowed(replacement),
+                    opts,
+                }
             })
         }
     }
 
     /// Return None if failed, inner bool indicates if something was replaced
     /// The string is the result of the replacement
-    fn replace(&self, arg: Cow<'_, wstr>) -> Option<(usize, WString)> {
-        match *self {
-            StringReplacer::Regex { .. } => {
-                todo!("Implement substitution in rust-pcre2, not fish");
+    fn replace<'a>(&self, arg: Cow<'a, wstr>) -> Result<(bool, Cow<'a, wstr>), pcre2::Error> {
+        match self {
+            StringReplacer::Regex {
+                replacement,
+                regex,
+                opts,
+            } => {
+                if replacement.is_empty() {
+                    return Ok((false, arg));
+                }
+
+                let res = if opts.all {
+                    regex.replace_all(arg.as_char_slice(), replacement.as_char_slice(), true)
+                } else {
+                    regex.replace(arg.as_char_slice(), replacement.as_char_slice(), true)
+                }?;
+
+                let res = match res {
+                    Cow::Borrowed(_slice_of_arg) => (false, arg),
+                    Cow::Owned(s) => (true, Cow::Owned(WString::from_chars(s))),
+                };
+                return Ok(res);
             }
             StringReplacer::Literal {
                 pattern,
                 replacement,
                 opts,
             } => {
+                // a premature optimization would be to alloc larger if we replacement.len() > pattern.len()
                 let mut result = WString::with_capacity(arg.len());
-                let mut total_replaced = 0;
-                if pattern.is_empty() {
-                    return Some((0, arg.into_owned()));
-                }
 
                 let arg = if opts.ignore_case {
-                    arg.to_lowercase()
+                    Cow::Owned(arg.to_lowercase())
                 } else {
-                    arg.into_owned()
+                    arg
                 };
 
-                let mut curr = arg.as_utfstr();
-                while !curr.is_empty() {
-                    if curr.len() < pattern.len() {
-                        result.push_utfstr(curr);
+                let mut offset = 0;
+                while let Some(idx) = arg[offset..].find(pattern.as_char_slice()) {
+                    result.push_utfstr(&arg[offset..offset + idx]);
+                    result.push_utfstr(&replacement);
+                    offset += idx + pattern.len();
+                    if !opts.all {
                         break;
                     }
-                    if curr.slice_to(pattern.len()) == pattern {
-                        result.push_utfstr(replacement);
-                        curr = curr.slice_from(pattern.len());
-                        total_replaced += 1;
-                    } else {
-                        result.push(curr.char_at(0));
-                        curr = curr.slice_from(1);
-                    }
                 }
-                Some((total_replaced, result))
+                if offset == 0 {
+                    return Ok((false, arg));
+                }
+                result.push_utfstr(&arg[offset..]);
+
+                Ok((true, Cow::Owned(result)))
             }
         }
     }
@@ -1793,6 +1747,8 @@ struct Replace {
     ignore_case: bool,
     quiet: bool,
     regex: bool,
+    pattern: WString,
+    replacement: WString,
 }
 
 impl SubCmdOptions for Replace {
@@ -1806,36 +1762,12 @@ impl SubCmdOptions for Replace {
     const SHORT_OPTIONS: &'static wstr = L!(":afiqr");
 }
 
-impl SubCmdHandler for Replace {
-    fn parse_options<'args>(
+impl ArgTaker for Replace {
+    fn take_args(
         &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        _optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
-        match c {
-            'a' => self.all = true,
-            'f' => self.filter = true,
-            'i' => self.ignore_case = true,
-            'q' => self.quiet = true,
-            'r' => self.regex = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
-        }
-        return STATUS_CMD_OK;
-    }
-
-    fn handle(
-        &mut self,
-        _parser: &mut parser_t,
-        streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
+        streams: &mut io_streams_t,
     ) -> Option<c_int> {
         let cmd = args[0];
         let Some(pattern) = args.get(*optind).copied() else {
@@ -1849,7 +1781,35 @@ impl SubCmdHandler for Replace {
         };
         *optind += 1;
 
-        let Some(replacer) = StringReplacer::new(pattern, replacement, self, cmd, streams) else {
+        self.pattern = pattern.to_owned();
+        self.replacement = replacement.to_owned();
+        return STATUS_CMD_OK;
+    }
+}
+
+impl SubCmdHandler for Replace {
+    fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
+        match c {
+            'a' => self.all = true,
+            'f' => self.filter = true,
+            'i' => self.ignore_case = true,
+            'q' => self.quiet = true,
+            'r' => self.regex = true,
+            _ => return Err(ParseError::UnknownOption),
+        }
+        return Ok(());
+    }
+
+    fn handle(
+        &mut self,
+        _parser: &mut parser_t,
+        streams: &mut io_streams_t,
+        optind: &mut usize,
+        args: &mut [&wstr],
+    ) -> Option<c_int> {
+        let cmd = args[0];
+
+        let Some(replacer) = StringReplacer::new(&self.pattern, &self.replacement, self, cmd, streams) else {
             // failed to init regex
             return STATUS_INVALID_ARGS;
         };
@@ -1858,12 +1818,21 @@ impl SubCmdHandler for Replace {
 
         let mut iter = Arguments::new(args, optind, true);
         while let Some(arg) = iter.next(streams) {
-            let Some((num_replace, result)) = replacer.replace(arg) else {
-                return STATUS_INVALID_ARGS;
+            let (replaced, result) = match replacer.replace(arg) {
+                Ok(x) => x,
+                Err(e) => {
+                    string_error!(
+                        streams,
+                        "%ls: Regular expression substitute error: %ls\n",
+                        cmd,
+                        e.error_message()
+                    );
+                    return STATUS_INVALID_ARGS;
+                }
             };
-            replace_count += num_replace;
+            replace_count += replaced as usize;
 
-            if !self.quiet && (!self.filter || num_replace > 0) {
+            if !self.quiet && (!self.filter || replaced) {
                 streams.out.append(result);
                 if iter.want_newline() {
                     streams.out.push('\n');
@@ -1914,17 +1883,10 @@ impl SubCmdOptions for Shorten {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":q:m:Nlq");
 }
+impl ArgTaker for Shorten {}
 
 impl SubCmdHandler for Shorten {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'c' => {
                 self.chars_to_shorten = optarg
@@ -1935,25 +1897,16 @@ impl SubCmdHandler for Shorten {
                 let optarg = optarg.expect("option --max requires an argument");
                 self.max = match fish_wcstol(optarg) {
                     Ok(n) if n >= 0 => Some(n as usize),
-                    Ok(_) => {
-                        string_error!(streams, "%ls: Invalid max value '%ls'\n", args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
-                    _ => {
-                        string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
+                    Ok(_) => return Err(ParseError::InvalidArgs("Invalid max value")),
+                    Err(_) => return Err(ParseError::NotANumber),
                 };
             }
             'N' => self.no_newline = true,
             'l' => self.direction = Direction::Left,
             'q' => self.quiet = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -2163,72 +2116,39 @@ impl SubCmdOptions for Sub {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":l:qs:e:");
 }
+impl ArgTaker for Sub {}
 
 impl SubCmdHandler for Sub {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'l' => {
                 let optarg = optarg.expect("option --length requires an argument");
                 self.length = match fish_wcstol(optarg) {
                     Ok(n) if n >= 0 => Some(n as usize),
-                    Ok(_) => {
-                        string_error!(
-                            streams,
-                            "%ls: Invalid length value '%ls'\n",
-                            args[0],
-                            optarg
-                        );
-                        return STATUS_INVALID_ARGS;
-                    }
-                    _ => {
-                        string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
+                    Ok(_) => return Err(ParseError::InvalidArgs("Invalid length value")),
+                    Err(_) => return Err(ParseError::NotANumber),
                 };
             }
             's' => {
                 let optarg = optarg.expect("option --start requires an argument");
                 self.start = match fish_wcstol(optarg) {
                     Ok(n) if n != 0 => n,
-                    Ok(_) => {
-                        string_error!(streams, "%ls: Invalid start value '%ls'\n", args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
-                    _ => {
-                        string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
+                    Ok(_) => return Err(ParseError::InvalidArgs("Invalid start value")),
+                    Err(_) => return Err(ParseError::NotANumber),
                 };
             }
             'e' => {
                 let optarg = optarg.expect("option --end requires an argument");
                 self.end = match fish_wcstol(optarg) {
                     Ok(n) if n != 0 => Some(n),
-                    Ok(_) => {
-                        string_error!(streams, "%ls: Invalid end value '%ls'\n", args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
-                    _ => {
-                        string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg);
-                        return STATUS_INVALID_ARGS;
-                    }
+                    Ok(_) => return Err(ParseError::InvalidArgs("Invalid end value")),
+                    Err(_) => return Err(ParseError::NotANumber),
                 };
             }
             'q' => self.quiet = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -2322,17 +2242,10 @@ impl SubCmdOptions for Trim {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":c:lrq");
 }
+impl ArgTaker for Trim {}
 
 impl SubCmdHandler for Trim {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'c' => {
                 let optarg = optarg.expect("option --chars requires an argument");
@@ -2341,12 +2254,9 @@ impl SubCmdHandler for Trim {
             'l' => self.left = true,
             'r' => self.right = true,
             'q' => self.quiet = true,
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -2417,39 +2327,20 @@ impl SubCmdOptions for Unescape {
     ];
     const SHORT_OPTIONS: &'static wstr = L!(":q");
 }
+impl ArgTaker for Unescape {}
 
 impl SubCmdHandler for Unescape {
-    fn parse_options<'args>(
-        &mut self,
-        args: &mut [&'args wstr],
-        parser: &mut parser_t,
-        streams: &mut io_streams_t,
-        optarg: Option<&'args wstr>,
-        optind: usize,
-        c: char,
-    ) -> Option<c_int> {
+    fn parse_options(&mut self, optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'q' => self.no_quoted = true,
             '\u{1}' => {
                 let optarg = optarg.expect("option --style requires an argument");
-                self.style = if let Ok(x) = UnescapeStringStyle::try_from(optarg) {
-                    x
-                } else {
-                    string_error!(
-                        streams,
-                        "%ls: Invalid escape style '%ls'\n",
-                        args[0],
-                        optarg
-                    );
-                    return STATUS_INVALID_ARGS;
-                };
+                self.style = UnescapeStringStyle::try_from(optarg)
+                    .map_err(|_| ParseError::InvalidArgs("escape style"))?;
             }
-            _ => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
-                return STATUS_INVALID_ARGS;
-            }
+            _ => return Err(ParseError::UnknownOption),
         }
-        return STATUS_CMD_OK;
+        return Ok(());
     }
 
     fn handle(
@@ -2615,11 +2506,23 @@ pub fn string(
         return STATUS_CMD_OK;
     }
 
+    let args = &mut args[1..];
+
     let mut optind = 0;
     let retval = parse_opts(&mut subcmd, &mut optind, args, parser, streams);
     if retval != STATUS_CMD_OK {
         return retval;
     }
 
-    return subcmd.handle(parser, streams, &mut optind, &mut args[1..]);
+    let retval = subcmd.take_args(&mut optind, args, streams);
+    if retval != STATUS_CMD_OK {
+        return retval;
+    }
+
+    if streams.stdin_is_directly_redirected() && args.len() > optind {
+        string_error!(streams, BUILTIN_ERR_TOO_MANY_ARGUMENTS, args[0]);
+        return STATUS_INVALID_ARGS;
+    }
+
+    return subcmd.handle(parser, streams, &mut optind, args);
 }
