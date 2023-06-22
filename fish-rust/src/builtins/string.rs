@@ -295,12 +295,6 @@ fn escape_code_length(code: &wstr) -> Option<usize> {
     }
 }
 
-#[derive(Default)]
-struct Collect {
-    allow_empty: bool,
-    no_trim_newlines: bool,
-}
-
 enum ParseError {
     InvalidArgs(&'static str),
     NotANumber,
@@ -349,6 +343,12 @@ impl ParseError {
     }
 }
 
+#[derive(Default)]
+struct Collect {
+    allow_empty: bool,
+    no_trim_newlines: bool,
+}
+
 impl SubCmdOptions for Collect {
     const LONG_OPTIONS: &'static [woption<'static>] = &[
         wopt(L!("allow-empty"), woption_argument_t::no_argument, 'a'),
@@ -378,14 +378,8 @@ impl SubCmdHandler for Collect {
         let mut iter = Arguments::new(args, optind, false);
         while let Some(mut arg) = iter.next(streams) {
             if !self.no_trim_newlines {
-                loop {
-                    if arg.as_char_slice()[arg.len() - 1] == '\n' {
-                        let len = arg.len() - 1;
-                        arg.to_mut().truncate(len);
-                    } else {
-                        break;
-                    }
-                }
+                let trim_len = arg.len() - arg.chars().rev().take_while(|&c| c == '\n').count();
+                arg.to_mut().truncate(trim_len);
             }
 
             streams.out.append_with_separation(
@@ -462,7 +456,7 @@ impl SubCmdHandler for Escape {
         };
 
         let mut escaped_any = false;
-        let mut iter = Arguments::new(args, optind, false);
+        let mut iter = Arguments::new(args, optind, true);
         while let Some(arg) = iter.next(streams) {
             let mut escaped = escape_string(&arg, style);
 
@@ -746,28 +740,27 @@ fn report_match<'a>(
         return Ok(MatchResult::NoMatch);
     }
 
-    if opts.entire && !opts.quiet {
+    if opts.quiet {
+        return Ok(MatchResult::Match(Some(cg)));
+    }
+
+    if opts.entire {
         streams.out.append(arg);
         streams.out.append1('\n');
     }
 
-    let start = if opts.entire || opts.groups_only {
-        1
-    } else {
-        0
-    };
-    if !opts.quiet {
-        for m in (start..cg.len()).filter_map(|i| cg.get(i)) {
-            if opts.index {
-                streams.out.append(wgettext_fmt!(
-                    "%lu %lu\n",
-                    m.start() + 1,
-                    m.end() - m.start()
-                ));
-            } else {
-                streams.out.append(&arg[m.start()..m.end()]);
-                streams.out.append1('\n');
-            }
+    let start = (opts.entire || opts.groups_only) as usize;
+
+    for m in (start..cg.len()).filter_map(|i| cg.get(i)) {
+        if opts.index {
+            streams.out.append(wgettext_fmt!(
+                "%lu %lu\n",
+                m.start() + 1,
+                m.end() - m.start()
+            ));
+        } else {
+            streams.out.append(&arg[m.start()..m.end()]);
+            streams.out.append1('\n');
         }
     }
 
@@ -1192,7 +1185,7 @@ impl Default for Split {
             fields: Fields(Vec::new()),
             allow_empty: false,
             is_split0: false,
-            sep: WString::new(),
+            sep: WString::from("\0"),
         }
     }
 }
@@ -1348,11 +1341,12 @@ impl SubCmdHandler for Split {
         }
 
         let sep = &self.sep;
+        // this can technically be changed to a Cow<'args, wstr>, but then split_about must use Cow
         let mut all_splits: Vec<Vec<WString>> = Vec::new();
         let mut split_count = 0usize;
         let mut arg_count = 0usize;
 
-        let mut iter = Arguments::new(args, optind, true);
+        let mut iter = Arguments::new(args, optind, !self.is_split0);
         while let Some(arg) = iter.next(streams) {
             let splits: Vec<WString> = match self.split_from {
                 Direction::Right => {
@@ -1378,6 +1372,14 @@ impl SubCmdHandler for Split {
             all_splits.push(splits);
         }
 
+        if self.quiet {
+            return if split_count > arg_count {
+                STATUS_CMD_OK
+            } else {
+                STATUS_CMD_ERROR
+            };
+        }
+
         for mut splits in all_splits {
             // If we are from the right, split_about gave us reversed strings, in reversed order!
             if self.split_from == Direction::Right {
@@ -1387,42 +1389,38 @@ impl SubCmdHandler for Split {
                 splits.reverse();
             }
 
-            if !self.quiet {
-                if self.is_split0 && !splits.is_empty() {
-                    // split0 ignores a trailing "", so a\0b\0 is two elements.
-                    // In contrast to split, where a\nb\n is three - "a", "b" and "".
-                    //
-                    // Remove the last element if it is empty.
-                    if splits.last().unwrap().is_empty() {
-                        splits.pop();
+            if self.is_split0 && !splits.is_empty() {
+                // split0 ignores a trailing "", so a\0b\0 is two elements.
+                // In contrast to split, where a\nb\n is three - "a", "b" and "".
+                //
+                // Remove the last element if it is empty.
+                if splits.last().unwrap().is_empty() {
+                    splits.pop();
+                }
+            }
+            if !self.fields.is_empty() {
+                // Print nothing and return error if any of the supplied
+                // fields do not exist, unless `--allow-empty` is used.
+                if !self.allow_empty {
+                    for field in self.fields.iter() {
+                        // we already have checked the start
+                        if *field >= splits.len() {
+                            return STATUS_CMD_ERROR;
+                        }
                     }
                 }
-                if !self.fields.is_empty() {
-                    // Print nothing and return error if any of the supplied
-                    // fields do not exist, unless `--allow-empty` is used.
-                    if !self.allow_empty {
-                        for field in self.fields.iter() {
-                            // we already have checked the start
-                            if *field >= splits.len() {
-                                return STATUS_CMD_ERROR;
-                            }
-                        }
-                    }
-                    for field in self.fields.iter() {
-                        if let Some(val) = splits.get(*field) {
-                            streams.out.append_with_separation(
-                                val,
-                                SeparationType::explicitly,
-                                true,
-                            );
-                        }
-                    }
-                } else {
-                    for split in &splits {
+                for field in self.fields.iter() {
+                    if let Some(val) = splits.get(*field) {
                         streams
                             .out
-                            .append_with_separation(split, SeparationType::explicitly, true);
+                            .append_with_separation(val, SeparationType::explicitly, true);
                     }
+                }
+            } else {
+                for split in &splits {
+                    streams
+                        .out
+                        .append_with_separation(split, SeparationType::explicitly, true);
                 }
             }
         }
