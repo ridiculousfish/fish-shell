@@ -398,6 +398,11 @@ pub fn split_about<'haystack>(
                 None => break, // not found
             }
         };
+
+        if haystack.len() == split_point {
+            break;
+        }
+
         if !no_empty || split_point != 0 {
             output.push(wstr::from_char_slice(&haystack[..split_point]));
         }
