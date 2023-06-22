@@ -1854,7 +1854,7 @@ impl SubCmdOptions for Shorten {
         wopt(L!("left"), woption_argument_t::no_argument, 'l'),
         wopt(L!("quiet"), woption_argument_t::no_argument, 'q'),
     ];
-    const SHORT_OPTIONS: &'static wstr = L!(":q:m:Nlq");
+    const SHORT_OPTIONS: &'static wstr = L!(":c:m:Nlq");
 }
 
 impl SubCmdHandler for Shorten {
@@ -1923,7 +1923,7 @@ impl SubCmdHandler for Shorten {
                 }
                 .unwrap();
                 s.push_utfstr(ell);
-                let width = fish_wcswidth(&s);
+                let width = width_without_escapes(&s, 0);
 
                 if width > 0 && (width as usize) < min_width {
                     min_width = width as usize;
@@ -1931,7 +1931,7 @@ impl SubCmdHandler for Shorten {
                 inputs.push(s);
             } else {
                 for s in splits {
-                    let width = fish_wcswidth(&s);
+                    let width = width_without_escapes(&s, 0);
                     if width > 0 && (width as usize) < min_width {
                         min_width = width as usize;
                     }
@@ -1994,7 +1994,7 @@ impl SubCmdHandler for Shorten {
                         break;
                     }
 
-                    pos += skip_escapes(&line, pos);
+                    pos += skip_escapes(&line, pos).max(1);
                 }
                 if self.quiet && pos != 0 {
                     return STATUS_CMD_OK;
@@ -2403,18 +2403,19 @@ impl<'args, 'iter> Arguments<'args, 'iter> {
         }
         .ok()?;
 
-        // to match behaviour of earlier versions (does this matter, ever?)
+        // to match behaviour of earlier versions
         if num_bytes == 0 {
             return None;
         }
 
-        self.missing_trailing_newline = num_bytes > 0 && self.buffer.last() != Some(&b'\n');
-        let parsed = if num_bytes > 0 && !self.missing_trailing_newline {
+        let mut parsed = str2wcstring(&self.buffer);
+
+        if self.split_on_newline && parsed.char_at(parsed.len() - 1) == '\n' {
             // consumers do not expect to deal with the newline
-            str2wcstring(&self.buffer[..self.buffer.len() - 1])
+            parsed.pop();
         } else {
-            str2wcstring(&self.buffer)
-        };
+            self.missing_trailing_newline = !self.split_on_newline;
+        }
 
         let retval = Some(Cow::Owned(parsed));
         self.buffer.clear();
