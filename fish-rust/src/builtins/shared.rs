@@ -1,6 +1,6 @@
 use crate::builtins::{printf, wait};
+use crate::ffi::separation_type_t;
 use crate::ffi::{self, parser_t, wcstring_list_ffi_t, Repin, RustBuiltin};
-use crate::io::OutputStream;
 use crate::wchar::{wstr, WString, L};
 use crate::wchar_ffi::{c_str, empty_wstring, ToCppWString, WCharFromFFI};
 use crate::wgetopt::{wgetopter_t, wopt, woption, woption_argument_t};
@@ -100,11 +100,19 @@ impl output_stream_t {
     pub fn append1(&mut self, c: char) -> bool {
         self.append(wstr::from_char_slice(&[c]))
     }
-}
 
-impl OutputStream for output_stream_t {
-    fn append(&mut self, s: &wstr) -> bool {
-        self.append(s)
+    pub fn append_with_separation(
+        &mut self,
+        s: impl AsRef<wstr>,
+        sep: separation_type_t,
+        want_newline: bool,
+    ) -> bool {
+        self.ffi()
+            .append_with_separation(&s.as_ref().into_cpp(), sep, want_newline)
+    }
+
+    pub fn flush_and_check_error(&mut self) -> c_int {
+        self.ffi().flush_and_check_error().into()
     }
 }
 

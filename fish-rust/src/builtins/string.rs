@@ -1,3 +1,4 @@
+use crate::ffi::separation_type_t;
 use pcre2::utf32::Captures;
 use pcre2::utf32::{Regex, RegexBuilder};
 use std::borrow::Cow;
@@ -26,8 +27,6 @@ use crate::ffi::parser_t;
 use crate::flog::FLOG;
 
 use crate::future_feature_flags::{feature_test, FeatureFlag};
-use crate::io::OutputStream;
-use crate::io::SeparationType;
 use crate::parse_util::parse_util_unescape_wildcards;
 use crate::wchar::{wstr, WString, L};
 use crate::wchar_ext::WExt;
@@ -384,7 +383,7 @@ impl SubCmdHandler for Collect {
 
             streams.out.append_with_separation(
                 &arg,
-                SeparationType::explicitly,
+                separation_type_t::explicitly,
                 iter.want_newline(),
             );
             appended += arg.len();
@@ -397,7 +396,7 @@ impl SubCmdHandler for Collect {
         if self.allow_empty && appended == 0 {
             streams.out.append_with_separation(
                 L!(""),
-                SeparationType::explicitly,
+                separation_type_t::explicitly,
                 true, /* historical behavior is to always print a newline */
             );
         }
@@ -1411,16 +1410,18 @@ impl SubCmdHandler for Split {
                 }
                 for field in self.fields.iter() {
                     if let Some(val) = splits.get(*field) {
-                        streams
-                            .out
-                            .append_with_separation(val, SeparationType::explicitly, true);
+                        streams.out.append_with_separation(
+                            val,
+                            separation_type_t::explicitly,
+                            true,
+                        );
                     }
                 }
             } else {
                 for split in &splits {
                     streams
                         .out
-                        .append_with_separation(split, SeparationType::explicitly, true);
+                        .append_with_separation(split, separation_type_t::explicitly, true);
                 }
             }
         }
@@ -1509,7 +1510,7 @@ impl SubCmdHandler for Repeat {
             }
 
             if !first {
-                streams.out.push('\n');
+                streams.out.append1('\n');
             }
             first = false;
 
@@ -1573,7 +1574,7 @@ impl SubCmdHandler for Repeat {
 
         // Historical behavior is to never append a newline if all strings were empty.
         if !self.quiet && !self.no_newline && !all_empty && iter.want_newline() {
-            streams.out.push('\n');
+            streams.out.append1('\n');
         }
 
         if all_empty {
@@ -1808,7 +1809,7 @@ impl SubCmdHandler for Replace {
             if !self.quiet && (!self.filter || replaced) {
                 streams.out.append(result);
                 if iter.want_newline() {
-                    streams.out.push('\n');
+                    streams.out.append1('\n');
                 }
             }
 
@@ -1910,7 +1911,6 @@ impl SubCmdHandler for Shorten {
             return STATUS_CMD_OK;
         }
 
-        // let mut iter = Arguments::new(args, optind, true);
         while let Some(arg) = iter.next(streams) {
             // Visible width only makes sense line-wise.
             // So either we have no-newlines (which means we shorten on the first newline),
@@ -1918,8 +1918,8 @@ impl SubCmdHandler for Shorten {
             let mut splits = split_string(&arg, '\n').into_iter();
             if self.no_newline && splits.len() > 1 {
                 let mut s = match self.direction {
-                    Direction::Left => splits.last(),
                     Direction::Right => splits.next(),
+                    Direction::Left => splits.last(),
                 }
                 .unwrap();
                 s.push_utfstr(ell);
@@ -2168,7 +2168,7 @@ impl SubCmdHandler for Sub {
                     .out
                     .append(&s[start..usize::min(start + count, s.len())]);
                 if iter.want_newline() {
-                    streams.out.push('\n');
+                    streams.out.append1('\n');
                 }
             }
             nsub += 1;
@@ -2269,7 +2269,7 @@ impl SubCmdHandler for Trim {
             if !self.quiet {
                 streams.out.append(&arg[trim_start..arg.len() - trim_end]);
                 if iter.want_newline() {
-                    streams.out.push('\n');
+                    streams.out.append1('\n');
                 }
             } else if ntrim > 0 {
                 return STATUS_CMD_OK;
@@ -2325,7 +2325,7 @@ impl SubCmdHandler for Unescape {
             if let Some(res) = unescape_string(&arg, self.style) {
                 streams.out.append(res);
                 if iter.want_newline() {
-                    streams.out.push('\n');
+                    streams.out.append1('\n');
                 }
                 nesc += 1;
             }
