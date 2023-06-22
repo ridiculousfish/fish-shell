@@ -256,7 +256,7 @@ fn parse_opts(
     return STATUS_CMD_OK;
 }
 
-fn width_without_escapes(ins: &wstr, start_pos: usize) -> usize {
+fn width_without_escapes(ins: &wstr, start_pos: usize) -> i32 {
     let mut width = 0i32;
     for c in ins[start_pos..].chars() {
         let w = fish_wcwidth_visible(c);
@@ -284,7 +284,7 @@ fn width_without_escapes(ins: &wstr, start_pos: usize) -> usize {
         }
     }
 
-    return width.try_into().expect("width is negative");
+    return width;
 }
 
 fn escape_code_length(code: &wstr) -> Option<usize> {
@@ -1047,9 +1047,9 @@ impl SubCmdHandler for Match {
 
 struct Pad {
     char_to_pad: char,
-    pad_char_width: usize,
+    pad_char_width: i32,
     pad_from: Direction,
-    width: usize,
+    width: i32,
 }
 
 impl Default for Pad {
@@ -1091,19 +1091,19 @@ impl SubCmdHandler for Pad {
                 }
                 let pad_char_width = fish_wcswidth(optarg.slice_to(1));
                 // can we ever have negative width?
-                if pad_char_width <= 0 {
+                if pad_char_width == 0 {
                     return Err(ParseError::InvalidArgs(
                         "Invalid padding character of width zero",
                     ));
                 }
-                self.pad_char_width = pad_char_width as usize;
+                self.pad_char_width = pad_char_width;
                 self.char_to_pad = optarg.char_at(0);
             }
             'r' => self.pad_from = Direction::Right,
             'w' => {
                 let optarg = optarg.expect("option --width requires an argument");
                 self.width = match fish_wcstol(optarg) {
-                    Ok(w) if w >= 0 => w as usize,
+                    Ok(w) if w >= 0 => w as i32,
                     Ok(_) => return Err(ParseError::InvalidArgs("Invalid width")),
                     Err(_) => return Err(ParseError::NotANumber),
                 }
@@ -1120,8 +1120,8 @@ impl SubCmdHandler for Pad {
         optind: &mut usize,
         args: &mut [&'args wstr],
     ) -> Option<c_int> {
-        let mut max_width = 0usize;
-        let mut inputs: Vec<(Cow<'args, wstr>, usize)> = Vec::new();
+        let mut max_width = 0i32;
+        let mut inputs: Vec<(Cow<'args, wstr>, i32)> = Vec::new();
 
         let mut iter = Arguments::new(args, optind, true);
         while let Some(arg) = iter.next(streams) {
@@ -1142,14 +1142,14 @@ impl SubCmdHandler for Pad {
             let remaining_width = (pad_width - width) % self.pad_char_width;
             let mut padded: WString = match self.pad_from {
                 Direction::Left => repeat(self.char_to_pad)
-                    .take(pad)
-                    .chain(repeat(' ').take(remaining_width))
+                    .take(pad as usize)
+                    .chain(repeat(' ').take(remaining_width as usize))
                     .chain(input.chars())
                     .collect(),
                 Direction::Right => input
                     .chars()
-                    .chain(repeat(' ').take(remaining_width))
-                    .chain(repeat(self.char_to_pad).take(pad))
+                    .chain(repeat(' ').take(remaining_width as usize))
+                    .chain(repeat(self.char_to_pad).take(pad as usize))
                     .collect(),
             };
 
@@ -1940,13 +1940,13 @@ impl SubCmdHandler for Shorten {
             }
         }
 
-        let ourmax = self.max.unwrap_or(min_width);
+        let ourmax: usize = self.max.unwrap_or(min_width);
 
         // TODO: Can we have negative width
 
-        let ell_width: usize = {
-            let w = fish_wcswidth(ell) as usize;
-            if w > ourmax {
+        let ell_width: i32 = {
+            let w = fish_wcswidth(ell);
+            if w > ourmax as i32 {
                 // If we can't even print our ellipsis, we substitute nothing,
                 // truncating instead.
                 ell = L!("");
@@ -1989,7 +1989,7 @@ impl SubCmdHandler for Shorten {
                     // If we're at the beginning and it fits, we sits.
                     //
                     // Otherwise we require it to fit the ellipsis
-                    if (w <= ourmax && pos == 0) || (w + ell_width <= ourmax) {
+                    if (w <= ourmax as i32 && pos == 0) || (w + ell_width <= ourmax as i32) {
                         out = line.slice_from(pos);
                         break;
                     }
@@ -2020,7 +2020,7 @@ impl SubCmdHandler for Shorten {
                 while max <= ourmax && pos < line.len() {
                     pos += skip_escapes(&line, pos);
                     let w = fish_wcwidth(line.char_at(pos));
-                    if w <= 0 || max + w as usize + ell_width <= ourmax {
+                    if w <= 0 || max as i32 + w + ell_width <= ourmax as i32 {
                         // If it still fits, even if it is the last, we add it.
                         max += w as usize;
                         pos += 1;
