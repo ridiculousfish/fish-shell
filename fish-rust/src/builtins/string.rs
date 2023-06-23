@@ -269,17 +269,18 @@ fn width_without_escapes(ins: &wstr, start_pos: usize) -> i32 {
     // because they are not rendered.
     let mut pos = start_pos;
     while let Some(ec_pos) = ins.slice_from(pos).find_char('\x1B') {
-        if let Some(len) = escape_code_length(ins.slice_from(ec_pos)) {
-            let sub = ins.slice_from(ec_pos).slice_to(len);
+        pos += ec_pos;
+        if let Some(len) = escape_code_length(ins.slice_from(pos)) {
+            let sub = ins.slice_from(pos).slice_to(len);
             for c in sub.chars() {
                 width -= fish_wcwidth_visible(c);
             }
             // Move us forward behind the escape code,
             // it might include a second escape!
             // E.g. SGR0 ("reset") is \e\(B\e\[m in xterm.
-            pos = ec_pos + len - 1;
+            pos += len - 1;
         } else {
-            pos = ec_pos + 1;
+            pos += 1;
         }
     }
 
@@ -288,7 +289,7 @@ fn width_without_escapes(ins: &wstr, start_pos: usize) -> i32 {
 
 fn escape_code_length(code: &wstr) -> Option<usize> {
     use crate::ffi::escape_code_length_ffi;
-    match escape_code_length_ffi(code.as_ptr()).0 {
+    match escape_code_length_ffi(code.as_ptr()).into() {
         -1 => None,
         n => Some(n as usize),
     }
@@ -321,9 +322,7 @@ impl ParseError {
     ) {
         match self {
             ParseError::InvalidArgs(s) => {
-                let error_msg =
-                    wgettext_fmt!("%ls: Invalid %ls '%ls'\n", args[0], s, optarg.unwrap());
-                // TODO: might be +1 from unknown opt's thingy, is actually optarg
+                let error_msg = wgettext_fmt!("%ls: %ls '%ls'\n", args[0], s, optarg.unwrap());
 
                 streams.err.append(L!("string "));
                 streams.err.append(error_msg);
@@ -431,7 +430,7 @@ impl SubCmdHandler for Escape {
                 let optarg = optarg.expect("option --style requires an argument");
 
                 self.style = EscapeStringStyle::try_from(optarg)
-                    .map_err(|_| ParseError::InvalidArgs("escape style"))?;
+                    .map_err(|_| ParseError::InvalidArgs("Invalid escape style"))?;
             }
             _ => return Err(ParseError::UnknownOption),
         }
@@ -475,13 +474,23 @@ impl SubCmdHandler for Escape {
     }
 }
 
-#[derive(Default)]
 struct Join {
     quiet: bool,
     no_empty: bool,
     is_join0: bool,
     // we _could_ just take a reference, but the life-time parameters are a bit much
     sep: WString,
+}
+
+impl Default for Join {
+    fn default() -> Self {
+        Self {
+            quiet: false,
+            no_empty: false,
+            is_join0: false,
+            sep: WString::from("\0"),
+        }
+    }
 }
 
 impl SubCmdOptions for Join {
@@ -605,7 +614,7 @@ impl SubCmdHandler for Length {
                     // Carriage-return returns us to the beginning. The longest substring without
                     // carriage-return determines the overall width.
                     for reset in split_string(&line, '\r') {
-                        let n = width_without_escapes(&reset, 0);
+                        let n = width_without_escapes(&reset, 0) as usize;
                         max = max.max(n);
                     }
                     if max > 0 {
@@ -674,9 +683,10 @@ impl SubCmdHandler for Transform {
                 n_transformed += 1;
             }
             if !self.quiet {
-                let sep = if iter.want_newline() { '\n' } else { '\0' };
                 streams.out.append(&transformed);
-                streams.out.append1(sep);
+                if iter.want_newline() {
+                    streams.out.append1('\n');
+                }
             } else if n_transformed > 0 {
                 return STATUS_CMD_OK;
             }
@@ -1084,9 +1094,7 @@ impl SubCmdHandler for Pad {
             'c' => {
                 let optarg = optarg.expect("option -c requires an argument");
                 if optarg.len() != 1 {
-                    return Err(ParseError::InvalidArgs(
-                        "Padding should be a single character",
-                    ));
+                    return Err(ParseError::InvalidArgs("Padding should be a character"));
                 }
                 let pad_char_width = fish_wcswidth(optarg.slice_to(1));
                 // can we ever have negative width?
@@ -1129,9 +1137,6 @@ impl SubCmdHandler for Pad {
             inputs.push((arg, width));
         }
 
-        let wants_newline = inputs
-            .last()
-            .map_or(false, |(input, _)| !input.ends_with('\n'));
         let pad_width = max_width.max(self.width);
 
         for (input, width) in inputs {
@@ -1152,7 +1157,7 @@ impl SubCmdHandler for Pad {
                     .collect(),
             };
 
-            if wants_newline {
+            if iter.want_newline() {
                 padded.push('\n');
             }
 
@@ -1460,7 +1465,7 @@ impl SubCmdHandler for Repeat {
                 let optarg = optarg.expect("option --count requires an argument");
                 self.count = match fish_wcstol(optarg) {
                     Ok(n) if n >= 0 => n as usize,
-                    Ok(_) => return Err(ParseError::InvalidArgs("count value")),
+                    Ok(_) => return Err(ParseError::InvalidArgs("Invalid count value")),
                     Err(_) => return Err(ParseError::NotANumber),
                 }
             }
@@ -1468,7 +1473,7 @@ impl SubCmdHandler for Repeat {
                 let optarg = optarg.expect("option --max requires an argument");
                 self.max = match fish_wcstol(optarg) {
                     Ok(m) if m >= 0 => m as usize,
-                    Ok(_) => return Err(ParseError::InvalidArgs("max value")),
+                    Ok(_) => return Err(ParseError::InvalidArgs("Invalid max value")),
                     Err(_) => return Err(ParseError::NotANumber),
                 }
             }
@@ -1847,9 +1852,9 @@ impl Default for Shorten {
 }
 
 impl SubCmdOptions for Shorten {
-    // TODO
     const LONG_OPTIONS: &'static [woption<'static>] = &[
-        wopt(L!("char"), woption_argument_t::required_argument, 'c'),
+        // FIXME: documentation says it's --char
+        wopt(L!("chars"), woption_argument_t::required_argument, 'c'),
         wopt(L!("max"), woption_argument_t::required_argument, 'm'),
         wopt(L!("no-newline"), woption_argument_t::no_argument, 'N'),
         wopt(L!("left"), woption_argument_t::no_argument, 'l'),
@@ -2003,6 +2008,7 @@ impl SubCmdHandler for Shorten {
                 let output = match pos {
                     0 => line,
                     _ => {
+                        // We have an ellipsis, construct our string and print it.
                         nsub += 1;
                         let mut res = WString::with_capacity(ell.len() + out.len());
                         res.push_utfstr(ell);
@@ -2020,21 +2026,21 @@ impl SubCmdHandler for Shorten {
                 while max <= ourmax && pos < line.len() {
                     pos += skip_escapes(&line, pos);
                     let w = fish_wcwidth(line.char_at(pos));
-                    if w <= 0 || max as i32 + w + ell_width <= ourmax as i32 {
+                    if w <= 0 || max + w as usize + ell_width as usize <= ourmax {
                         // If it still fits, even if it is the last, we add it.
                         max += w as usize;
                         pos += 1;
                     } else {
                         // We're at the limit, so see if the entire string fits.
-                        let mut max2: i32 = max as i32 + w;
+                        let mut max2: usize = max + w as usize;
                         let mut pos2 = pos + 1;
                         while pos2 < line.len() {
                             pos2 += skip_escapes(&line, pos2);
-                            max2 += fish_wcwidth(line.char_at(pos2));
+                            max2 += fish_wcwidth(line.char_at(pos2)) as usize;
                             pos2 += 1;
                         }
 
-                        if max2 <= ourmax as i32 {
+                        if max2 <= ourmax {
                             // We're at the end and everything fits,
                             // no ellipsis.
                             pos = pos2;
@@ -2305,7 +2311,7 @@ impl SubCmdHandler for Unescape {
             '\u{1}' => {
                 let optarg = optarg.expect("option --style requires an argument");
                 self.style = UnescapeStringStyle::try_from(optarg)
-                    .map_err(|_| ParseError::InvalidArgs("escape style"))?;
+                    .map_err(|_| ParseError::InvalidArgs("Invalid escape style"))?;
             }
             _ => return Err(ParseError::UnknownOption),
         }
@@ -2414,7 +2420,7 @@ impl<'args, 'iter> Arguments<'args, 'iter> {
             // consumers do not expect to deal with the newline
             parsed.pop();
         } else {
-            self.missing_trailing_newline = !self.split_on_newline;
+            self.missing_trailing_newline = self.split_on_newline;
         }
 
         let retval = Some(Cow::Owned(parsed));
