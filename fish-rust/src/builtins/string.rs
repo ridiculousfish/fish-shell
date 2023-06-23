@@ -838,7 +838,10 @@ impl StringMatcher<'_> {
                 total_matched,
                 opts,
             } => {
+                // Note: --all is a no-op for glob matching since the pattern is always matched
+                // against the entire argument.
                 use crate::ffi::wildcard_match;
+
                 let subject = match opts.ignore_case {
                     true => arg.to_lowercase(),
                     false => arg.to_owned(),
@@ -1650,7 +1653,7 @@ impl<'args, 'opts> StringReplacer<'args, 'opts> {
             Some(if opts.ignore_case {
                 Self::Literal {
                     pattern: Cow::Owned(pattern.to_lowercase()),
-                    replacement: Cow::Owned(replacement.to_lowercase()),
+                    replacement: Cow::Owned(replacement.to_owned()),
                     opts,
                 }
             } else {
@@ -1672,10 +1675,6 @@ impl<'args, 'opts> StringReplacer<'args, 'opts> {
                 regex,
                 opts,
             } => {
-                if replacement.is_empty() {
-                    return Ok((false, arg));
-                }
-
                 let res = if opts.all {
                     regex.replace_all(arg.as_char_slice(), replacement.as_char_slice(), true)
                 } else {
@@ -1693,18 +1692,22 @@ impl<'args, 'opts> StringReplacer<'args, 'opts> {
                 replacement,
                 opts,
             } => {
+                if pattern.is_empty() {
+                    return Ok((false, arg));
+                }
+
                 // a premature optimization would be to alloc larger if we replacement.len() > pattern.len()
                 let mut result = WString::with_capacity(arg.len());
 
-                let arg = if opts.ignore_case {
-                    Cow::Owned(arg.to_lowercase())
+                let subject = if opts.ignore_case {
+                    arg.to_lowercase()
                 } else {
-                    arg
+                    arg.as_ref().to_owned()
                 };
 
                 let mut offset = 0;
-                while let Some(idx) = arg[offset..].find(pattern.as_char_slice()) {
-                    result.push_utfstr(&arg[offset..offset + idx]);
+                while let Some(idx) = subject[offset..].find(pattern.as_char_slice()) {
+                    result.push_utfstr(&subject[offset..offset + idx]);
                     result.push_utfstr(&replacement);
                     offset += idx + pattern.len();
                     if !opts.all {
@@ -1758,7 +1761,7 @@ impl SubCmdHandler for Replace {
         };
         *optind += 1;
         let Some(replacement) = args.get(*optind).copied() else {
-            string_error!(streams, BUILTIN_ERR_ARG_COUNT1, cmd, 1);
+            string_error!(streams, BUILTIN_ERR_ARG_COUNT1, cmd, 1, 2);
             return STATUS_INVALID_ARGS;
         };
         *optind += 1;

@@ -22,7 +22,7 @@ add_test! {"test_string", || {
 
             let rc = string(parser, &mut io, $args.as_mut_slice()).expect("string failed");
 
-            assert_eq!(rc, $expected_rc.unwrap(), "string builtin returned unexpected return code");
+            assert_eq!($expected_rc.unwrap(), rc, "string builtin returned unexpected return code");
 
             let string_stream = ffi::get_test_output_ffi(streams);
             let actual = escape_string(&string_stream.contents().from_ffi(), EscapeStringStyle::default());
@@ -270,9 +270,9 @@ add_test! {"test_string", || {
     string_test!([L!("string"), L!("trim"), L!(" a")], STATUS_CMD_OK, L!("a\n"));
     string_test!([L!("string"), L!("trim"), L!("a ")], STATUS_CMD_OK, L!("a\n"));
     string_test!([L!("string"), L!("trim"), L!(" a ")], STATUS_CMD_OK, L!("a\n"));
-    string_test!([L!("string"), L!("trim"), L!("-L!("), L!(") a")], STATUS_CMD_OK, L!("a\n"));
-    string_test!([L!("string"), L!("trim"), L!("-L!("), L!(")a ")], STATUS_CMD_ERROR, L!("a \n"));
-    string_test!([L!("string"), L!("trim"), L!("-L!("), L!(") a ")], STATUS_CMD_OK, L!("a \n"));
+    string_test!([L!("string"), L!("trim"), L!("-l"), L!(" a")], STATUS_CMD_OK, L!("a\n"));
+    string_test!([L!("string"), L!("trim"), L!("-l"), L!("a ")], STATUS_CMD_ERROR, L!("a \n"));
+    string_test!([L!("string"), L!("trim"), L!("-l"), L!(" a ")], STATUS_CMD_OK, L!("a \n"));
     string_test!([L!("string"), L!("trim"), L!("-r"), L!(" a")], STATUS_CMD_ERROR, L!(" a\n"));
     string_test!([L!("string"), L!("trim"), L!("-r"), L!("a ")], STATUS_CMD_OK, L!("a\n"));
     string_test!([L!("string"), L!("trim"), L!("-r"), L!(" a ")], STATUS_CMD_OK, L!(" a\n"));
