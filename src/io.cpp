@@ -410,6 +410,24 @@ std::unique_ptr<io_streams_t> make_null_io_streams_ffi() {
     return std::make_unique<io_streams_t>(*null, *null);
 }
 
+std::unique_ptr<io_streams_t> make_test_io_streams_ffi() {
+    // Temporary test helper.
+    string_output_stream_t *string = new string_output_stream_t();
+    null_output_stream_t *null = new null_output_stream_t();
+    auto streams = std::make_unique<io_streams_t>(*string, *null);
+    streams->stdin_is_directly_redirected = false;  // read from argv instead of stdin
+    return streams;
+}
+
+std::unique_ptr<string_output_stream_t> get_test_output_ffi(io_streams_t &&streams) {
+    string_output_stream_t *out = dynamic_cast<string_output_stream_t *>(&streams.out);
+    if (out == nullptr) {
+        return std::unique_ptr<string_output_stream_t>{};
+    }
+
+    return std::unique_ptr<string_output_stream_t>{out};
+}
+
 bool string_output_stream_t::append(const wchar_t *s, size_t amt) {
     contents_.append(s, amt);
     return true;

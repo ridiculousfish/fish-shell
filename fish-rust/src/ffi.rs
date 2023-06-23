@@ -93,8 +93,11 @@ include_cpp! {
     generate!("proc_wait_any")
 
     generate!("output_stream_t")
+    generate!("string_output_stream_t")
     generate!("io_streams_t")
     generate!("make_null_io_streams_ffi")
+    generate!("make_test_io_streams_ffi")
+    generate!("get_test_output_ffi")
 
     generate_pod!("RustFFIJobList")
     generate_pod!("RustFFIProcList")

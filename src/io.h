@@ -519,5 +519,7 @@ struct io_streams_t : noncopyable_t {
 
 /// FFI helper.
 std::unique_ptr<io_streams_t> make_null_io_streams_ffi();
+std::unique_ptr<io_streams_t> make_test_io_streams_ffi();
+std::unique_ptr<string_output_stream_t> get_test_output_ffi(io_streams_t &&streams);
 
 #endif
