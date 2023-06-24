@@ -53,31 +53,6 @@ macro_rules! string_error {
 
 const STRING_CHUNK_SIZE: usize = 1024;
 
-fn try_compile_regex(
-    pattern: &wstr,
-    ignore_case: bool,
-    cmd: &wstr,
-    streams: &mut io_streams_t,
-) -> Option<Regex> {
-    match RegexBuilder::new()
-        .caseless(ignore_case)
-        .build(pattern.as_char_slice())
-    {
-        Ok(r) => Some(r),
-        Err(e) => {
-            string_error!(
-                streams,
-                "%ls: Regular expression compile error: %ls\n",
-                cmd,
-                &WString::from(e.error_message())
-            );
-            string_error!(streams, "%ls: %ls\n", cmd, pattern);
-            string_error!(streams, "%ls: %*ls\n", cmd, e.offset().unwrap(), "^");
-            return None;
-        }
-    }
-}
-
 #[allow(clippy::type_complexity)]
 const SUBCOMMANDS: &[(&wstr, fn() -> Box<dyn StringSubCommand>)] = &[
     (L!("collect"), || Box::<Collect>::default()),
@@ -145,7 +120,7 @@ trait SubCmdHandler {
         parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int>;
 
     #[allow(unused_variables)]
@@ -242,7 +217,7 @@ fn parse_opts(
             c => {
                 let retval = subcmd.parse_options(w.woptarg, c);
                 if let Err(e) = retval {
-                    e.print_error(&mut args_read, parser, streams, w.woptarg, w.woptind);
+                    e.print_error(&args_read, parser, streams, w.woptarg, w.woptind);
                     return e.retval();
                 }
             }
@@ -299,39 +274,57 @@ enum ParseError {
     InvalidArgs(&'static str),
     NotANumber,
     UnknownOption,
-}
-
-impl ParseError {
-    fn description(&self) -> &str {
-        match self {
-            ParseError::InvalidArgs(_) => "Invalid arguments",
-            ParseError::NotANumber => "Not a number",
-            ParseError::UnknownOption => "Unknown option",
-        }
-    }
+    Regex(WString, pcre2::Error),
+    InvalidCaptureGroupName(WString),
+    InvalidRegexEscape(WString),
 }
 
 impl ParseError {
     fn print_error(
         &self,
-        args: &mut [&wstr],
+        args: &[&wstr],
         parser: &mut parser_t,
         streams: &mut io_streams_t,
         optarg: Option<&wstr>,
         optind: usize,
     ) {
+        let cmd = args[0];
         match self {
             ParseError::InvalidArgs(s) => {
-                let error_msg = wgettext_fmt!("%ls: %ls '%ls'\n", args[0], s, optarg.unwrap());
+                let error_msg = wgettext_fmt!("%ls: %ls '%ls'\n", cmd, s, optarg.unwrap());
 
                 streams.err.append(L!("string "));
                 streams.err.append(error_msg);
             }
             ParseError::NotANumber => {
-                string_error!(streams, BUILTIN_ERR_NOT_NUMBER, args[0], optarg.unwrap());
+                string_error!(streams, BUILTIN_ERR_NOT_NUMBER, cmd, optarg.unwrap());
             }
             ParseError::UnknownOption => {
-                string_unknown_option(parser, streams, args[0], args[optind - 1]);
+                string_unknown_option(parser, streams, cmd, args[optind - 1]);
+            }
+            ParseError::Regex(pattern, e) => {
+                string_error!(
+                    streams,
+                    "%ls: Regular expression compile error: %ls\n",
+                    cmd,
+                    &WString::from(e.error_message())
+                );
+                string_error!(streams, "%ls: %ls\n", cmd, pattern);
+                string_error!(streams, "%ls: %*ls\n", cmd, e.offset().unwrap(), "^");
+            }
+            ParseError::InvalidCaptureGroupName(name) => {
+                streams.err.append(wgettext_fmt!(
+                    "Modification of read-only variable \"%ls\" is not allowed\n",
+                    name
+                ));
+            }
+            ParseError::InvalidRegexEscape(pattern) => {
+                string_error!(
+                    streams,
+                    "%ls: Invalid escape sequence in pattern \"%ls\"\n",
+                    cmd,
+                    pattern
+                );
             }
         }
     }
@@ -370,7 +363,7 @@ impl SubCmdHandler for Collect {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         let mut appended = 0usize;
         let mut iter = Arguments::new(args, optind, false);
@@ -442,7 +435,7 @@ impl SubCmdHandler for Escape {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         // Currently, only the script style supports options.
         // Ignore them for other styles for now.
@@ -535,7 +528,7 @@ impl SubCmdHandler for Join {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         let sep = &self.sep;
         let mut nargs = 0usize;
@@ -602,7 +595,7 @@ impl SubCmdHandler for Length {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         let mut nnonempty = 0usize;
         let mut iter = Arguments::new(args, optind, true);
@@ -673,7 +666,7 @@ impl SubCmdHandler for Transform {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         let mut n_transformed = 0usize;
         let mut iter = Arguments::new(args, optind, true);
@@ -719,85 +712,143 @@ enum MatchResult<'a> {
     Match(Option<Captures<'a>>),
 }
 
-fn report_match<'a>(
-    arg: &'a wstr,
-    matches: &mut impl Iterator<Item = Result<Captures<'a>, pcre2::Error>>,
-    opts: &Match,
-    streams: &mut io_streams_t,
-) -> Result<MatchResult<'a>, pcre2::Error> {
-    let cg = match matches.next() {
-        // 0th capture group corresponds to entire match
-        Some(Ok(cg)) if cg.get(0).is_some() => cg,
-        Some(Err(e)) => return Err(e),
-        _ => {
-            if opts.invert_match && !opts.quiet {
-                if opts.index {
-                    streams.out.append(wgettext_fmt!("1 %lu\n", arg.len()));
-                } else {
-                    streams.out.append(arg);
-                    streams.out.append1('\n');
+impl StringMatcher<'_> {
+    fn report_match<'a>(
+        arg: &'a wstr,
+        matches: &mut impl Iterator<Item = Result<Captures<'a>, pcre2::Error>>,
+        opts: &Match,
+        streams: &mut io_streams_t,
+    ) -> Result<MatchResult<'a>, pcre2::Error> {
+        let cg = match matches.next() {
+            // 0th capture group corresponds to entire match
+            Some(Ok(cg)) if cg.get(0).is_some() => cg,
+            Some(Err(e)) => return Err(e),
+            _ => {
+                if opts.invert_match && !opts.quiet {
+                    if opts.index {
+                        streams.out.append(wgettext_fmt!("1 %lu\n", arg.len()));
+                    } else {
+                        streams.out.append(arg);
+                        streams.out.append1('\n');
+                    }
                 }
+                return Ok(match opts.invert_match {
+                    true => MatchResult::Match(None),
+                    false => MatchResult::NoMatch,
+                });
             }
-            return Ok(match opts.invert_match {
-                true => MatchResult::Match(None),
-                false => MatchResult::NoMatch,
-            });
+        };
+
+        if opts.invert_match {
+            return Ok(MatchResult::NoMatch);
         }
-    };
 
-    if opts.invert_match {
-        return Ok(MatchResult::NoMatch);
-    }
+        if opts.quiet {
+            return Ok(MatchResult::Match(Some(cg)));
+        }
 
-    if opts.quiet {
+        if opts.entire {
+            streams.out.append(arg);
+            streams.out.append1('\n');
+        }
+
+        let start = (opts.entire || opts.groups_only) as usize;
+
+        for m in (start..cg.len()).filter_map(|i| cg.get(i)) {
+            if opts.index {
+                streams.out.append(wgettext_fmt!(
+                    "%lu %lu\n",
+                    m.start() + 1,
+                    m.end() - m.start()
+                ));
+            } else {
+                streams.out.append(&arg[m.start()..m.end()]);
+                streams.out.append1('\n');
+            }
+        }
+
         return Ok(MatchResult::Match(Some(cg)));
     }
 
-    if opts.entire {
-        streams.out.append(arg);
-        streams.out.append1('\n');
+    fn populate_captures_from_match<'a>(
+        opts: &'a Match,
+        first_match_captures: &mut HashMap<String, Vec<WString>>,
+        cg: &'a Option<Captures<'a>>,
+    ) {
+        for (name, captures) in first_match_captures.iter_mut() {
+            // If there are multiple named groups and --all was used, we need to ensure that
+            // the indexes are always in sync between the variables. If an optional named
+            // group didn't match but its brethren did, we need to make sure to put
+            // *something* in the resulting array, and unfortunately fish doesn't support
+            // empty/null members so we're going to have to use an empty string as the
+            // sentinel value.
+
+            if let Some(m) = cg.as_ref().and_then(|cg| cg.name(&name.to_string())) {
+                captures.push(WString::from(m.as_bytes()));
+            } else if opts.all {
+                captures.push(WString::new());
+            }
+        }
+    }
+    fn validate_capture_group_names(
+        capture_group_names: &[Option<String>],
+    ) -> Result<(), ParseError> {
+        for name in capture_group_names.iter().filter_map(|n| n.as_ref()) {
+            let wname = WString::from_str(name);
+            if EnvVar::flags_for(&wname) == EnvVarFlags::READ_ONLY {
+                return Err(ParseError::InvalidCaptureGroupName(wname));
+            }
+        }
+        return Ok(());
     }
 
-    let start = (opts.entire || opts.groups_only) as usize;
+    fn new<'opts>(pattern: &wstr, opts: &'opts Match) -> Result<StringMatcher<'opts>, ParseError> {
+        if opts.regex {
+            let regex = RegexBuilder::new()
+                .caseless(opts.ignore_case)
+                .build(pattern.as_char_slice())
+                .map_err(|e| ParseError::Regex(pattern.to_owned(), e))?;
 
-    for m in (start..cg.len()).filter_map(|i| cg.get(i)) {
-        if opts.index {
-            streams.out.append(wgettext_fmt!(
-                "%lu %lu\n",
-                m.start() + 1,
-                m.end() - m.start()
-            ));
+            Self::validate_capture_group_names(regex.capture_names())?;
+
+            let first_match_captures = regex
+                .capture_names()
+                .iter()
+                .filter_map(|name| name.as_ref().map(|n| (n.to_owned(), Vec::new())))
+                .collect();
+            let m = StringMatcher::Regex {
+                regex: Box::new(regex),
+                total_matched: 0,
+                first_match_captures,
+                opts,
+            };
+            return Ok(m);
         } else {
-            streams.out.append(&arg[m.start()..m.end()]);
-            streams.out.append1('\n');
+            let mut wcpattern = parse_util_unescape_wildcards(pattern);
+            if opts.ignore_case {
+                wcpattern = wcpattern.to_lowercase();
+            }
+            if opts.entire {
+                if !wcpattern.is_empty() {
+                    if wcpattern.char_at(0) != ANY_STRING {
+                        wcpattern = iter::once(ANY_STRING).chain(wcpattern.chars()).collect();
+                    }
+                    if wcpattern.char_at(wcpattern.len() - 1) != ANY_STRING {
+                        wcpattern.push(ANY_STRING);
+                    }
+                } else {
+                    wcpattern.push(ANY_STRING);
+                }
+            }
+            let m = StringMatcher::WildCard {
+                pattern: wcpattern,
+                total_matched: 0,
+                opts,
+            };
+            return Ok(m);
         }
     }
 
-    return Ok(MatchResult::Match(Some(cg)));
-}
-
-fn populate_captures_from_match<'a>(
-    opts: &'a Match,
-    first_match_captures: &mut HashMap<String, Vec<WString>>,
-    cg: &'a Option<Captures<'a>>,
-) {
-    for (name, captures) in first_match_captures.iter_mut() {
-        // If there are multiple named groups and --all was used, we need to ensure that
-        // the indexes are always in sync between the variables. If an optional named
-        // group didn't match but its brethren did, we need to make sure to put
-        // *something* in the resulting array, and unfortunately fish doesn't support
-        // empty/null members so we're going to have to use an empty string as the
-        // sentinel value.
-
-        if let Some(m) = cg.as_ref().and_then(|cg| cg.name(&name.to_string())) {
-            captures.push(WString::from(m.as_bytes()));
-        } else if opts.all {
-            captures.push(WString::new());
-        }
-    }
-}
-
-impl StringMatcher<'_> {
     fn report_matches(
         &mut self,
         arg: &wstr,
@@ -811,7 +862,7 @@ impl StringMatcher<'_> {
                 opts,
             } => {
                 let mut iter = regex.captures_iter(arg.as_char_slice());
-                let rc = report_match(arg, &mut iter, opts, streams)?;
+                let rc = Self::report_match(arg, &mut iter, opts, streams)?;
 
                 let mut populate_captures = false;
                 if let MatchResult::Match(actual) = &rc {
@@ -819,16 +870,17 @@ impl StringMatcher<'_> {
                     *total_matched += 1;
 
                     if populate_captures {
-                        populate_captures_from_match(opts, first_match_captures, actual);
+                        Self::populate_captures_from_match(opts, first_match_captures, actual);
                     }
                 }
 
                 if !opts.invert_match && opts.all {
                     // we are guaranteed to match as long as ops.invert_match is false
-                    while let MatchResult::Match(cg) = report_match(arg, &mut iter, opts, streams)?
+                    while let MatchResult::Match(cg) =
+                        Self::report_match(arg, &mut iter, opts, streams)?
                     {
                         if populate_captures {
-                            populate_captures_from_match(opts, first_match_captures, &cg);
+                            Self::populate_captures_from_match(opts, first_match_captures, &cg);
                         }
                     }
                 }
@@ -872,24 +924,6 @@ impl StringMatcher<'_> {
     }
 }
 
-impl Match {
-    fn validate_capture_group_names(
-        capture_group_names: &[Option<String>],
-        streams: &mut io_streams_t,
-    ) -> bool {
-        for name in capture_group_names.iter().filter_map(|n| n.as_ref()) {
-            if EnvVar::flags_for(&WString::from_str(name)) == EnvVarFlags::READ_ONLY {
-                streams.err.append(wgettext_fmt!(
-                    "Modification of read-only variable \"%ls\" is not allowed\n",
-                    name
-                ));
-                return false;
-            }
-        }
-        return true;
-    }
-}
-
 #[derive(Default)]
 struct Match {
     all: bool,
@@ -918,21 +952,6 @@ impl SubCmdOptions for Match {
 }
 
 impl SubCmdHandler for Match {
-    fn take_args(
-        &mut self,
-        optind: &mut usize,
-        args: &[&wstr],
-        streams: &mut io_streams_t,
-    ) -> Option<c_int> {
-        let cmd = args[0];
-        let Some(arg) = args.get(*optind).copied() else {
-               string_error!(streams, BUILTIN_ERR_ARG_COUNT0, cmd);
-               return STATUS_INVALID_ARGS;
-           };
-        *optind += 1;
-        self.pattern = arg.to_owned();
-        STATUS_CMD_OK
-    }
     fn parse_options(&mut self, _optarg: Option<&wstr>, c: char) -> Result<(), ParseError> {
         match c {
             'a' => self.all = true,
@@ -948,12 +967,28 @@ impl SubCmdHandler for Match {
         return Ok(());
     }
 
+    fn take_args(
+        &mut self,
+        optind: &mut usize,
+        args: &[&wstr],
+        streams: &mut io_streams_t,
+    ) -> Option<c_int> {
+        let cmd = args[0];
+        let Some(arg) = args.get(*optind).copied() else {
+               string_error!(streams, BUILTIN_ERR_ARG_COUNT0, cmd);
+               return STATUS_INVALID_ARGS;
+           };
+        *optind += 1;
+        self.pattern = arg.to_owned();
+        STATUS_CMD_OK
+    }
+
     fn handle(
         &mut self,
         parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         let cmd = args[0];
 
@@ -984,45 +1019,11 @@ impl SubCmdHandler for Match {
             return STATUS_INVALID_ARGS;
         }
 
-        let mut matcher = if !self.regex {
-            let mut wcpattern = parse_util_unescape_wildcards(&self.pattern);
-            if self.ignore_case {
-                wcpattern = wcpattern.to_lowercase();
-            }
-            if self.entire {
-                if !wcpattern.is_empty() {
-                    if wcpattern.char_at(0) != ANY_STRING {
-                        wcpattern = iter::once(ANY_STRING).chain(wcpattern.chars()).collect();
-                    }
-                    if wcpattern.char_at(wcpattern.len() - 1) != ANY_STRING {
-                        wcpattern.push(ANY_STRING);
-                    }
-                } else {
-                    wcpattern.push(ANY_STRING);
-                }
-            }
-            StringMatcher::WildCard {
-                pattern: wcpattern,
-                total_matched: 0,
-                opts: self,
-            }
-        } else {
-            let Some(regex) = try_compile_regex(&self.pattern, self.ignore_case, cmd, streams) else {
-                    return STATUS_INVALID_ARGS;
-            };
-            if !Self::validate_capture_group_names(regex.capture_names(), streams) {
+        let mut matcher = match StringMatcher::new(&self.pattern, self) {
+            Ok(m) => m,
+            Err(e) => {
+                e.print_error(args, parser, streams, None, *optind);
                 return STATUS_INVALID_ARGS;
-            }
-            let first_match_captures = regex
-                .capture_names()
-                .iter()
-                .filter_map(|name| name.as_ref().map(|n| (n.to_owned(), Vec::new())))
-                .collect();
-            StringMatcher::Regex {
-                regex: Box::new(regex),
-                total_matched: 0,
-                first_match_captures,
-                opts: self,
             }
         };
 
@@ -1128,7 +1129,7 @@ impl SubCmdHandler for Pad {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&'args wstr],
+        args: &[&'args wstr],
     ) -> Option<c_int> {
         let mut max_width = 0i32;
         let mut inputs: Vec<(Cow<'args, wstr>, i32)> = Vec::new();
@@ -1336,7 +1337,7 @@ impl SubCmdHandler for Split {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         if self.fields.is_empty() && self.allow_empty {
             streams.err.append(wgettext_fmt!(
@@ -1492,7 +1493,7 @@ impl SubCmdHandler for Repeat {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         if self.max == 0 && self.count == 0 {
             // XXX: This used to be allowed, but returned 1.
@@ -1632,38 +1633,38 @@ impl<'args, 'opts> StringReplacer<'args, 'opts> {
         pattern: &'args wstr,
         replacement: &'args wstr,
         opts: &'opts Replace,
-        cmd: &wstr,
-        streams: &mut io_streams_t,
-    ) -> Option<Self> {
-        if opts.regex {
-            let Some(regex) = try_compile_regex(pattern, opts.ignore_case, cmd, streams) else {
-                return None;
-            };
-            let replacement = if feature_test(FeatureFlag::string_replace_backslash) {
-                replacement.to_owned()
-            } else {
-                Self::interpret_escape(replacement)?
-            };
-            Some(Self::Regex {
-                replacement,
-                regex: Box::new(regex),
+    ) -> Result<Self, ParseError> {
+        let r = match (opts.regex, opts.ignore_case) {
+            (true, _) => {
+                let regex = RegexBuilder::new()
+                    .caseless(opts.ignore_case)
+                    .build(pattern.as_char_slice())
+                    .map_err(|e| ParseError::Regex(pattern.to_owned(), e))?;
+
+                let replacement = if feature_test(FeatureFlag::string_replace_backslash) {
+                    replacement.to_owned()
+                } else {
+                    Self::interpret_escape(replacement)
+                        .ok_or_else(|| ParseError::InvalidRegexEscape(pattern.to_owned()))?
+                };
+                Self::Regex {
+                    replacement,
+                    regex: Box::new(regex),
+                    opts,
+                }
+            }
+            (false, true) => Self::Literal {
+                pattern: Cow::Owned(pattern.to_lowercase()),
+                replacement: Cow::Owned(replacement.to_owned()),
                 opts,
-            })
-        } else {
-            Some(if opts.ignore_case {
-                Self::Literal {
-                    pattern: Cow::Owned(pattern.to_lowercase()),
-                    replacement: Cow::Owned(replacement.to_owned()),
-                    opts,
-                }
-            } else {
-                Self::Literal {
-                    pattern: Cow::Borrowed(pattern),
-                    replacement: Cow::Borrowed(replacement),
-                    opts,
-                }
-            })
-        }
+            },
+            (false, false) => Self::Literal {
+                pattern: Cow::Borrowed(pattern),
+                replacement: Cow::Borrowed(replacement),
+                opts,
+            },
+        };
+        Ok(r)
     }
 
     /// Return None if failed, inner bool indicates if something was replaced
@@ -1784,16 +1785,19 @@ impl SubCmdHandler for Replace {
 
     fn handle(
         &mut self,
-        _parser: &mut parser_t,
+        parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         let cmd = args[0];
 
-        let Some(replacer) = StringReplacer::new(&self.pattern, &self.replacement, self, cmd, streams) else {
-            // failed to init regex
-            return STATUS_INVALID_ARGS;
+        let replacer = match StringReplacer::new(&self.pattern, &self.replacement, self) {
+            Ok(x) => x,
+            Err(e) => {
+                e.print_error(args, parser, streams, None, *optind);
+                return STATUS_INVALID_ARGS;
+            }
         };
 
         let mut replace_count = 0;
@@ -1895,7 +1899,7 @@ impl SubCmdHandler for Shorten {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         let mut min_width = usize::MAX;
         let mut inputs = Vec::new();
@@ -2136,7 +2140,7 @@ impl SubCmdHandler for Sub {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         let cmd = args[0];
         if self.length.is_some() && self.end.is_some() {
@@ -2243,7 +2247,7 @@ impl SubCmdHandler for Trim {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         // If neither left or right is specified, we do both.
         if !self.left && !self.right {
@@ -2326,7 +2330,7 @@ impl SubCmdHandler for Unescape {
         _parser: &mut parser_t,
         streams: &mut io_streams_t,
         optind: &mut usize,
-        args: &mut [&wstr],
+        args: &[&wstr],
     ) -> Option<c_int> {
         let mut nesc = 0;
         let mut iter = Arguments::new(args, optind, true);
