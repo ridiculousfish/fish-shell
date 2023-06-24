@@ -1226,7 +1226,7 @@ impl TryFrom<&wstr> for Fields {
     fn try_from(value: &wstr) -> Result<Self, Self::Error> {
         fn parse_field(f: &[char]) -> Result<Vec<usize>, FieldParseError> {
             use FieldParseError::*;
-            let mut range = f.split(|&x| x == '-');
+            let mut range = f.splitn(2, |&x| x == '-');
             let range: Vec<usize> = match (range.next(), range.next()) {
                 (Some(_), None) => match fish_wcstol(wstr::from_char_slice(f)) {
                     Ok(n) if n >= 1 => vec![n as usize - 1],
