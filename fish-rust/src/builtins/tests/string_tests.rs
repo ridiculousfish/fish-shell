@@ -24,8 +24,8 @@ add_test! {"test_string", || {
 
             assert_eq!($expected_rc.unwrap(), rc, "string builtin returned unexpected return code");
 
-            let string_stream = ffi::get_test_output_ffi(streams);
-            let actual = escape_string(&string_stream.contents().from_ffi(), EscapeStringStyle::default());
+            let string_stream_contents = ffi::get_test_output_ffi(&streams);
+            let actual = escape_string(&string_stream_contents.from_ffi(), EscapeStringStyle::default());
             let expected = escape_string($expected_out, EscapeStringStyle::default());
             assert_eq!(expected, actual, "string builtin returned unexpected output");
         };

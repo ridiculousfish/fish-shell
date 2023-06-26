@@ -411,19 +411,18 @@ std::unique_ptr<io_streams_t> make_null_io_streams_ffi() {
 }
 
 std::unique_ptr<io_streams_t> make_test_io_streams_ffi() {
-    // Temporary test helper
+    // Temporary test helper.
     auto streams = std::make_unique<owning_io_streams_t>();
     streams->stdin_is_directly_redirected = false;  // read from argv instead of stdin
     return streams;
 }
 
-std::unique_ptr<string_output_stream_t> get_test_output_ffi(io_streams_t &&streams) {
-    string_output_stream_t *out = dynamic_cast<string_output_stream_t *>(&streams.out);
+std::wstring get_test_output_ffi(const io_streams_t &streams) {
+    string_output_stream_t *out = static_cast<string_output_stream_t *>(&streams.out);
     if (out == nullptr) {
-        return std::unique_ptr<string_output_stream_t>{};
+        return std::wstring{};
     }
-
-    return std::unique_ptr<string_output_stream_t>{out};
+    return out->contents();
 }
 
 bool string_output_stream_t::append(const wchar_t *s, size_t amt) {
