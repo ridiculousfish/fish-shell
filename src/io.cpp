@@ -417,11 +417,8 @@ std::unique_ptr<io_streams_t> make_test_io_streams_ffi() {
     return streams;
 }
 
-std::wstring get_test_output_ffi(const io_streams_t &streams) {
+const wcstring &get_test_output_ffi(const io_streams_t &streams) {
     string_output_stream_t *out = static_cast<string_output_stream_t *>(&streams.out);
-    if (out == nullptr) {
-        return std::wstring{};
-    }
     return out->contents();
 }
 

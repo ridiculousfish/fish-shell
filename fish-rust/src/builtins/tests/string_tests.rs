@@ -5,7 +5,7 @@ add_test! {"test_string", || {
     use crate::ffi::parser_t;
     use crate::ffi;
     use crate::builtins::string::string;
-    use crate::wchar_ffi::WCharFromFFI;
+    use crate::wchar_ffi::AsWstr;
     use crate::common::{EscapeStringStyle, escape_string};
     use crate::wchar::L;
     use crate::builtins::shared::{STATUS_CMD_ERROR,STATUS_CMD_OK, STATUS_INVALID_ARGS};
@@ -25,7 +25,7 @@ add_test! {"test_string", || {
             assert_eq!($expected_rc.unwrap(), rc, "string builtin returned unexpected return code");
 
             let string_stream_contents = ffi::get_test_output_ffi(&streams);
-            let actual = escape_string(&string_stream_contents.from_ffi(), EscapeStringStyle::default());
+            let actual = escape_string(string_stream_contents.as_wstr(), EscapeStringStyle::default());
             let expected = escape_string($expected_out, EscapeStringStyle::default());
             assert_eq!(expected, actual, "string builtin returned unexpected output");
         };

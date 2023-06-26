@@ -527,6 +527,6 @@ struct owning_io_streams_t : io_streams_t {
 
 std::unique_ptr<io_streams_t> make_null_io_streams_ffi();
 std::unique_ptr<io_streams_t> make_test_io_streams_ffi();
-std::wstring get_test_output_ffi(const io_streams_t &streams);
+const wcstring &get_test_output_ffi(const io_streams_t &streams);
 
 #endif
