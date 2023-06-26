@@ -411,10 +411,8 @@ std::unique_ptr<io_streams_t> make_null_io_streams_ffi() {
 }
 
 std::unique_ptr<io_streams_t> make_test_io_streams_ffi() {
-    // Temporary test helper.
-    string_output_stream_t *string = new string_output_stream_t();
-    null_output_stream_t *null = new null_output_stream_t();
-    auto streams = std::make_unique<io_streams_t>(*string, *null);
+    // Temporary test helper
+    auto streams = std::make_unique<owning_io_streams_t>();
     streams->stdin_is_directly_redirected = false;  // read from argv instead of stdin
     return streams;
 }
