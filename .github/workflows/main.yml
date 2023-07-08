@@ -179,7 +179,7 @@ jobs:
         cmake -DWITH_GETTEXT=NO ..
     - name: make
       run: |
-        make
+        MACOSX_DEPLOYMENT_TARGET=10.10 make
     - name: make test
       run: |
         make test
