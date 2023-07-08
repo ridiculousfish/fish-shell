@@ -183,3 +183,6 @@ jobs:
     - name: make test
       run: |
         make test
+    - name: check version
+      run: |
+        otool -l ./build/fish
