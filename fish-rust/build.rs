@@ -2,6 +2,12 @@ use rsconf::{LinkType, Target};
 use std::error::Error;
 
 fn main() {
+    // Set deployment target on macOS.
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.10");
+        println!("cargo:rustc-link-arg=-mmacosx-version-min=10.10");
+    }
+
     cc::Build::new().file("src/compat.c").compile("libcompat.a");
 
     let rust_dir = std::env::var("CARGO_MANIFEST_DIR").expect("Env var CARGO_MANIFEST_DIR missing");
