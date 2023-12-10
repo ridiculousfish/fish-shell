@@ -3,8 +3,10 @@
 
 use crate::flog::{FloggableDebug, FLOG};
 use once_cell::race::OnceBox;
+use std::any::Any;
+use std::collections::HashMap;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
@@ -133,12 +135,25 @@ fn iothread_perform_cant_wait_ffi(callback: &cxx::SharedPtr<ffi::CppCallback>) {
 /// A [`ThreadPool`] or [`Debounce`] work request.
 type WorkItem = Box<dyn FnOnce() + 'static + Send>;
 
-/// The queue of [`WorkItem`]s to be executed on the main thread. This is added to from
-/// [`Debounce::enqueue_main_thread()`] and read from in `iothread_service_main()`.
-///
-/// Since items are enqueued from various background threads then read by the main thread, the work
-/// items must implement `Send`.
-static MAIN_THREAD_QUEUE: Mutex<Vec<WorkItem>> = Mutex::new(Vec::new());
+type DebounceResult = Box<dyn Any + Send>;
+
+struct DebounceCallback(Box<dyn FnOnce(DebounceResult) + 'static>);
+
+// Safety: only used on main thread.
+unsafe impl Send for DebounceCallback {}
+
+struct DebounceItem {
+    callback: DebounceCallback,
+    result: Option<DebounceResult>,
+}
+
+static NEXT_COMPLETION_ID: AtomicU64 = AtomicU64::new(0);
+
+static DEBOUNCE_STARTED: once_cell::sync::Lazy<Mutex<HashMap<u64, DebounceCallback>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+
+static DEBOUNCE_FINISHED: once_cell::sync::Lazy<Mutex<Vec<DebounceItem>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(vec![]));
 
 /// Initialize some global static variables. Must be called at startup from the main thread.
 pub fn init() {
@@ -566,12 +581,13 @@ pub fn iothread_service_main() {
     // posting uses the opposite order.
     NOTIFY_SIGNALLER.try_consume();
 
-    // Move the queue to a local variable. The MAIN_THREAD_QUEUE lock is not held after this.
-    let queue = std::mem::take(&mut *MAIN_THREAD_QUEUE.lock().expect("Mutex poisoned!"));
+    let queue = std::mem::take(&mut *DEBOUNCE_FINISHED.lock().expect("Mutex poisoned!"));
 
     // Perform each completion in order.
-    for func in queue {
-        (func)();
+    for debounce_item in queue {
+        if let Some(result) = debounce_item.result {
+            (debounce_item.callback.0)(result);
+        }
     }
 }
 
@@ -606,11 +622,16 @@ pub struct Debounce {
     data: Arc<Mutex<DebounceData>>,
 }
 
+struct DebounceWorkItem {
+    id: u64,
+    work_item: WorkItem,
+}
+
 /// The data shared between [`Debounce`] instances.
 struct DebounceData {
     /// The (one or none) next enqueued request, overwritten each time a new call to
     /// [`perform()`](Self::perform) is made.
-    next_req: Option<WorkItem>,
+    next_req: Option<DebounceWorkItem>,
     /// The non-zero token of the current non-abandoned thread or `None` if no thread is running.
     active_token: Option<NonZeroU64>,
     /// The next token to use when spawning a thread.
@@ -646,7 +667,7 @@ impl Debounce {
             let mut data = self.data.lock().expect("Mutex poisoned!");
             if let Some(req) = data.next_req.take() {
                 data.start_time = Instant::now();
-                req
+                req.work_item
             } else {
                 // There is no pending request. Mark this token as no longer running.
                 if Some(token) == data.active_token {
@@ -666,8 +687,7 @@ impl Debounce {
     ///
     /// The result is a token which is only of interest to the test suite.
     pub fn perform(&self, handler: impl FnOnce() + 'static + Send) -> NonZeroU64 {
-        let h = Box::new(handler);
-        self.perform_inner(h)
+        self.perform_with_completion(handler, |_result| ())
     }
 
     fn perform_ffi(&self, callback: &cxx::SharedPtr<ffi::CppCallback>) -> u64 {
@@ -707,24 +727,53 @@ impl Debounce {
     pub fn perform_with_completion<H, R, C>(&self, handler: H, completion: C) -> NonZeroU64
     where
         H: FnOnce() -> R + 'static + Send,
-        C: FnOnce(R) + 'static + Send,
+        C: FnOnce(R) + 'static,
         R: 'static + Send,
     {
-        let h = Box::new(move || {
+        assert_is_main_thread();
+        let completion_id = NEXT_COMPLETION_ID.fetch_add(1, Ordering::Relaxed);
+        let old_item = DEBOUNCE_STARTED.lock().unwrap().insert(
+            completion_id,
+            DebounceCallback(Box::new(move |result| {
+                completion(*result.downcast().unwrap())
+            })),
+        );
+        assert!(old_item.is_none());
+        let work_item = Box::new(move || {
             let result = handler();
-            let c = Box::new(move || {
-                (completion)(result);
+            let callback = DEBOUNCE_STARTED
+                .lock()
+                .unwrap()
+                .remove(&completion_id)
+                .unwrap();
+            DEBOUNCE_FINISHED.lock().unwrap().push(DebounceItem {
+                callback,
+                result: Some(Box::new(result)),
             });
-            Self::enqueue_main_thread_result(c);
+            NOTIFY_SIGNALLER.post();
         });
-        self.perform_inner(h)
+        self.perform_inner(DebounceWorkItem {
+            id: completion_id,
+            work_item,
+        })
     }
 
-    fn perform_inner(&self, handler: WorkItem) -> NonZeroU64 {
+    fn perform_inner(&self, work_item: DebounceWorkItem) -> NonZeroU64 {
         let mut spawn = false;
         let active_token = {
             let mut data = self.data.lock().expect("Mutex poisoned!");
-            data.next_req = Some(handler);
+            if let Some(old_work_item) = &data.next_req {
+                let callback = DEBOUNCE_STARTED
+                    .lock()
+                    .unwrap()
+                    .remove(&old_work_item.id)
+                    .unwrap();
+                DEBOUNCE_FINISHED.lock().unwrap().push(DebounceItem {
+                    callback,
+                    result: None,
+                });
+            }
+            data.next_req = Some(work_item);
             // If we have a timeout and our running thread has exceeded it, abandon that thread.
             if data.active_token.is_some()
                 && !self.timeout.is_zero()
@@ -756,12 +805,6 @@ impl Debounce {
         }
 
         active_token
-    }
-
-    /// Static helper to add a [`WorkItem`] to [`MAIN_THREAD_ID`] and signal [`NOTIFY_SIGNALLER`].
-    fn enqueue_main_thread_result(f: WorkItem) {
-        MAIN_THREAD_QUEUE.lock().expect("Mutex poisoned!").push(f);
-        NOTIFY_SIGNALLER.post();
     }
 }
 
