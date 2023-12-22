@@ -2,6 +2,7 @@
 //! ported directly from the cpp code so we can use rust threads instead of using pthreads.
 
 use crate::flog::{FloggableDebug, FLOG};
+use crate::reader::ReaderData;
 use once_cell::race::OnceBox;
 use std::any::Any;
 use std::collections::HashMap;
@@ -75,46 +76,23 @@ mod ffi {
 
     extern "Rust" {
         fn iothread_port() -> i32;
-        fn iothread_service_main();
-        #[cxx_name = "iothread_service_main_with_timeout"]
-        fn iothread_service_main_with_timeout_ffi(timeout_usec: u64);
-        #[cxx_name = "iothread_drain_all"]
-        fn iothread_drain_all_ffi();
+        #[cxx_name = "iothread_service_main"]
+        fn iothread_service_main_ffi(ctx: *mut u8);
         #[cxx_name = "iothread_perform"]
         fn iothread_perform_ffi(callback: &SharedPtr<CppCallback>);
         #[cxx_name = "iothread_perform_cantwait"]
         fn iothread_perform_cant_wait_ffi(callback: &SharedPtr<CppCallback>);
     }
+}
 
-    extern "Rust" {
-        #[cxx_name = "debounce_t"]
-        type Debounce;
-
-        #[cxx_name = "perform"]
-        fn perform_ffi(&self, callback: &SharedPtr<CppCallback>) -> u64;
-        #[cxx_name = "perform_with_completion"]
-        fn perform_with_completion_ffi(
-            &self,
-            callback: &SharedPtr<CppCallback>,
-            completion: &SharedPtr<CppCallback>,
-        ) -> u64;
-
-        #[cxx_name = "new_debounce_t"]
-        fn new_debounce_ffi(timeout_ms: u64) -> Box<Debounce>;
-    }
+fn iothread_service_main_ffi(ctx: *mut u8) {
+    let ctx = unsafe { &mut *(ctx as *mut ReaderData) };
+    iothread_service_main(ctx);
 }
 
 pub use ffi::CppCallback;
 unsafe impl Send for ffi::CppCallback {}
 unsafe impl Sync for ffi::CppCallback {}
-
-fn iothread_service_main_with_timeout_ffi(timeout_usec: u64) {
-    iothread_service_main_with_timeout(Duration::from_micros(timeout_usec))
-}
-
-fn iothread_drain_all_ffi() {
-    unsafe { iothread_drain_all() }
-}
 
 fn iothread_perform_ffi(callback: &cxx::SharedPtr<ffi::CppCallback>) {
     let callback = callback.clone();
@@ -132,12 +110,13 @@ fn iothread_perform_cant_wait_ffi(callback: &cxx::SharedPtr<ffi::CppCallback>) {
     });
 }
 
-/// A [`ThreadPool`] or [`Debounce`] work request.
+/// A [`ThreadPool`] work request.
 type WorkItem = Box<dyn FnOnce() + 'static + Send>;
 
 type DebounceResult = Box<dyn Any + Send>;
 
-struct DebounceCallback(Box<dyn FnOnce(DebounceResult) + 'static>);
+#[allow(clippy::type_complexity)]
+struct DebounceCallback(Box<dyn FnOnce(&mut ReaderData, DebounceResult) + 'static>);
 
 // Safety: only used on main thread.
 unsafe impl Send for DebounceCallback {}
@@ -568,13 +547,13 @@ pub fn iothread_port() -> i32 {
     NOTIFY_SIGNALLER.read_fd()
 }
 
-pub fn iothread_service_main_with_timeout(timeout: Duration) {
+pub fn iothread_service_main_with_timeout(ctx: &mut ReaderData, timeout: Duration) {
     if crate::fd_readable_set::is_fd_readable(iothread_port(), timeout.as_millis() as u64) {
-        iothread_service_main();
+        iothread_service_main(ctx);
     }
 }
 
-pub fn iothread_service_main() {
+pub fn iothread_service_main(ctx: &mut ReaderData) {
     self::assert_is_main_thread();
 
     // Note: the order here is important. We must consume events before handling requests, as
@@ -586,13 +565,13 @@ pub fn iothread_service_main() {
     // Perform each completion in order.
     for debounce_item in queue {
         if let Some(result) = debounce_item.result {
-            (debounce_item.callback.0)(result);
+            (debounce_item.callback.0)(ctx, result);
         }
     }
 }
 
 /// Does nasty polling via select() and marked as unsafe because it should only be used for testing.
-pub unsafe fn iothread_drain_all() {
+pub unsafe fn iothread_drain_all(ctx: &mut ReaderData) {
     while borrow_io_thread_pool()
         .shared
         .mutex
@@ -601,7 +580,7 @@ pub unsafe fn iothread_drain_all() {
         .total_threads
         > 0
     {
-        iothread_service_main_with_timeout(Duration::from_millis(1000));
+        iothread_service_main_with_timeout(ctx, Duration::from_millis(1000));
     }
 }
 
@@ -638,10 +617,6 @@ struct DebounceData {
     next_token: NonZeroU64,
     /// The start time of the most recently spawned thread or request (if any).
     start_time: Instant,
-}
-
-fn new_debounce_ffi(timeout_ms: u64) -> Box<Debounce> {
-    Box::new(Debounce::new(Duration::from_millis(timeout_ms)))
 }
 
 impl Debounce {
@@ -687,33 +662,7 @@ impl Debounce {
     ///
     /// The result is a token which is only of interest to the test suite.
     pub fn perform(&self, handler: impl FnOnce() + 'static + Send) -> NonZeroU64 {
-        self.perform_with_completion(handler, |_result| ())
-    }
-
-    fn perform_ffi(&self, callback: &cxx::SharedPtr<ffi::CppCallback>) -> u64 {
-        let callback = callback.clone();
-
-        self.perform(move || {
-            callback.invoke();
-        })
-        .into()
-    }
-
-    fn perform_with_completion_ffi(
-        &self,
-        callback: &cxx::SharedPtr<ffi::CppCallback>,
-        completion: &cxx::SharedPtr<ffi::CppCallback>,
-    ) -> u64 {
-        let callback = callback.clone();
-        let completion = completion.clone();
-
-        self.perform_with_completion(
-            move || -> crate::ffi::void_ptr { callback.invoke().into() },
-            move |result| {
-                completion.invoke_with_param(result.into());
-            },
-        )
-        .into()
+        self.perform_with_completion(handler, |_ctx, _result| ())
     }
 
     /// Enqueue `handler` to be performed on a background thread with [`Completion`] `completion`
@@ -727,15 +676,15 @@ impl Debounce {
     pub fn perform_with_completion<H, R, C>(&self, handler: H, completion: C) -> NonZeroU64
     where
         H: FnOnce() -> R + 'static + Send,
-        C: FnOnce(R) + 'static,
+        C: FnOnce(&mut ReaderData, R) + 'static,
         R: 'static + Send,
     {
         assert_is_main_thread();
         let completion_id = NEXT_COMPLETION_ID.fetch_add(1, Ordering::Relaxed);
         let old_item = DEBOUNCE_STARTED.lock().unwrap().insert(
             completion_id,
-            DebounceCallback(Box::new(move |result| {
-                completion(*result.downcast().unwrap())
+            DebounceCallback(Box::new(move |ctx, result| {
+                completion(ctx, *result.downcast().unwrap())
             })),
         );
         assert!(old_item.is_none());
