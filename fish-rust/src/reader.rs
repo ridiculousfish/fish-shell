@@ -4712,7 +4712,7 @@ impl ReaderData {
             };
             self.history.clone().add_pending_with_file_detection(
                 &text,
-                self.parser().variables.clone(),
+                &self.parser().variables,
                 mode,
             );
         }
