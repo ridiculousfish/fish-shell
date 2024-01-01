@@ -4,10 +4,8 @@
 use crate::flog::{FloggableDebug, FLOG};
 use crate::reader::ReaderData;
 use once_cell::race::OnceBox;
-use std::any::Any;
-use std::collections::HashMap;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
@@ -113,26 +111,16 @@ fn iothread_perform_cant_wait_ffi(callback: &cxx::SharedPtr<ffi::CppCallback>) {
 /// A [`ThreadPool`] work request.
 type WorkItem = Box<dyn FnOnce() + 'static + Send>;
 
-type DebounceResult = Box<dyn Any + Send>;
-
-#[allow(clippy::type_complexity)]
-struct DebounceCallback(Box<dyn FnOnce(&mut ReaderData, DebounceResult) + 'static>);
+// A helper type to allow us to (temporarily) send an object to another thread.
+struct ForceSend<T>(T);
 
 // Safety: only used on main thread.
-unsafe impl Send for DebounceCallback {}
+unsafe impl<T> Send for ForceSend<T> {}
 
-struct DebounceItem {
-    callback: DebounceCallback,
-    result: Option<DebounceResult>,
-}
+#[allow(clippy::type_complexity)]
+type DebounceCallback = ForceSend<Box<dyn FnOnce(&mut ReaderData) + 'static>>;
 
-static NEXT_COMPLETION_ID: AtomicU64 = AtomicU64::new(0);
-
-static DEBOUNCE_STARTED: once_cell::sync::Lazy<Mutex<HashMap<u64, DebounceCallback>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
-
-static DEBOUNCE_FINISHED: once_cell::sync::Lazy<Mutex<Vec<DebounceItem>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(vec![]));
+static DEBOUNCE_FINISHED: Mutex<Vec<DebounceCallback>> = Mutex::new(Vec::new());
 
 /// Initialize some global static variables. Must be called at startup from the main thread.
 pub fn init() {
@@ -563,10 +551,8 @@ pub fn iothread_service_main(ctx: &mut ReaderData) {
     let queue = std::mem::take(&mut *DEBOUNCE_FINISHED.lock().expect("Mutex poisoned!"));
 
     // Perform each completion in order.
-    for debounce_item in queue {
-        if let Some(result) = debounce_item.result {
-            (debounce_item.callback.0)(ctx, result);
-        }
+    for callback in queue {
+        (callback.0)(ctx);
     }
 }
 
@@ -601,16 +587,11 @@ pub struct Debounce {
     data: Arc<Mutex<DebounceData>>,
 }
 
-struct DebounceWorkItem {
-    id: u64,
-    work_item: WorkItem,
-}
-
 /// The data shared between [`Debounce`] instances.
 struct DebounceData {
     /// The (one or none) next enqueued request, overwritten each time a new call to
     /// [`perform()`](Self::perform) is made.
-    next_req: Option<DebounceWorkItem>,
+    next_req: Option<WorkItem>,
     /// The non-zero token of the current non-abandoned thread or `None` if no thread is running.
     active_token: Option<NonZeroU64>,
     /// The next token to use when spawning a thread.
@@ -642,7 +623,7 @@ impl Debounce {
             let mut data = self.data.lock().expect("Mutex poisoned!");
             if let Some(req) = data.next_req.take() {
                 data.start_time = Instant::now();
-                req.work_item
+                req
             } else {
                 // There is no pending request. Mark this token as no longer running.
                 if Some(token) == data.active_token {
@@ -680,48 +661,23 @@ impl Debounce {
         R: 'static + Send,
     {
         assert_is_main_thread();
-        let completion_id = NEXT_COMPLETION_ID.fetch_add(1, Ordering::Relaxed);
-        let old_item = DEBOUNCE_STARTED.lock().unwrap().insert(
-            completion_id,
-            DebounceCallback(Box::new(move |ctx, result| {
-                completion(ctx, *result.downcast().unwrap())
-            })),
-        );
-        assert!(old_item.is_none());
+        let wrapped = ForceSend(completion);
         let work_item = Box::new(move || {
             let result = handler();
-            let callback = DEBOUNCE_STARTED
-                .lock()
-                .unwrap()
-                .remove(&completion_id)
-                .unwrap();
-            DEBOUNCE_FINISHED.lock().unwrap().push(DebounceItem {
-                callback,
-                result: Some(Box::new(result)),
-            });
+            let callback: DebounceCallback = ForceSend(Box::new(move |ctx| {
+                let w = wrapped;
+                (w.0)(ctx, result);
+            }));
+            DEBOUNCE_FINISHED.lock().unwrap().push(callback);
             NOTIFY_SIGNALLER.post();
         });
-        self.perform_inner(DebounceWorkItem {
-            id: completion_id,
-            work_item,
-        })
+        self.perform_inner(work_item)
     }
 
-    fn perform_inner(&self, work_item: DebounceWorkItem) -> NonZeroU64 {
+    fn perform_inner(&self, work_item: WorkItem) -> NonZeroU64 {
         let mut spawn = false;
         let active_token = {
             let mut data = self.data.lock().expect("Mutex poisoned!");
-            if let Some(old_work_item) = &data.next_req {
-                let callback = DEBOUNCE_STARTED
-                    .lock()
-                    .unwrap()
-                    .remove(&old_work_item.id)
-                    .unwrap();
-                DEBOUNCE_FINISHED.lock().unwrap().push(DebounceItem {
-                    callback,
-                    result: None,
-                });
-            }
             data.next_req = Some(work_item);
             // If we have a timeout and our running thread has exceeded it, abandon that thread.
             if data.active_token.is_some()
