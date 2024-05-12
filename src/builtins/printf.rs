@@ -57,8 +57,8 @@ use crate::wutil::{
     wcstoi::{wcstoi_partial, Options as WcstoiOpts},
     wstr_offset_in,
 };
-use printf_compat::args::ToArg;
-use printf_compat::printf::sprintf_locale;
+use printf::arg::ToArg;
+use printf::sprintf_locale;
 
 /// Return true if `c` is an octal digit.
 fn is_octal_digit(c: char) -> bool {
@@ -266,10 +266,10 @@ impl<'a, 'b> builtin_printf_state_t<'a, 'b> {
                 if !self.early_exit {
                     sprintf_locale(
                         &mut self.buff,
-                        $fmt,
+                        $fmt.as_char_slice(),
                         &self.locale,
-                        &[$($arg.to_arg()),*]
-                    )
+                        &mut [$($arg.to_arg()),*]
+                    ).expect("sprintf failed");
                 }
             }
         }

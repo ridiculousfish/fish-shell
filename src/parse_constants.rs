@@ -235,9 +235,9 @@ impl ParseKeyword {
     }
 }
 
-impl printf_compat::args::ToArg<'static> for ParseKeyword {
-    fn to_arg(self) -> printf_compat::args::Arg<'static> {
-        printf_compat::args::Arg::Str(self.to_wstr())
+impl printf::arg::ToArg<'static> for ParseKeyword {
+    fn to_arg(self) -> printf::arg::Arg<'static> {
+        printf::arg::Arg::WStr(self.to_wstr())
     }
 }
 
