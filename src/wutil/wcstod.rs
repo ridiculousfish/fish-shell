@@ -1,4 +1,5 @@
 use super::errors::Error;
+use super::hex_float;
 use crate::wchar::IntoCharIter;
 use fast_float::parse_partial_iter;
 
