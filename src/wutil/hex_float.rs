@@ -78,18 +78,20 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
         _ => return Err(Error::SyntaxError),
     }
 
-    // Record how many digits we see - we require at least one, either before or after the decimal point.
-    let mut digits_count = 0;
+    // We must have at least one digit.
+    let mut seen_digits = false;
 
     // Skip leading 0s.
     while chars.next_if_eq(&'0').is_some() {
-        digits_count += 1;
+        consumed += 1;
+        seen_digits = true;
     }
 
     // Parse digits before the decimal.
     let mut digits: Vec<u8> = Vec::new();
     while let Some(d) = chars.peek().and_then(|c| c.to_digit(16)) {
-        digits_count += 1;
+        seen_digits = true;
+        consumed += 1;
         digits.push(d as u8);
         chars.next();
     }
@@ -102,17 +104,17 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
     if chars.next_if_eq(&'.').is_some() {
         consumed += 1;
         while let Some(d) = chars.peek().and_then(|c| c.to_digit(16)) {
-            digits_count += 1;
+            consumed += 1;
+            seen_digits = true;
             digits.push(d as u8);
             chars.next();
         }
     }
 
     // Must have at least one.
-    if digits_count == 0 {
+    if !seen_digits {
         return Err(Error::SyntaxError);
     }
-    consumed += digits_count;
 
     // Try parsing the explicit exponent.
     let mut explicit_exp: i32 = 0;
