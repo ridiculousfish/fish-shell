@@ -156,6 +156,28 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
             break;
         }
     }
+
+    // Round the mantissa. We do simple rounding (no fp rounding mode), rounding halfways to even.
+    // There are 53 bits in the mantissa (counting implicit 1, which we still have),
+    // so look at the remaining bits to decide whether to round.
+    let trim = 64 - 53;
+    let halfway = 1 << (trim - 1);
+    let rounding_bits = mantissa & ((1 << trim) - 1);
+    mantissa ^= rounding_bits; // Clear the bits to trim.
+    if rounding_bits > halfway || (rounding_bits == halfway && (mantissa & (1 << trim)) != 0) {
+        // Round the mantissa up.
+        // If it overflows, then increase the exponent's magnitude by 1, and set the mantissa to 1.
+        mantissa = match mantissa.checked_add(1 << trim) {
+            Some(m) => m,
+            None => {
+                // Increase the exponent and zero out the mantissa.
+                let d = if explicit_exp >= 0 { 1 } else { -1 };
+                explicit_exp = explicit_exp.checked_add(d).ok_or(Error::Overflow)?;
+                1
+            }
+        }
+    }
+
     // Handle a zero mantissa.
     if mantissa == 0 {
         return Ok((0.0f64.copysign(sign), consumed));
@@ -193,6 +215,11 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
     mantissa <<= 1; // Trim implicit 1 bit from mantissa.
     bits |= mantissa >> (64 - 52);
     Ok((f64::from_bits(bits), consumed))
+}
+
+#[test]
+fn test_parse_hex_float_rounding() {
+    //
 }
 
 #[test]
@@ -250,6 +277,18 @@ fn test_parse_hex_float_valid() {
     assert_eq!(parse("0x1Fp1"), 62.0);
     assert_eq!(parse("0x20"), 32.0);
     assert_eq!(parse("0x20p-5"), 1.0);
+}
+
+#[test]
+fn test_parse_hex_float_length() {
+    let parse_len = |input: &str| {
+        let res =
+            parse_hex_float(input.chars()).expect(format!("Failed to parse {}", input).as_str());
+        res.1
+    };
+    assert_eq!(parse_len("0x0ZZZ"), 3);
+    assert_eq!(parse_len("0x1.p1ZZZZ"), 6);
+    assert_eq!(parse_len("0x1234ZZZZZZZ"), 6);
 }
 
 #[test]
