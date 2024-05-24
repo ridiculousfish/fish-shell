@@ -87,14 +87,28 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
         seen_digits = true;
     }
 
+    // Start constructing the mantissa.
+    // We move from most to least significant bits, and discard digits after we have fully
+    // populated a u64. Note we don't distinguish between digits after the decimal - that is
+    // handled by the exponent.
+    let mut mantissa: u64 = 0;
+    let mut shift = 64;
+    let mut add_digit = |digit: u32| {
+        debug_assert!(digit < 16);
+        // Ignore digits if we would shift them out of range.
+        if shift > 0 {
+            shift -= 4;
+            mantissa |= (digit as u64) << shift;
+        }
+    };
+
     // Parse digits before the decimal.
     // Record the number of digits before the decimal to inform the exponent.
-    let mut digits: Vec<u8> = Vec::new();
     let consumed_before_decimal = consumed;
     while let Some(d) = chars.peek().and_then(|c| c.to_digit(16)) {
         seen_digits = true;
         consumed += 1;
-        digits.push(d as u8);
+        add_digit(d);
         chars.next();
     }
 
@@ -110,7 +124,7 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
         while let Some(d) = chars.peek().and_then(|c| c.to_digit(16)) {
             consumed += 1;
             seen_digits = true;
-            digits.push(d as u8);
+            add_digit(d);
             chars.next();
         }
     }
@@ -150,18 +164,6 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
         // Negating a non-negative value cannot overflow.
         if negative {
             explicit_exp = -explicit_exp;
-        }
-    }
-
-    // Construct mantissa.
-    let mut mantissa: u64 = 0;
-    let mut shift = 64;
-    for d in digits {
-        shift -= 4;
-        mantissa |= (d as u64) << shift;
-        if shift == 0 {
-            // Possible excess precision in the mantissa; ignore it.
-            break;
         }
     }
 
