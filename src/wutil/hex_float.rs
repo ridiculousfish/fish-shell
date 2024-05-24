@@ -77,32 +77,40 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
         (Some('0'), Some('x' | 'X')) => consumed += 2,
         _ => return Err(Error::SyntaxError),
     }
+
     // Parse a sequence of hex digits.
+    // Keep track of how many - we trim leading zeros so this isn't apparent from the digits vector.
+    let mut digits_count = 0;
     let mut digits: Vec<u8> = Vec::new();
     while let Some(d) = chars.peek().and_then(|c| c.to_digit(16)) {
+        digits_count += 1;
         // Skip leading 0s.
         if !digits.is_empty() || d != 0 {
             digits.push(d as u8);
         }
         chars.next();
-        consumed += 1;
     }
-    // Must have at least one.
-    if digits.is_empty() {
-        return Err(Error::SyntaxError);
-    }
+
+    // Record the number of digits before the decimal (if any).
+    let decimal_point_pos: i32 = digits.len().try_into().map_err(|_| Error::Overflow)?;
+
     // Optionally parse a decimal and another sequence.
     // If we have no decimal, pretend it's here anyways.
-    let decimal_point_pos: i32 = digits.len().try_into().map_err(|_| Error::Overflow)?;
     if chars.peek() == Some(&'.') {
         chars.next();
         consumed += 1;
         while let Some(d) = chars.peek().and_then(|c| c.to_digit(16)) {
+            digits_count += 1;
             digits.push(d as u8);
             chars.next();
-            consumed += 1;
         }
     }
+
+    // Must have at least one.
+    if digits_count == 0 {
+        return Err(Error::SyntaxError);
+    }
+    consumed += digits_count;
 
     // Try parsing the explicit exponent.
     let mut explicit_exp: i32 = 0;
@@ -131,6 +139,10 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
         if consumed == before {
             return Err(Error::SyntaxError);
         }
+        // Negating a non-negative value cannot overflow.
+        if negative {
+            explicit_exp = -explicit_exp;
+        }
     }
 
     // Construct mantissa.
@@ -150,6 +162,8 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
     }
 
     // Normalize to leading 1.
+    // The number of zeros, plus one, is subtracted from the exponent.
+    // Plus one because hex 0001 should have an exponent of 0.
     let zeros = mantissa.leading_zeros();
     mantissa <<= zeros;
 
@@ -159,7 +173,7 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
     let exponent = decimal_point_pos
         .checked_mul(4)
         .and_then(|exp| exp.checked_add(explicit_exp))
-        .and_then(|exp| exp.checked_sub(zeros as i32))
+        .and_then(|exp| exp.checked_sub(1 + zeros as i32))
         .ok_or(Error::Overflow)?;
 
     // Return infinity if we exceed the max exponent, or zero if we are smaller than the min exponent.
@@ -174,16 +188,75 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
     // Construct our float: sign, exponent, mantissa.
     // Note we do not bother to round the mantissa.
     let mut bits: u64 = 0;
-    bits |= (sign as u64) << 63;
+    bits |= (negative as u64) << 63;
     bits |= biased_exp << 52;
+    mantissa <<= 1; // Trim implicit 1 bit from mantissa.
     bits |= mantissa >> (64 - 52);
-    Ok(f64::from_bits(bits), consumed)
+    Ok((f64::from_bits(bits), consumed))
 }
 
 #[test]
-fn test_parse_hex_float() {
-    let syntaxError = Err(Error::SyntaxError);
-    assert_eq!(parse_hex_float("".chars()), syntaxError);
-    assert_eq!(parse_hex_float("1A3P1.1p2".chars()), Ok((4099.25, 9)));
-    assert_eq!(parse_hex_float("1A3G.1p2".chars()), syntaxError);
+fn test_parse_hex_float_valid() {
+    let parse = |input: &str| {
+        let res =
+            parse_hex_float(input.chars()).expect(format!("Failed to parse {}", input).as_str());
+        // We expect to consume the entire string.
+        assert_eq!(res.1, input.len());
+        res.0
+    };
+    assert_eq!(parse("0x0"), 0.0);
+    assert_eq!(parse("0X0"), 0.0);
+    assert_eq!(parse("0X000"), 0.0);
+    assert_eq!(parse("0X0000.8"), 0.5);
+    assert_eq!(parse("0x1"), 1.0);
+    assert_eq!(parse("0x1p0"), 1.0);
+    assert_eq!(parse("0x1P0"), 1.0);
+    assert_eq!(parse("0x1.8p1"), 3.0);
+    assert_eq!(parse("0x2p2"), 8.0);
+    assert_eq!(parse("0x1.8"), 1.5);
+    assert_eq!(parse("0x1.2p3"), 9.0);
+    assert_eq!(parse("0x10p-1"), 8.0);
+    assert_eq!(parse("0x1.p1"), 2.0);
+    assert_eq!(parse("0x.8p0"), 0.5);
+    assert_eq!(parse("0x.1p4"), 1.0);
+    assert_eq!(parse("0x2"), 2.0);
+    assert_eq!(parse("0x2P1"), 4.0);
+    assert_eq!(parse("0x2.4"), 2.25);
+    assert_eq!(parse("0x2.4p2"), 9.0);
+    assert_eq!(parse("0x3p-2"), 0.75);
+    assert_eq!(parse("0x4p-3"), 0.5);
+    assert_eq!(parse("0x5"), 5.0);
+    assert_eq!(parse("0x5p1"), 10.0);
+    assert_eq!(parse("0x5.1p0"), 5.0625);
+    assert_eq!(parse("0x5.1p1"), 10.125);
+    assert_eq!(parse("0x8"), 8.0);
+    assert_eq!(parse("0x8p0"), 8.0);
+    assert_eq!(parse("0x8.8"), 8.5);
+    assert_eq!(parse("0x9"), 9.0);
+    assert_eq!(parse("0x9p-1"), 4.5);
+    assert_eq!(parse("0xA"), 10.0);
+    assert_eq!(parse("0xAp1"), 20.0);
+    assert_eq!(parse("0xB"), 11.0);
+    assert_eq!(parse("0xBp-1"), 5.5);
+    assert_eq!(parse("0xC"), 12.0);
+    assert_eq!(parse("0xCp2"), 48.0);
+    assert_eq!(parse("0xF"), 15.0);
+    assert_eq!(parse("0xFp-2"), 3.75);
+    assert_eq!(parse("0x10"), 16.0);
+    assert_eq!(parse("0x10p-4"), 1.0);
+    assert_eq!(parse("0x1A"), 26.0);
+    assert_eq!(parse("0x1Ap3"), 208.0);
+    assert_eq!(parse("0x1F"), 31.0);
+    assert_eq!(parse("0x1Fp1"), 62.0);
+    assert_eq!(parse("0x20"), 32.0);
+    assert_eq!(parse("0x20p-5"), 1.0);
+}
+
+#[test]
+fn test_parse_hex_float_errors() {
+    let syntax_error = Err(Error::SyntaxError);
+    assert_eq!(parse_hex_float("".chars()), syntax_error);
+    assert_eq!(parse_hex_float("0xZ".chars()), syntax_error);
+    assert_eq!(parse_hex_float("1A3P1.1p2".chars()), syntax_error);
+    assert_eq!(parse_hex_float("1A3G.1p2".chars()), syntax_error);
 }
