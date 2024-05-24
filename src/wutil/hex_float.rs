@@ -157,7 +157,18 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
         }
     }
 
-    // Round the mantissa. We do simple rounding (no fp rounding mode), rounding halfways to even.
+    // Handle a zero mantissa.
+    if mantissa == 0 {
+        return Ok((0.0f64.copysign(sign), consumed));
+    }
+
+    // Normalize to leading 1.
+    // The number of zeros, plus one, is subtracted from the exponent.
+    // Plus one because hex 0001 should have an exponent of 0.
+    let zeros = mantissa.leading_zeros();
+    mantissa <<= zeros;
+
+    // Round the mantissa, halfways to even.
     // There are 53 bits in the mantissa (counting implicit 1, which we still have),
     // so look at the remaining bits to decide whether to round.
     let trim = 64 - 53;
@@ -175,19 +186,8 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
                 explicit_exp = explicit_exp.checked_add(d).ok_or(Error::Overflow)?;
                 1
             }
-        }
+        };
     }
-
-    // Handle a zero mantissa.
-    if mantissa == 0 {
-        return Ok((0.0f64.copysign(sign), consumed));
-    }
-
-    // Normalize to leading 1.
-    // The number of zeros, plus one, is subtracted from the exponent.
-    // Plus one because hex 0001 should have an exponent of 0.
-    let zeros = mantissa.leading_zeros();
-    mantissa <<= zeros;
 
     // Compute the exponent (base 2).
     // This has contributions from the explicit exponent,
@@ -219,7 +219,40 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
 
 #[test]
 fn test_parse_hex_float_rounding() {
-    //
+    // Helper to get the first float before a float.
+    let nextbefore = |f: f64| f64::from_bits(f.to_bits() - 1);
+    let parse = |input: &str| {
+        let res =
+            parse_hex_float(input.chars()).expect(format!("Failed to parse {}", input).as_str());
+        // We expect to consume the entire string.
+        assert_eq!(res.1, input.len());
+        res.0
+    };
+    assert_eq!(parse("0x1.FFFFFFFFFFFFFp0"), nextbefore(2.0));
+    assert_eq!(parse("0x1.FFFFFFFFFFFFF7p0"), nextbefore(2.0));
+    assert_eq!(parse("0x1.FFFFFFFFFFFFF8p0"), 2.0); // halfway!
+    assert_eq!(parse("0x1.FFFFFFFFFFFFF9p0"), 2.0);
+    assert_eq!(parse("0x1.FFFFFFFFFFFFFFp0"), 2.0);
+
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFFp0"), nextbefore(-2.0));
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFF7p0"), nextbefore(-2.0));
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFF8p0"), -2.0); // halfway, should round up!
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFF9p0"), -2.0);
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFFFp0"), -2.0);
+
+    let nb2 = nextbefore(2.0);
+    assert_eq!(parse("0x1.FFFFFFFFFFFFEp0"), nextbefore(nb2));
+    assert_eq!(parse("0x1.FFFFFFFFFFFFE7p0"), nextbefore(nb2));
+    assert_eq!(parse("0x1.FFFFFFFFFFFFE8p0"), nextbefore(nb2)); // halfway, should round down!
+    assert_eq!(parse("0x1.FFFFFFFFFFFFE9p0"), nb2);
+    assert_eq!(parse("0x1.FFFFFFFFFFFFEFp0"), nb2);
+
+    let nb2 = nextbefore(-2.0);
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFEp0"), nextbefore(nb2));
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFE7p0"), nextbefore(nb2));
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFE8p0"), nextbefore(nb2)); // halfway, should round down!
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFE9p0"), nb2);
+    assert_eq!(parse("-0x1.FFFFFFFFFFFFEFp0"), nb2);
 }
 
 #[test]
