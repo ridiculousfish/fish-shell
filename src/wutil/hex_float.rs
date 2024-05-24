@@ -88,7 +88,9 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
     }
 
     // Parse digits before the decimal.
+    // Record the number of digits before the decimal to inform the exponent.
     let mut digits: Vec<u8> = Vec::new();
+    let consumed_before_decimal = consumed;
     while let Some(d) = chars.peek().and_then(|c| c.to_digit(16)) {
         seen_digits = true;
         consumed += 1;
@@ -97,7 +99,9 @@ pub(super) fn parse_hex_float(chars: impl Iterator<Item = char>) -> Result<(f64,
     }
 
     // Record the number of digits before the decimal (if any).
-    let decimal_point_pos: i32 = digits.len().try_into().map_err(|_| Error::Overflow)?;
+    let decimal_point_pos: i32 = (consumed - consumed_before_decimal)
+        .try_into()
+        .map_err(|_| Error::Overflow)?;
 
     // Optionally parse a decimal and another sequence.
     // If we have no decimal, pretend it's here anyways.
