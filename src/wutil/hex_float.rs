@@ -342,3 +342,13 @@ fn test_parse_hex_float_errors() {
     assert_eq!(parse_hex_float("1A3P1.1p2".chars()), syntax_error);
     assert_eq!(parse_hex_float("1A3G.1p2".chars()), syntax_error);
 }
+
+#[test]
+fn test_parse_hex_float_signed_zero() {
+    let z1 = parse_hex_float("0x0p0".chars()).unwrap().0;
+    let z2 = parse_hex_float("-0x0p0".chars()).unwrap().0;
+    assert_eq!(z1, 0.0);
+    assert_eq!(z2, 0.0);
+    assert!(z1.is_sign_positive());
+    assert!(!z2.is_sign_positive());
+}
