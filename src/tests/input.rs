@@ -1,18 +1,40 @@
-use crate::input::{input_mappings, Inputter, KeyNameStyle, DEFAULT_BIND_MODE};
-use crate::input_common::{CharEvent, ReadlineCmd};
+use crate::env::EnvStack;
+use crate::input::{input_mappings, InputEventMapper, KeyNameStyle, DEFAULT_BIND_MODE};
+use crate::input_common::{CharEvent, InputData, InputEventQueuer, ReadlineCmd};
 use crate::key::Key;
-use crate::parser::Parser;
 use crate::tests::prelude::*;
 use crate::wchar::prelude::*;
 use std::rc::Rc;
+
+struct TestInputEventMapper {
+    input_data: InputData,
+    vars: Rc<EnvStack>,
+}
+
+impl InputEventQueuer for TestInputEventMapper {
+    fn get_input_data(&self) -> &InputData {
+        &self.input_data
+    }
+    fn get_input_data_mut(&mut self) -> &mut InputData {
+        &mut self.input_data
+    }
+}
+
+impl InputEventMapper for TestInputEventMapper {
+    fn get_vars(&self) -> Rc<EnvStack> {
+        self.vars.clone()
+    }
+}
 
 #[test]
 #[serial]
 fn test_input() {
     let _cleanup = test_init();
     use crate::env::EnvStack;
-    let parser = Parser::new(Rc::new(EnvStack::new()), false);
-    let mut input = Inputter::new(parser, libc::STDIN_FILENO);
+    let mut input = TestInputEventMapper {
+        input_data: InputData::new(libc::STDIN_FILENO),
+        vars: Rc::new(EnvStack::new()),
+    };
     // Ensure sequences are order independent. Here we add two bindings where the first is a prefix
     // of the second, and then emit the second key list. The second binding should be invoked, not
     // the first!
@@ -44,7 +66,7 @@ fn test_input() {
 
     // Push the desired binding to the queue.
     for c in desired_binding {
-        input.queue_char(CharEvent::from_key(c));
+        input.input_data.queue_char(CharEvent::from_key(c));
     }
 
     // Now test.
