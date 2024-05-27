@@ -431,6 +431,10 @@ impl InputEventQueuer for ReaderData {
         self.push_front(CharEvent::from_check_exit());
     }
 
+    fn save_screen_state(&mut self) {
+        ReaderData::save_screen_state(self);
+    }
+
     fn uvar_change_notified(&mut self) {
         self.parser().sync_uvars_and_fire(true /* always */);
     }

@@ -1966,6 +1966,7 @@ impl ReaderData {
 
         while accumulated_chars.len() < limit {
             terminal_protocols_enable_ifn();
+            self.save_screen_state();
             let evt = self.read_char();
             let CharEvent::Key(kevt) = &evt else {
                 event_needing_handling = Some(evt);

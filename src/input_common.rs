@@ -1054,6 +1054,7 @@ pub trait InputEventQueuer {
             return Some(evt);
         }
         terminal_protocols_enable_ifn();
+        self.save_screen_state();
 
         // We are not prepared to handle a signal immediately; we only want to know if we get input on
         // our fd before the timeout. Use pselect to block all signals; we will handle signals
@@ -1107,6 +1108,9 @@ pub trait InputEventQueuer {
     /// Return the input data. This is to be implemented by the concrete type.
     fn get_input_data(&self) -> &InputData;
     fn get_input_data_mut(&mut self) -> &mut InputData;
+
+    /// Override point to save the screen state (i.e. fstat stdout so we can tell when it changes).
+    fn save_screen_state(&mut self) {}
 
     // Support for "bracketed paste"
     // The way it works is that we acknowledge our support by printing
