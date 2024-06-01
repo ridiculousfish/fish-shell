@@ -69,7 +69,7 @@ use crate::history::{
     history_session_id, in_private_mode, History, HistorySearch, PersistenceMode, SearchDirection,
     SearchType,
 };
-use crate::input::{init_input, InputEventMapper};
+use crate::input::init_input;
 use crate::input_common::{
     terminal_protocols_disable_ifn, terminal_protocols_enable_ifn, CharEvent, CharInputStyle,
     InputData, ReadlineCmd, IS_TMUX,
@@ -220,22 +220,19 @@ pub use current_data as reader_current_data;
 
 /// Add a new reader to the reader stack.
 /// Return a shared pointer to it.
-fn reader_push_ret(
-    parser: &Parser,
-    history_name: &wstr,
-    conf: ReaderConfig,
-) -> &'static mut ReaderData {
+fn reader_push_ret<'a>(parser: &'a Parser, history_name: &wstr, conf: ReaderConfig) -> Reader<'a> {
     assert_is_main_thread();
     let hist = History::with_name(history_name);
     hist.resolve_pending();
-    let data = ReaderData::new(parser.shared(), hist, conf);
+    let data = ReaderData::new(hist, conf);
     reader_data_stack().push(data);
     let data = current_data().unwrap();
-    data.command_line_changed(EditableLineTag::Commandline);
+    let mut reader = Reader { data, parser };
+    reader.command_line_changed(EditableLineTag::Commandline);
     if reader_data_stack().len() == 1 {
         reader_interactive_init(parser);
     }
-    data
+    reader
 }
 
 /// Push a new reader environment controlled by `conf`, using the given history name.
@@ -465,8 +462,6 @@ pub struct ReaderData {
     canary: Rc<()>,
     /// Configuration for the reader.
     conf: ReaderConfig,
-    /// The parser being used.
-    parser_ref: ParserRef,
     /// String containing the whole current commandline.
     command_line: EditableLine,
     /// Whether the most recent modification to the command line was done by either history search
@@ -554,6 +549,25 @@ pub struct ReaderData {
     rls: Option<ReadlineLoopState>,
 }
 
+/// Reader data with a Parser.
+pub struct Reader<'a> {
+    pub data: &'a mut ReaderData,
+    pub parser: &'a Parser,
+}
+
+impl<'a> std::ops::Deref for Reader<'a> {
+    type Target = ReaderData;
+    fn deref(&self) -> &ReaderData {
+        self.data
+    }
+}
+
+impl<'a> std::ops::DerefMut for Reader<'a> {
+    fn deref_mut(&mut self) -> &mut ReaderData {
+        self.data
+    }
+}
+
 /// Read commands from \c fd until encountering EOF.
 /// The fd is not closed.
 pub fn reader_read(parser: &Parser, fd: RawFd, io: &IoChain) -> c_int {
@@ -612,10 +626,10 @@ fn read_i(parser: &Parser) -> i32 {
         conf.right_prompt_cmd = RIGHT_PROMPT_FUNCTION_NAME.to_owned();
     }
 
-    let data = reader_push_ret(parser, &history_session_id(parser.vars()), conf);
+    let mut data = reader_push_ret(parser, &history_session_id(parser.vars()), conf);
     data.import_history_if_necessary();
 
-    while !check_exit_loop_maybe_warning(Some(data)) {
+    while !check_exit_loop_maybe_warning(Some(&mut data)) {
         RUN_COUNT.fetch_add(1, Ordering::Relaxed);
 
         let Some(command) = data.readline(None) else {
@@ -651,7 +665,7 @@ fn read_i(parser: &Parser) -> i32 {
         data.history.resolve_pending();
 
         let already_warned = data.did_warn_for_bg_jobs;
-        if check_exit_loop_maybe_warning(Some(data)) {
+        if check_exit_loop_maybe_warning(Some(&mut data)) {
             break;
         }
         if already_warned {
@@ -837,31 +851,33 @@ pub fn reader_change_history(name: &wstr) {
 }
 
 pub fn reader_change_cursor_selection_mode(selection_mode: CursorSelectionMode) {
-    // We don't need to _change_ if we're not initialized yet.
-    if let Some(data) = current_data() {
-        if data.cursor_selection_mode == selection_mode {
-            return;
-        }
-        let invalidates_selection = data.selection.is_some();
-        data.cursor_selection_mode = selection_mode;
-        if invalidates_selection {
-            data.update_buff_pos(EditableLineTag::Commandline, None);
-        }
-    }
+    todo!("PCA");
+    // // We don't need to _change_ if we're not initialized yet.
+    // if let Some(data) = current_data() {
+    //     if data.cursor_selection_mode == selection_mode {
+    //         return;
+    //     }
+    //     let invalidates_selection = data.selection.is_some();
+    //     data.cursor_selection_mode = selection_mode;
+    //     if invalidates_selection {
+    //         data.update_buff_pos(EditableLineTag::Commandline, None);
+    //     }
+    // }
 }
 
 pub fn reader_change_cursor_end_mode(end_mode: CursorEndMode) {
-    // We don't need to _change_ if we're not initialized yet.
-    if let Some(data) = current_data() {
-        if data.cursor_end_mode == end_mode {
-            return;
-        }
-        let invalidates_end = data.selection.is_some();
-        data.cursor_end_mode = end_mode;
-        if invalidates_end {
-            data.update_buff_pos(EditableLineTag::Commandline, None);
-        }
-    }
+    todo!("PCA");
+    // // We don't need to _change_ if we're not initialized yet.
+    // if let Some(data) = current_data() {
+    //     if data.cursor_end_mode == end_mode {
+    //         return;
+    //     }
+    //     let invalidates_end = data.selection.is_some();
+    //     data.cursor_end_mode = end_mode;
+    //     if invalidates_end {
+    //         data.update_buff_pos(EditableLineTag::Commandline, None);
+    //     }
+    // }
 }
 
 fn check_autosuggestion_enabled(vars: &dyn Environment) -> bool {
@@ -901,29 +917,30 @@ pub fn reader_schedule_prompt_repaint() {
 }
 
 pub fn reader_execute_readline_cmd(ch: CharEvent) {
-    if let Some(data) = current_data() {
-        let CharEvent::Readline(readline_cmd_evt) = &ch else {
-            panic!()
-        };
-        if matches!(
-            readline_cmd_evt.cmd,
-            ReadlineCmd::ClearScreenAndRepaint
-                | ReadlineCmd::RepaintMode
-                | ReadlineCmd::Repaint
-                | ReadlineCmd::ForceRepaint
-        ) {
-            data.queued_repaint = true;
-        }
-        if data.queued_repaint {
-            data.input_data.queue_char(ch);
-            return;
-        }
-        if data.rls.is_none() {
-            data.rls = Some(ReadlineLoopState::new());
-        }
-        data.save_screen_state();
-        data.handle_char_event(Some(ch));
-    }
+    unimplemented!();
+    // if let Some(data) = current_data() {
+    //     let CharEvent::Readline(readline_cmd_evt) = &ch else {
+    //         panic!()
+    //     };
+    //     if matches!(
+    //         readline_cmd_evt.cmd,
+    //         ReadlineCmd::ClearScreenAndRepaint
+    //             | ReadlineCmd::RepaintMode
+    //             | ReadlineCmd::Repaint
+    //             | ReadlineCmd::ForceRepaint
+    //     ) {
+    //         data.queued_repaint = true;
+    //     }
+    //     if data.queued_repaint {
+    //         data.input_data.queue_char(ch);
+    //         return;
+    //     }
+    //     if data.rls.is_none() {
+    //         data.rls = Some(ReadlineLoopState::new());
+    //     }
+    //     data.save_screen_state();
+    //     data.handle_char_event(Some(ch));
+    // }
 }
 
 /// Return the value of the interrupted flag, which is set by the sigint handler, and clear it if it
@@ -951,13 +968,15 @@ pub fn reader_reading_interrupted() -> i32 {
 pub fn reader_readline(nchars: usize) -> Option<WString> {
     let nchars = NonZeroUsize::try_from(nchars).ok();
     let data = current_data().unwrap();
-    data.readline(nchars)
+    unimplemented!();
+    //data.readline(nchars)
 }
 
 /// Get the command line state. This may be fetched on a background thread.
 pub fn commandline_get_state(sync: bool) -> CommandlineState {
     if sync {
-        current_data().map(|data| data.update_commandline_state());
+        todo!("PCA");
+        //current_data().map(|data| data.update_commandline_state());
     }
     commandline_state_snapshot().clone()
 }
@@ -970,7 +989,8 @@ pub fn commandline_set_buffer(text: WString, cursor_pos: Option<usize>) {
         state.cursor_pos = cmp::min(cursor_pos.unwrap_or(usize::MAX), text.len());
         state.text = text;
     }
-    current_data().map(|data| data.apply_commandline_state_changes());
+    todo!("PCA");
+    //current_data().map(|data| data.apply_commandline_state_changes());
 }
 
 pub fn commandline_set_search_field(text: WString, cursor_pos: Option<usize>) {
@@ -980,7 +1000,8 @@ pub fn commandline_set_search_field(text: WString, cursor_pos: Option<usize>) {
         let new_pos = cmp::min(cursor_pos.unwrap_or(usize::MAX), text.len());
         state.search_field = Some((text, new_pos));
     }
-    current_data().map(|data| data.apply_commandline_state_changes());
+    todo!("PCA");
+    //current_data().map(|data| data.apply_commandline_state_changes());
 }
 
 /// Return the current interactive reads loop count. Useful for determining how many commands have
@@ -1074,11 +1095,10 @@ fn reader_received_sighup() -> bool {
 }
 
 impl ReaderData {
-    fn new(parser: ParserRef, history: Arc<History>, conf: ReaderConfig) -> Pin<Box<Self>> {
+    fn new(history: Arc<History>, conf: ReaderConfig) -> Pin<Box<Self>> {
         let input_data = InputData::new(conf.inputfd);
         Pin::new(Box::new(Self {
             canary: Rc::new(()),
-            parser_ref: parser,
             conf,
             command_line: Default::default(),
             command_line_has_transient_edit: false,
@@ -1120,6 +1140,15 @@ impl ReaderData {
         }))
     }
 
+    // We repaint our prompt if fstat reports the tty as having changed.
+    // But don't react to tty changes that we initiated, because of commands or
+    // on-variable events (e.g. for fish_bind_mode). See #3481.
+    pub(crate) fn save_screen_state(&mut self) {
+        self.screen.save_status();
+    }
+}
+
+impl<'a> Reader<'a> {
     fn is_navigating_pager_contents(&self) -> bool {
         self.pager.is_navigating_contents() || self.history_pager_active
     }
@@ -1159,12 +1188,7 @@ impl ReaderData {
 
     /// Return the variable set used for e.g. command duration.
     fn vars(&self) -> &dyn Environment {
-        self.parser().vars()
-    }
-
-    /// Access the parser.
-    pub fn parser(&self) -> &Parser {
-        &self.parser_ref
+        self.parser.vars()
     }
 
     fn rls(&self) -> &ReadlineLoopState {
@@ -1173,14 +1197,9 @@ impl ReaderData {
     fn rls_mut(&mut self) -> &mut ReadlineLoopState {
         self.rls.as_mut().unwrap()
     }
+}
 
-    // We repaint our prompt if fstat reports the tty as having changed.
-    // But don't react to tty changes that we initiated, because of commands or
-    // on-variable events (e.g. for fish_bind_mode). See #3481.
-    pub(crate) fn save_screen_state(&mut self) {
-        self.screen.save_status();
-    }
-
+impl<'a> Reader<'a> {
     /// Do what we need to do whenever our command line changes.
     fn command_line_changed(&mut self, elt: EditableLineTag) {
         assert_is_main_thread();
@@ -1256,9 +1275,12 @@ impl ReaderData {
             }
             self.push_edit(
                 EditableLineTag::SearchField,
-                Edit::new(0..self.pager.search_field_line.len(), new_search_field),
+                Edit::new(0..self.data.pager.search_field_line.len(), new_search_field),
             );
-            self.pager.search_field_line.set_position(new_cursor_pos);
+            self.data
+                .pager
+                .search_field_line
+                .set_position(new_cursor_pos);
         }
     }
 
@@ -1268,7 +1290,9 @@ impl ReaderData {
             EditableLineTag::SearchField => self.command_line_changed(elt),
         }
     }
+}
 
+impl<'a> Reader<'a> {
     /// Update the cursor position.
     fn update_buff_pos(&mut self, elt: EditableLineTag, mut new_pos: Option<usize>) -> bool {
         if self.cursor_end_mode == CursorEndMode::Inclusive {
@@ -1343,7 +1367,7 @@ pub fn combine_command_and_autosuggestion(cmdline: &wstr, autosuggestion: &wstr)
     full_line
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     /// Return true if the command line has changed and repainting is needed. If `colors` is not
     /// null, then also return true if the colors have changed.
     fn is_repaint_needed(&self, mcolors: Option<&[HighlightSpec]>) -> bool {
@@ -1429,8 +1453,8 @@ impl ReaderData {
     /// `reason` is used in FLOG to explain why.
     fn paint_layout(&mut self, reason: &wstr) {
         FLOGF!(reader_render, "Repainting from %ls", reason);
-        let data = &self.rendered_layout;
-        let cmd_line = &self.command_line;
+        let data = &self.data.rendered_layout;
+        let cmd_line = &self.data.command_line;
 
         let full_line = if self.conf.in_silent_mode {
             wstr::from_char_slice(&[get_obfuscation_read_char()]).repeat(cmd_line.len())
@@ -1476,20 +1500,19 @@ impl ReaderData {
         let mut indents = parse_util_compute_indents(cmd_line.text());
         indents.resize(full_line.len(), 0);
 
-        let screen = &mut self.screen;
-        let pager = &mut self.pager;
-        let current_page_rendering = &mut self.current_page_rendering;
-        let parser = &self.parser_ref;
+        let screen = &mut self.data.screen;
+        let pager = &mut self.data.pager;
+        let current_page_rendering = &mut self.data.current_page_rendering;
         screen.write(
             // Prepend the mode prompt to the left prompt.
-            &(self.mode_prompt_buff.clone() + &self.left_prompt_buff[..]),
-            &self.right_prompt_buff,
+            &(self.data.mode_prompt_buff.clone() + &self.data.left_prompt_buff[..]),
+            &self.data.right_prompt_buff,
             &full_line,
             cmd_line.len(),
             &colors,
             &indents,
             data.position,
-            parser.vars(),
+            self.parser.vars(),
             pager,
             current_page_rendering,
             data.focused_on_pager,
@@ -1497,15 +1520,15 @@ impl ReaderData {
     }
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     /// Internal helper function for handling killing parts of text.
     fn kill(&mut self, elt: EditableLineTag, range: Range<usize>, mode: Kill, newv: bool) {
         let text = match elt {
-            EditableLineTag::Commandline => &self.command_line,
-            EditableLineTag::SearchField => &self.pager.search_field_line,
+            EditableLineTag::Commandline => &self.data.command_line,
+            EditableLineTag::SearchField => &self.data.pager.search_field_line,
         }
         .text();
-        let kill_item = &mut self.kill_item;
+        let kill_item = &mut self.data.kill_item;
         if newv {
             *kill_item = text[range.clone()].to_owned();
             kill_add(kill_item.clone());
@@ -1623,7 +1646,8 @@ impl ReaderData {
                 new_text,
             );
             if self.history_search.by_prefix() {
-                self.command_line
+                self.data
+                    .command_line
                     .set_position(self.history_search.search_string().len());
             }
         }
@@ -1668,7 +1692,7 @@ enum MoveWordDir {
     Right,
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     /// Move buffer position one word or erase one word. This function updates both the internal buffer
     /// and the screen. It is used by M-left, M-right and ^W to do block movement or block erase.
     ///
@@ -1785,7 +1809,7 @@ impl ReaderData {
     }
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     /// Read a command to execute, respecting input bindings.
     /// Return the command, or none if we were asked to cancel (e.g. SIGHUP).
     fn readline(&mut self, nchars: Option<NonZeroUsize>) -> Option<WString> {
@@ -1797,7 +1821,7 @@ impl ReaderData {
             self,
             |zelf, new_value| {
                 std::mem::replace(
-                    &mut zelf.parser().libdata_mut().suppress_fish_trace,
+                    &mut zelf.parser.libdata_mut().suppress_fish_trace,
                     new_value,
                 )
             },
@@ -1856,7 +1880,7 @@ impl ReaderData {
         zelf.first_prompt = false;
 
         if !zelf.conf.event.is_empty() {
-            event::fire_generic(zelf.parser(), zelf.conf.event.to_owned(), vec![]);
+            event::fire_generic(zelf.parser, zelf.conf.event.to_owned(), vec![]);
         }
         zelf.exec_prompt();
 
@@ -1924,9 +1948,9 @@ impl ReaderData {
     }
 
     fn eval_bind_cmd(&mut self, cmd: &wstr) {
-        let last_statuses = self.parser().vars().get_last_statuses();
-        self.parser().eval(cmd, &IoChain::new());
-        self.parser().set_last_statuses(last_statuses);
+        let last_statuses = self.parser.vars().get_last_statuses();
+        self.parser.eval(cmd, &IoChain::new());
+        self.parser.set_last_statuses(last_statuses);
     }
 
     /// Run a sequence of commands from an input binding.
@@ -2006,9 +2030,7 @@ impl ReaderData {
 
         event_needing_handling
     }
-}
 
-impl ReaderData {
     // A helper that kicks off syntax highlighting, autosuggestion computing, and repaints.
     fn color_suggest_repaint_now(&mut self) {
         if self.conf.inputfd == STDIN_FILENO {
@@ -2059,8 +2081,8 @@ impl ReaderData {
 
         // If we ran `exit` anywhere, exit.
         self.exit_loop_requested =
-            self.exit_loop_requested || self.parser().libdata().exit_current_script;
-        self.parser().libdata_mut().exit_current_script = false;
+            self.exit_loop_requested || self.parser.libdata().exit_current_script;
+        self.parser.libdata_mut().exit_current_script = false;
         if self.exit_loop_requested {
             return ControlFlow::Continue(());
         }
@@ -2145,7 +2167,7 @@ impl ReaderData {
     }
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     fn handle_readline_command(&mut self, c: ReadlineCmd) {
         type rl = ReadlineCmd;
         match c {
@@ -2202,7 +2224,7 @@ impl ReaderData {
                 );
 
                 // Post fish_cancel.
-                event::fire_generic(self.parser(), L!("fish_cancel").to_owned(), vec![]);
+                event::fire_generic(self.parser, L!("fish_cancel").to_owned(), vec![]);
             }
             rl::Cancel => {
                 // If we last inserted a completion, undo it.
@@ -2224,7 +2246,7 @@ impl ReaderData {
             }
             rl::RepaintMode | rl::ForceRepaint | rl::Repaint => {
                 self.queued_repaint = false;
-                self.parser().libdata_mut().is_repaint = true;
+                self.parser.libdata_mut().is_repaint = true;
                 if c == rl::RepaintMode {
                     // Repaint the mode-prompt only if possible.
                     // This is an optimization basically exclusively for vi-mode, since the prompt
@@ -2244,7 +2266,7 @@ impl ReaderData {
                             self.screen.reset_line(/*repaint_prompt=*/ true);
                             self.layout_and_repaint(L!("mode"));
                         }
-                        self.parser().libdata_mut().is_repaint = false;
+                        self.parser.libdata_mut().is_repaint = false;
                         return;
                     }
                     // Else we repaint as normal.
@@ -2253,7 +2275,7 @@ impl ReaderData {
                 self.screen.reset_line(/*repaint_prompt=*/ true);
                 self.layout_and_repaint(L!("readline"));
                 self.force_exec_prompt_and_repaint = false;
-                self.parser().libdata_mut().is_repaint = false;
+                self.parser.libdata_mut().is_repaint = false;
             }
             rl::Complete | rl::CompleteAndSearch => {
                 if !self.conf.complete_ok {
@@ -2439,7 +2461,7 @@ impl ReaderData {
             }
             rl::Exit => {
                 // This is by definition a successful exit, override the status
-                self.parser()
+                self.parser
                     .set_last_statuses(Statuses::just(STATUS_CMD_OK.unwrap()));
                 self.exit_loop_requested = true;
                 check_exit_loop_maybe_warning(Some(self));
@@ -2452,7 +2474,7 @@ impl ReaderData {
                     self.delete_char(false);
                 } else if c == rl::DeleteOrExit && el.is_empty() {
                     // This is by definition a successful exit, override the status
-                    self.parser()
+                    self.parser
                         .set_last_statuses(Statuses::just(STATUS_CMD_OK.unwrap()));
                     self.exit_loop_requested = true;
                     check_exit_loop_maybe_warning(Some(self));
@@ -2461,7 +2483,7 @@ impl ReaderData {
             rl::Execute => {
                 if !self.handle_execute() {
                     event::fire_generic(
-                        self.parser(),
+                        self.parser,
                         L!("fish_posterror").to_owned(),
                         vec![self.command_line.text().to_owned()],
                     );
@@ -2489,12 +2511,12 @@ impl ReaderData {
                 let was_active_before = self.history_search.active();
 
                 if self.history_search.is_at_end() {
-                    let el = &self.command_line;
+                    let el = &self.data.command_line;
                     if mode == SearchMode::Token {
                         // Searching by token.
                         let mut token_range = 0..0;
                         parse_util_token_extent(el.text(), el.position(), &mut token_range, None);
-                        self.history_search.reset_to_mode(
+                        self.data.history_search.reset_to_mode(
                             el.text()[token_range.clone()].to_owned(),
                             self.history.clone(),
                             SearchMode::Token,
@@ -2502,7 +2524,7 @@ impl ReaderData {
                         );
                     } else {
                         // Searching by line.
-                        self.history_search.reset_to_mode(
+                        self.data.history_search.reset_to_mode(
                             el.text().to_owned(),
                             self.history.clone(),
                             mode,
@@ -2510,12 +2532,12 @@ impl ReaderData {
                         );
 
                         // Skip the autosuggestion in the history unless it was truncated.
-                        let suggest = &self.autosuggestion.text;
+                        let suggest = &self.data.autosuggestion.text;
                         if !suggest.is_empty()
-                            && !self.screen.autosuggestion_is_truncated
+                            && !self.data.screen.autosuggestion_is_truncated
                             && mode != SearchMode::Prefix
                         {
-                            self.history_search.add_skip(suggest.clone());
+                            self.data.history_search.add_skip(suggest.clone());
                         }
                     }
                 }
@@ -3149,13 +3171,13 @@ impl ReaderData {
                     .write_wstr(L!("\x1B[?1000l"));
             }
             rl::FocusIn => {
-                event::fire_generic(self.parser(), L!("fish_focus_in").to_owned(), vec![]);
+                event::fire_generic(self.parser, L!("fish_focus_in").to_owned(), vec![]);
             }
             rl::FocusOut => {
-                event::fire_generic(self.parser(), L!("fish_focus_out").to_owned(), vec![]);
+                event::fire_generic(self.parser, L!("fish_focus_out").to_owned(), vec![]);
             }
             rl::ClearScreenAndRepaint => {
-                self.parser().libdata_mut().is_repaint = true;
+                self.parser.libdata_mut().is_repaint = true;
                 let clear = screen_clear();
                 if !clear.is_empty() {
                     // Clear the screen if we can.
@@ -3171,7 +3193,7 @@ impl ReaderData {
                 self.screen.reset_line(/*repaint_prompt=*/ true);
                 self.layout_and_repaint(L!("readline"));
                 self.force_exec_prompt_and_repaint = false;
-                self.parser().libdata_mut().is_repaint = false;
+                self.parser.libdata_mut().is_repaint = false;
             }
             rl::SelfInsert | rl::SelfInsertNotFirst | rl::FuncAnd | rl::FuncOr => {
                 // This can be reached via `commandline -f and` etc
@@ -3188,7 +3210,7 @@ fn text_ends_in_comment(text: &wstr) -> bool {
         .is_some_and(|token| token.type_ == TokenType::comment)
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     // Handle readline_cmd_t::execute. This may mean inserting a newline if the command is
     // unfinished. It may also set 'finished' and 'cmd' inside the rls.
     // Return true on success, false if we got an error, in which case the caller should fire the
@@ -3199,15 +3221,16 @@ impl ReaderData {
         // If the user hits return while navigating the pager, it only clears the pager.
         if self.is_navigating_pager_contents() {
             if self.history_pager_active && self.pager.selected_completion_idx.is_none() {
-                self.command_line.push_edit(
+                self.data.command_line.push_edit(
                     Edit::new(
-                        0..self.command_line.len(),
-                        self.pager.search_field_line.text().to_owned(),
+                        0..self.data.command_line.len(),
+                        self.data.pager.search_field_line.text().to_owned(),
                     ),
                     /*allow_coalesce=*/ false,
                 );
-                self.command_line
-                    .set_position(self.pager.search_field_line.position());
+                self.data
+                    .command_line
+                    .set_position(self.data.pager.search_field_line.position());
             }
             self.clear_pager();
             return true;
@@ -3281,7 +3304,7 @@ impl ReaderData {
         // Syntax check before expanding abbreviations. We could consider relaxing this: a string may be
         // syntactically invalid but become valid after expanding abbreviations.
         if self.conf.syntax_check_ok {
-            test_res = reader_shell_test(self.parser(), el.text());
+            test_res = reader_shell_test(self.parser, el.text());
             if test_res.is_err_and(|err| err.contains(ParserTestErrorBits::ERROR)) {
                 return test_res;
             }
@@ -3294,12 +3317,14 @@ impl ReaderData {
             self.super_highlight_me_plenty();
             if self.conf.syntax_check_ok {
                 let el = &self.command_line;
-                test_res = reader_shell_test(self.parser(), el.text());
+                test_res = reader_shell_test(self.parser, el.text());
             }
         }
         test_res
     }
+}
 
+impl<'a> Reader<'a> {
     // Ensure we have no pager contents.
     fn clear_pager(&mut self) {
         self.pager.clear();
@@ -3316,18 +3341,20 @@ impl ReaderData {
 
     fn selection_is_at_top(&self) -> bool {
         let pager = &self.pager;
-        let row = pager.get_selected_row(&self.current_page_rendering);
+        let row = pager.get_selected_row(&self.data.current_page_rendering);
         if row.is_some_and(|row| row != 0) {
             return false;
         }
 
-        let col = pager.get_selected_column(&self.current_page_rendering);
+        let col = pager.get_selected_column(&self.data.current_page_rendering);
         !col.is_some_and(|col| col != 0)
     }
+}
 
+impl<'a> Reader<'a> {
     /// Called to update the termsize, including $COLUMNS and $LINES, as necessary.
     fn update_termsize(&mut self) {
-        termsize_update(self.parser());
+        termsize_update(self.parser);
     }
 
     /// Flash the screen. This function changes the color of the current line momentarily.
@@ -3370,7 +3397,7 @@ impl ReaderData {
     }
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     /// Do what we need to do whenever our pager selection changes.
     fn pager_selection_changed(&mut self) {
         assert_is_main_thread();
@@ -3434,8 +3461,9 @@ impl ReaderData {
         force_selection_change: bool, /* = false */
     ) {
         let selection_changed = self
+            .data
             .pager
-            .select_next_completion_in_direction(dir, &self.current_page_rendering);
+            .select_next_completion_in_direction(dir, &self.data.current_page_rendering);
         if force_selection_change || selection_changed {
             self.pager_selection_changed();
         }
@@ -3782,14 +3810,14 @@ pub fn reader_write_title(
     }
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     fn exec_mode_prompt(&mut self) {
         self.mode_prompt_buff.clear();
-        if function::exists(MODE_PROMPT_FUNCTION_NAME, self.parser()) {
+        if function::exists(MODE_PROMPT_FUNCTION_NAME, self.parser) {
             let mut mode_indicator_list = vec![];
             exec_subshell(
                 MODE_PROMPT_FUNCTION_NAME,
-                self.parser(),
+                self.parser,
                 Some(&mut mode_indicator_list),
                 false,
             );
@@ -3812,7 +3840,7 @@ impl ReaderData {
             self,
             |zelf, new_value| {
                 std::mem::replace(
-                    &mut zelf.parser().libdata_mut().suppress_fish_trace,
+                    &mut zelf.parser.libdata_mut().suppress_fish_trace,
                     new_value,
                 )
             },
@@ -3828,7 +3856,7 @@ impl ReaderData {
             let mut zelf = scoped_push_replacer_ctx(
                 &mut zelf,
                 |zelf, new_value| {
-                    std::mem::replace(&mut zelf.parser().libdata_mut().is_interactive, new_value)
+                    std::mem::replace(&mut zelf.parser.libdata_mut().is_interactive, new_value)
                 },
                 false,
             );
@@ -3842,14 +3870,14 @@ impl ReaderData {
                 // If the left prompt function is deleted, then use a default prompt instead of
                 // producing an error.
                 let left_prompt_deleted = zelf.conf.left_prompt_cmd == LEFT_PROMPT_FUNCTION_NAME
-                    && !function::exists(&zelf.conf.left_prompt_cmd, zelf.parser());
+                    && !function::exists(&zelf.conf.left_prompt_cmd, zelf.parser);
                 exec_subshell(
                     if left_prompt_deleted {
                         DEFAULT_PROMPT
                     } else {
                         &zelf.conf.left_prompt_cmd
                     },
-                    zelf.parser(),
+                    zelf.parser,
                     Some(&mut prompt_list),
                     /*apply_exit_status=*/ false,
                 );
@@ -3857,12 +3885,12 @@ impl ReaderData {
             }
 
             if !zelf.conf.right_prompt_cmd.is_empty() {
-                if function::exists(&zelf.conf.right_prompt_cmd, zelf.parser()) {
+                if function::exists(&zelf.conf.right_prompt_cmd, zelf.parser) {
                     // Status is ignored.
                     let mut prompt_list = vec![];
                     exec_subshell(
                         &zelf.conf.right_prompt_cmd,
-                        zelf.parser(),
+                        zelf.parser,
                         Some(&mut prompt_list),
                         /*apply_exit_status=*/ false,
                     );
@@ -3877,12 +3905,12 @@ impl ReaderData {
         // Write the screen title. Do not reset the cursor position: exec_prompt is called when there
         // may still be output on the line from the previous command (#2499) and we need our PROMPT_SP
         // hack to work.
-        reader_write_title(L!(""), zelf.parser(), false);
+        reader_write_title(L!(""), zelf.parser, false);
 
         // Some prompt may have requested an exit (#8033).
-        let exit_current_script = zelf.parser().libdata().exit_current_script;
+        let exit_current_script = zelf.parser.libdata().exit_current_script;
         zelf.exit_loop_requested |= exit_current_script;
-        zelf.parser().libdata_mut().exit_current_script = false;
+        zelf.parser.libdata_mut().exit_current_script = false;
     }
 }
 
@@ -4013,7 +4041,7 @@ fn get_autosuggestion_performer(
     }
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     fn can_autosuggest(&self) -> bool {
         // We autosuggest if suppress_autosuggestion is not set, if we're not doing a history search,
         // and our command line contains a non-whitespace character.
@@ -4031,8 +4059,8 @@ impl ReaderData {
     // Called after an autosuggestion has been computed on a background thread.
     fn autosuggest_completed(&mut self, result: Autosuggestion) {
         assert_is_main_thread();
-        if result.search_string == self.in_flight_autosuggest_request {
-            self.in_flight_autosuggest_request.clear();
+        if result.search_string == self.data.in_flight_autosuggest_request {
+            self.data.in_flight_autosuggest_request.clear();
         }
         if result.search_string != self.command_line.text() {
             // This autosuggestion is stale.
@@ -4041,7 +4069,7 @@ impl ReaderData {
         // Maybe load completions for commands discovered by this autosuggestion.
         let mut loaded_new = false;
         for to_load in &result.needs_load {
-            if complete_load(to_load, self.parser()) {
+            if complete_load(to_load, self.parser) {
                 FLOGF!(
                     complete,
                     "Autosuggest found new completions for %ls, restarting",
@@ -4069,8 +4097,8 @@ impl ReaderData {
     fn update_autosuggestion(&mut self) {
         // If we can't autosuggest, just clear it.
         if !self.can_autosuggest() {
-            self.in_flight_autosuggest_request.clear();
-            self.autosuggestion.clear();
+            self.data.in_flight_autosuggest_request.clear();
+            self.data.autosuggestion.clear();
             return;
         }
 
@@ -4079,7 +4107,7 @@ impl ReaderData {
         // the autosuggestion.
         // This is also the main mechanism by which readline commands that don't change the command line
         // text avoid recomputing the autosuggestion.
-        let el = &self.command_line;
+        let el = &self.data.command_line;
         if self.autosuggestion.text.len() > el.text().len()
             && if self.autosuggestion.icase {
                 string_prefixes_string_case_insensitive(el.text(), &self.autosuggestion.text)
@@ -4094,13 +4122,13 @@ impl ReaderData {
         if el.text() == self.in_flight_autosuggest_request {
             return;
         }
-        self.in_flight_autosuggest_request = el.text().to_owned();
+        self.data.in_flight_autosuggest_request = el.text().to_owned();
 
         // Clear the autosuggestion and kick it off in the background.
         FLOG!(reader_render, "Autosuggesting");
-        self.autosuggestion.clear();
+        self.data.autosuggestion.clear();
         let performer = get_autosuggestion_performer(
-            self.parser(),
+            self.parser,
             el.text().to_owned(),
             el.position(),
             self.history.clone(),
@@ -4112,7 +4140,8 @@ impl ReaderData {
             }
             zelf.autosuggest_completed(result);
         };
-        debounce_autosuggestions().perform_with_completion(performer, completion);
+        todo!("PCA");
+        //debounce_autosuggestions().perform_with_completion(performer, completion);
     }
 
     fn is_at_end(&self, el: &EditableLine) -> bool {
@@ -4202,7 +4231,7 @@ fn get_highlight_performer(
     }
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     fn highlight_complete(&mut self, result: HighlightResult) {
         assert_is_main_thread();
         self.in_flight_highlight_request.clear();
@@ -4229,7 +4258,7 @@ impl ReaderData {
 
         FLOG!(reader_render, "Highlighting");
         let highlight_performer =
-            get_highlight_performer(self.parser(), &self.command_line, /*io_ok=*/ true);
+            get_highlight_performer(self.parser, &self.command_line, /*io_ok=*/ true);
         let canary = Rc::downgrade(&self.canary);
         let completion = move |zelf: &mut Self, result| {
             if canary.upgrade().is_none() {
@@ -4237,7 +4266,8 @@ impl ReaderData {
             }
             zelf.highlight_complete(result);
         };
-        debounce_highlighting().perform_with_completion(highlight_performer, completion);
+        todo!("PCA");
+        //debounce_highlighting().perform_with_completion(highlight_performer, completion);
     }
 
     /// Finish up any outstanding syntax highlighting, before execution.
@@ -4281,7 +4311,7 @@ impl ReaderData {
         if !current_highlight_ok {
             // We need to do a quick highlight without I/O.
             let highlight_no_io =
-                get_highlight_performer(self.parser(), &self.command_line, /*io_ok=*/ false);
+                get_highlight_performer(self.parser, &self.command_line, /*io_ok=*/ false);
             self.highlight_complete(highlight_no_io());
         }
     }
@@ -4357,7 +4387,7 @@ fn history_pager_search(
     }
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     fn fill_history_pager(
         &mut self,
         why: HistoryPagerInvocation,
@@ -4431,7 +4461,8 @@ impl ReaderData {
             zelf.layout_and_repaint(L!("history-pager"));
         };
         let debouncer = debounce_history_pager();
-        debouncer.perform_with_completion(performer, completion);
+        todo!("PCA");
+        //debouncer.perform_with_completion(performer, completion);
     }
 }
 
@@ -4617,7 +4648,7 @@ pub fn reader_expand_abbreviation_at_cursor(
     None
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     /// Expand abbreviations at the current cursor position, minus the given cursor backtrack. This
     /// may change the command line but does NOT repaint it. This is to allow the caller to coalesce
     /// repaints.
@@ -4627,7 +4658,7 @@ impl ReaderData {
             // Try expanding abbreviations.
             let cursor_pos = el.position().saturating_sub(cursor_backtrack);
             if let Some(replacement) =
-                reader_expand_abbreviation_at_cursor(el.text(), cursor_pos, self.parser())
+                reader_expand_abbreviation_at_cursor(el.text(), cursor_pos, self.parser)
             {
                 self.push_edit(elt, Edit::new(replacement.range.into(), replacement.text));
                 self.update_buff_pos(elt, replacement.cursor);
@@ -4868,7 +4899,7 @@ fn reader_shell_test(parser: &Parser, bstr: &wstr) -> Result<(), ParserTestError
     res
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     // Import history from older location (config path) if our current history is empty.
     fn import_history_if_necessary(&mut self) {
         if self.history.is_empty() {
@@ -4894,7 +4925,7 @@ impl ReaderData {
     }
 
     fn should_add_to_history(&mut self, text: &wstr) -> bool {
-        let parser = self.parser();
+        let parser = self.parser;
         if !function::exists(L!("fish_should_add_to_history"), parser) {
             // Historical behavior, if the command starts with a space we don't save it.
             return text.as_char_slice()[0] != ' ';
@@ -4940,7 +4971,7 @@ impl ReaderData {
             };
             self.history.clone().add_pending_with_file_detection(
                 &text,
-                &self.parser().variables,
+                &self.parser.variables,
                 mode,
             );
         }
@@ -4949,7 +4980,7 @@ impl ReaderData {
 
 /// Check if we have background jobs that we have not warned about.
 /// If so, print a warning and return true. Otherwise return false.
-impl ReaderData {
+impl<'a> Reader<'a> {
     fn try_warn_on_background_jobs(&mut self) -> bool {
         assert_is_main_thread();
         // Have we already warned?
@@ -4961,7 +4992,7 @@ impl ReaderData {
             return false;
         }
         // Do we have background jobs?
-        let bg_jobs = jobs_requiring_warning_on_exit(self.parser());
+        let bg_jobs = jobs_requiring_warning_on_exit(self.parser);
         if bg_jobs.is_empty() {
             return false;
         }
@@ -4974,7 +5005,7 @@ impl ReaderData {
 
 /// Check if we should exit the reader loop.
 /// Return true if we should exit.
-pub fn check_exit_loop_maybe_warning(data: Option<&mut ReaderData>) -> bool {
+pub fn check_exit_loop_maybe_warning<'a>(data: Option<&'a mut Reader>) -> bool {
     // sighup always forces exit.
     if reader_received_sighup() {
         return true;
@@ -5311,7 +5342,7 @@ fn get_best_rank(comp: &[Completion]) -> u32 {
     best_rank
 }
 
-impl ReaderData {
+impl<'a> Reader<'a> {
     /// Compute completions and update the pager and/or commandline as needed.
     fn compute_and_apply_completions(&mut self, c: ReadlineCmd) {
         assert!(matches!(
@@ -5356,7 +5387,7 @@ impl ReaderData {
         // wildcard; if that succeeds we don't then apply user completions (#8593).
         let mut wc_expanded = WString::new();
         match try_expand_wildcard(
-            self.parser(),
+            self.parser,
             el.text()[token_range.clone()].to_owned(),
             position_in_token,
             &mut wc_expanded,
@@ -5390,7 +5421,7 @@ impl ReaderData {
         let (comp, _needs_load) = complete(
             cmdsub,
             CompletionRequestOptions::normal(),
-            &self.parser().context(),
+            &self.parser.context(),
         );
         self.rls_mut().comp = comp;
 

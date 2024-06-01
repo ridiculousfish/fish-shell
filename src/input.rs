@@ -9,7 +9,7 @@ use crate::input_common::{
 use crate::key::{self, canonicalize_raw_escapes, ctrl, Key, Modifiers};
 use crate::proc::job_reap;
 use crate::reader::{
-    reader_reading_interrupted, reader_reset_interrupted, reader_schedule_prompt_repaint,
+    reader_reading_interrupted, reader_reset_interrupted, reader_schedule_prompt_repaint, Reader,
     ReaderData,
 };
 use crate::signal::signal_clear_cancel;
@@ -391,19 +391,19 @@ pub fn init_input() {
     }
 }
 
-impl InputEventQueuer for ReaderData {
+impl<'a> InputEventQueuer for Reader<'a> {
     fn get_input_data(&self) -> &InputData {
-        &self.input_data
+        &self.data.input_data
     }
 
     fn get_input_data_mut(&mut self) -> &mut InputData {
-        &mut self.input_data
+        &mut self.data.input_data
     }
 
     fn prepare_to_select(&mut self) {
         // Fire any pending events and reap stray processes, including printing exit status messages.
-        event::fire_delayed(self.parser());
-        if job_reap(self.parser(), true) {
+        event::fire_delayed(self.parser);
+        if job_reap(self.parser, true) {
             reader_schedule_prompt_repaint();
         }
     }
@@ -414,7 +414,7 @@ impl InputEventQueuer for ReaderData {
         signal_clear_cancel();
 
         // Fire any pending events and reap stray processes, including printing exit status messages.
-        let parser = self.parser();
+        let parser = self.parser;
         event::fire_delayed(parser);
         if job_reap(parser, true) {
             reader_schedule_prompt_repaint();
@@ -436,7 +436,7 @@ impl InputEventQueuer for ReaderData {
     }
 
     fn uvar_change_notified(&mut self) {
-        self.parser().sync_uvars_and_fire(true /* always */);
+        self.parser.sync_uvars_and_fire(true /* always */);
     }
 
     fn ioport_notified(&mut self) {
@@ -732,11 +732,9 @@ fn find_mapping<Queuer: InputEventQueuer + ?Sized>(
     }
 }
 
-/// A subtype of InputEventQueuer that knows about input mappings.
-/// Most of the logic here should be considered private.
-pub trait InputEventMapper: InputEventQueuer {
+impl<'a> Reader<'a> {
     /// Read a key from our fd.
-    fn read_char(&mut self) -> CharEvent {
+    pub fn read_char(&mut self) -> CharEvent {
         // Clear the interrupted flag.
         reader_reset_interrupted();
 
@@ -806,7 +804,7 @@ pub trait InputEventMapper: InputEventQueuer {
     }
 
     fn mapping_execute_matching_or_generic(&mut self) {
-        let vars = self.get_vars();
+        let vars = self.parser.vars_ref();
         let mut peeker = EventQueuePeeker::new(self);
         // Check for ordinary mappings.
         if let Some(mapping) = find_mapping(&*vars, &mut peeker) {
@@ -900,7 +898,7 @@ pub trait InputEventMapper: InputEventQueuer {
         self.get_input_data_mut().input_function_args.push(arg);
     }
 
-    fn function_pop_arg(&mut self) -> Option<char> {
+    pub fn function_pop_arg(&mut self) -> Option<char> {
         self.get_input_data_mut().input_function_args.pop()
     }
 
@@ -930,15 +928,6 @@ pub trait InputEventMapper: InputEventQueuer {
         self.insert_front(skipped.drain(..));
         skipped.clear();
         self.get_input_data_mut().event_storage = skipped;
-    }
-
-    // Override point to return variables.
-    fn get_vars(&self) -> Rc<EnvStack>;
-}
-
-impl InputEventMapper for ReaderData {
-    fn get_vars(&self) -> Rc<EnvStack> {
-        self.parser().vars_ref()
     }
 }
 
