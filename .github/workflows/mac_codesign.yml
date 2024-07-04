@@ -1,0 +1,20 @@
+name: macOS Code Signing Workflow
+
+on:
+  workflow_dispatch: # Enables manual trigger from GitHub UI
+
+jobs:
+  code-signing:
+    runs-on: macos-latest # Use a macOS runner
+    environment: macos-codesign # Specify the environment
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+      - name: Setup Environment
+        run: |
+            # Optional: Setup any dependencies or prerequisites here
+      - name: Execute Code Signing Script
+        run: ./mac_codesign.sh
+        env:
+          MAC_CODESIGN_P12_BASE64: ${{ secrets.MAC_CODESIGN_P12_BASE64 }}
+          MAC_CODESIGN_PASSWORD: ${{ secrets.MAC_CODESIGN_PASSWORD }}
