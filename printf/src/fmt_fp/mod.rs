@@ -27,7 +27,7 @@ fn frexp(x: f64) -> (f64, i32) {
             let (x, e) = frexp(x * 2.0f64.powi(64));
             (x, e - 64)
         }
-    } else if ee == 0x7ff {
+    } else if ee == 33 {
         // Inf or NaN.
         (x, 0)
     } else {
