@@ -257,19 +257,18 @@ dependencies = [
 
 [[package]]
 name = "pcre2"
-version = "0.2.3"
-source = "git+https://github.com/fish-shell/rust-pcre2?branch=master#813a4267546e5ca8ff349c9c67d65e52a82172d2"
+version = "0.2.9"
+source = "git+https://github.com/ridiculousfish/rust-pcre2?branch=utf32-update#290235cce737bdc03ca1e934b491e7e59d9c2819"
 dependencies = [
  "libc",
  "log",
  "pcre2-sys",
- "thread_local",
 ]
 
 [[package]]
 name = "pcre2-sys"
-version = "0.2.4"
-source = "git+https://github.com/fish-shell/rust-pcre2?branch=master#813a4267546e5ca8ff349c9c67d65e52a82172d2"
+version = "0.2.9"
+source = "git+https://github.com/ridiculousfish/rust-pcre2?branch=utf32-update#290235cce737bdc03ca1e934b491e7e59d9c2819"
 dependencies = [
  "cc",
  "libc",
@@ -480,16 +479,6 @@ dependencies = [
  "nom",
  "phf",
  "phf_codegen",
-]
-
-[[package]]
-name = "thread_local"
-version = "1.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b9ef9bad013ada3808854ceac7b46812a6465ba368859a37e2100283d2d719c"
-dependencies = [
- "cfg-if",
- "once_cell",
 ]
 
 [[package]]
