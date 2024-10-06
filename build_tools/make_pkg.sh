@@ -72,11 +72,11 @@ mkdir -p "$PKGDIR/build_x86_64" "$PKGDIR/build_arm64" "$PKGDIR/root" "$PKGDIR/in
         -DCMAKE_EXE_LINKER_FLAGS="-Wl,-ld_classic" \
         -DWITH_GETTEXT=OFF \
         -DRust_CARGO_TARGET=aarch64-apple-darwin \
-        -DCMAKE_OSX_ARCHITECTURES='arm64;x86_64' \
+        -DCMAKE_OSX_ARCHITECTURES='arm64' \
         -DFISH_USE_SYSTEM_PCRE2=OFF \
         "$SRC_DIR" \
-    && make VERBOSE=1 -j 12 \
-    && env DESTDIR="$PKGDIR/root/" make install;
+    && env MACOSX_DEPLOYMENT_TARGET="11.0" make VERBOSE=1 -j 12 \
+    && env DESTDIR="$PKGDIR/root/" MACOSX_DEPLOYMENT_TARGET="11.0" make install;
 }
 
 # Build for x86-64 but do not install; instead we will make some fat binaries inside the root.
@@ -86,9 +86,9 @@ mkdir -p "$PKGDIR/build_x86_64" "$PKGDIR/build_arm64" "$PKGDIR/root" "$PKGDIR/in
         -DCMAKE_EXE_LINKER_FLAGS="-Wl,-ld_classic" \
         -DWITH_GETTEXT=OFF \
         -DRust_CARGO_TARGET=x86_64-apple-darwin \
-        -DCMAKE_OSX_ARCHITECTURES='arm64;x86_64' \
+        -DCMAKE_OSX_ARCHITECTURES='x86_64' \
         -DFISH_USE_SYSTEM_PCRE2=OFF "$SRC_DIR" \
-  && make VERBOSE=1 -j 12; }
+  && env MACOSX_DEPLOYMENT_TARGET="10.9" make VERBOSE=1 -j 12; }
 
 # Fatten them up.
 for FILE in "$PKGDIR"/root/usr/local/bin/*; do
