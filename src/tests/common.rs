@@ -69,6 +69,21 @@ fn test_scope_guard_consume() {
 }
 
 #[test]
+fn test_cleanup() {
+    let relaxed = std::sync::atomic::Ordering::Relaxed;
+    let counter = std::sync::atomic::AtomicUsize::new(0);
+    {
+        let _cleanup = ScopeGuard::new(123, |arg| {
+            assert_eq!(*arg, 123);
+            counter.fetch_add(1, relaxed);
+        })
+        .into_cleanup();
+        assert_eq!(counter.load(relaxed), 0);
+    }
+    assert_eq!(counter.load(relaxed), 1);
+}
+
+#[test]
 fn test_truncate_at_nul() {
     assert_eq!(truncate_at_nul(L!("abc\0def")), L!("abc"));
     assert_eq!(truncate_at_nul(L!("abc")), L!("abc"));

@@ -471,10 +471,7 @@ fn fire_internal(parser: &Parser, event: &Event) {
         |new_value| std::mem::replace(&mut parser.libdata_mut().is_event, new_value),
         is_event + 1,
     );
-    let _suppress_trace = scoped_push_replacer(
-        |new_value| std::mem::replace(&mut parser.libdata_mut().suppress_fish_trace, new_value),
-        true,
-    );
+    let _suppress_trace = parser.libdata_ref().scoped_suppress_fish_trace();
 
     // Capture the event handlers that match this event.
     let fire: Vec<_> = EVENT_HANDLERS

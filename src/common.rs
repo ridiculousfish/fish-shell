@@ -1762,9 +1762,14 @@ impl<T, F: FnOnce(&mut T)> Drop for ScopeGuard<T, F> {
 /// A trait expressing what ScopeGuard can do. This is necessary because scoped_push returns an
 /// `impl Trait` object and therefore methods on ScopeGuard which take a self parameter cannot be
 /// used.
-pub trait ScopeGuarding: DerefMut {
+pub trait ScopeGuarding: Sized + DerefMut {
     /// Invokes the callback and returns the wrapped value, consuming the ScopeGuard.
     fn commit(guard: Self) -> Self::Target;
+
+    /// Convert self to a "cleanup", preventing deref.
+    fn into_cleanup(self) -> Cleanup<Self> {
+        Cleanup(self)
+    }
 }
 
 impl<T, F: FnOnce(&mut T)> ScopeGuarding for ScopeGuard<T, F> {
@@ -1772,6 +1777,11 @@ impl<T, F: FnOnce(&mut T)> ScopeGuarding for ScopeGuard<T, F> {
         ScopeGuard::commit(guard)
     }
 }
+
+/// A [`ScopeGuard`] which hides the underlying type. This is useful for when users should NOT dereference
+/// the [`ScopeGuard`]; only its destructor is interesting.
+#[must_use = "Must save Cleanup in variable to extend its scope."]
+pub struct Cleanup<G: ScopeGuarding>(G);
 
 /// A scoped manager to save the current value of some variable, and set it to a new value. When
 /// dropped, it restores the variable to its old value.

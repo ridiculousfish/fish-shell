@@ -3,8 +3,8 @@
 use crate::ast::{self, Ast, List, Node};
 use crate::builtins::shared::STATUS_ILLEGAL_CMD;
 use crate::common::{
-    escape_string, scoped_push_replacer, CancelChecker, EscapeFlags, EscapeStringStyle,
-    FilenameRef, ScopeGuarding, PROFILING_ACTIVE,
+    escape_string, scoped_push_replacer, scoped_push_replacer_ctx, CancelChecker, Cleanup,
+    EscapeFlags, EscapeStringStyle, FilenameRef, ScopeGuarding, PROFILING_ACTIVE,
 };
 use crate::complete::CompletionList;
 use crate::env::{EnvMode, EnvStack, EnvStackSetResult, Environment, Statuses};
@@ -38,6 +38,7 @@ use portable_atomic::AtomicU64;
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::{CStr, OsStr};
 use std::num::NonZeroU32;
+use std::ops::Deref;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::rc::Rc;
 #[cfg(target_has_atomic = "64")]
@@ -307,6 +308,39 @@ impl LibraryData {
     }
 }
 
+/// A wrapper around LibraryData to help with "scoped push."
+pub struct LibraryDataRef(Rc<RefCell<LibraryData>>);
+
+impl Deref for LibraryDataRef {
+    type Target = RefCell<LibraryData>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl LibraryDataRef {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(LibraryData::new())))
+    }
+
+    /// Create a clone of this LibraryDataRef, using Rc to share the underlying data.
+    /// Note this is private. Callers should not be cloning this.
+    fn make_clone(&self) -> Self {
+        Self(Rc::clone(&self.0))
+    }
+
+    /// Temporarily suppress fish_trace output for the duration of the scope.
+    pub fn scoped_suppress_fish_trace(&self) -> Cleanup<impl ScopeGuarding> {
+        scoped_push_replacer_ctx(
+            self.make_clone(),
+            |ld, new_value| std::mem::replace(&mut ld.borrow_mut().suppress_fish_trace, new_value),
+            true,
+        )
+        .into_cleanup()
+    }
+}
+
 impl Default for LoopStatus {
     fn default() -> Self {
         LoopStatus::normals
@@ -397,7 +431,7 @@ pub struct Parser {
     pub variables: Rc<EnvStack>,
 
     /// Miscellaneous library data.
-    library_data: RefCell<LibraryData>,
+    library_data: LibraryDataRef,
 
     /// If set, we synchronize universal variables after external commands,
     /// including sending on-variable change events.
@@ -423,7 +457,7 @@ impl Parser {
             block_list: RefCell::default(),
             eval_level: AtomicIsize::new(-1),
             variables,
-            library_data: RefCell::new(LibraryData::new()),
+            library_data: LibraryDataRef::new(),
             syncs_uvars: RelaxedAtomicBool::new(false),
             cancel_behavior,
             profile_items: RefCell::default(),
@@ -821,6 +855,12 @@ impl Parser {
     }
     pub fn libdata_mut(&self) -> RefMut<'_, LibraryData> {
         self.library_data.borrow_mut()
+    }
+
+    /// Get the library data without borrowing it.
+    /// This is useful for functions like `suppress_fish_trace`.
+    pub fn libdata_ref(&self) -> &LibraryDataRef {
+        &self.library_data
     }
 
     /// Get our wait handle store.
@@ -1289,4 +1329,14 @@ pub enum LoopStatus {
     breaks,
     /// current loop block should be skipped
     continues,
+}
+
+#[test]
+fn test_suppress_fish_trace() {
+    let ld = LibraryDataRef::new();
+    assert!(!ld.borrow().suppress_fish_trace);
+    let _restore = ld.scoped_suppress_fish_trace();
+    assert!(ld.borrow().suppress_fish_trace);
+    drop(_restore);
+    assert!(!ld.borrow().suppress_fish_trace);
 }
