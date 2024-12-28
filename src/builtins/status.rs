@@ -521,7 +521,7 @@ pub fn status(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> O
                     }
                 }
                 STATUS_IS_COMMAND_SUB => {
-                    if parser.libdata().is_subshell {
+                    if parser.scope().is_subshell {
                         return STATUS_CMD_OK;
                     } else {
                         return STATUS_CMD_ERROR;
