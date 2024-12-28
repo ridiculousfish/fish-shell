@@ -49,9 +49,8 @@ use crate::color::RgbColor;
 use crate::common::restore_term_foreground_process_group_for_exit;
 use crate::common::{
     escape, escape_string, exit_without_destructors, get_ellipsis_char, get_obfuscation_read_char,
-    redirect_tty_output, scoped_push_replacer, scoped_push_replacer_ctx, shell_modes, str2wcstring,
-    wcs2string, write_loop, EscapeFlags, EscapeStringStyle, ScopeGuard, PROGRAM_NAME,
-    UTF8_BOM_WCHAR,
+    redirect_tty_output, scoped_push_replacer, shell_modes, str2wcstring, wcs2string, write_loop,
+    EscapeFlags, EscapeStringStyle, ScopeGuard, PROGRAM_NAME, UTF8_BOM_WCHAR,
 };
 use crate::complete::{
     complete, complete_load, sort_and_prioritize, CompleteFlags, Completion, CompletionList,
@@ -594,10 +593,7 @@ pub fn reader_read(parser: &Parser, fd: RawFd, io: &IoChain) -> c_int {
         }
     }
 
-    let _interactive_push = scoped_push_replacer(
-        |new_value| std::mem::replace(&mut parser.libdata_mut().is_interactive, new_value),
-        interactive,
-    );
+    let _interactive_push = parser.libdata_ref().scoped_set_interactive(interactive);
     signal_set_handlers_once(interactive);
 
     let res = if interactive {
@@ -4152,67 +4148,51 @@ impl<'a> Reader<'a> {
         self.right_prompt_buff.clear();
 
         // Suppress fish_trace while in the prompt.
-        let mut zelf = scoped_push_replacer_ctx(
-            self,
-            |zelf, new_value| {
-                std::mem::replace(
-                    &mut zelf.parser.libdata_mut().suppress_fish_trace,
-                    new_value,
-                )
-            },
-            true,
-        );
+        let _suppress_trace = self.parser.libdata_ref().scoped_suppress_fish_trace();
 
         // Update the termsize now.
         // This allows prompts to react to $COLUMNS.
-        zelf.update_termsize();
+        self.update_termsize();
 
         // If we have any prompts, they must be run non-interactively.
-        if !zelf.conf.left_prompt_cmd.is_empty() || !zelf.conf.right_prompt_cmd.is_empty() {
-            let mut zelf = scoped_push_replacer_ctx(
-                &mut zelf,
-                |zelf, new_value| {
-                    std::mem::replace(&mut zelf.parser.libdata_mut().is_interactive, new_value)
-                },
-                false,
-            );
+        if !self.conf.left_prompt_cmd.is_empty() || !self.conf.right_prompt_cmd.is_empty() {
+            let _noninteractive = self.parser.libdata_ref().scoped_set_interactive(false);
+            self.exec_mode_prompt();
 
-            zelf.exec_mode_prompt();
-
-            if !zelf.conf.left_prompt_cmd.is_empty() {
+            if !self.conf.left_prompt_cmd.is_empty() {
                 // Status is ignored.
                 let mut prompt_list = vec![];
                 // Historic compatibility hack.
                 // If the left prompt function is deleted, then use a default prompt instead of
                 // producing an error.
-                let left_prompt_deleted = zelf.conf.left_prompt_cmd == LEFT_PROMPT_FUNCTION_NAME
-                    && !function::exists(&zelf.conf.left_prompt_cmd, zelf.parser);
+                let left_prompt_deleted = self.conf.left_prompt_cmd == LEFT_PROMPT_FUNCTION_NAME
+                    && !function::exists(&self.conf.left_prompt_cmd, self.parser);
                 exec_subshell(
                     if left_prompt_deleted {
                         DEFAULT_PROMPT
                     } else {
-                        &zelf.conf.left_prompt_cmd
+                        &self.conf.left_prompt_cmd
                     },
-                    zelf.parser,
+                    self.parser,
                     Some(&mut prompt_list),
                     /*apply_exit_status=*/ false,
                 );
-                zelf.left_prompt_buff = join_strings(&prompt_list, '\n');
+                self.left_prompt_buff = join_strings(&prompt_list, '\n');
             }
 
-            if !zelf.conf.right_prompt_cmd.is_empty() {
-                if function::exists(&zelf.conf.right_prompt_cmd, zelf.parser) {
+            if !self.conf.right_prompt_cmd.is_empty() {
+                if function::exists(&self.conf.right_prompt_cmd, self.parser) {
                     // Status is ignored.
                     let mut prompt_list = vec![];
                     exec_subshell(
-                        &zelf.conf.right_prompt_cmd,
-                        zelf.parser,
+                        &self.conf.right_prompt_cmd,
+                        self.parser,
                         Some(&mut prompt_list),
                         /*apply_exit_status=*/ false,
                     );
                     // Right prompt does not support multiple lines, so just concatenate all of them.
                     for i in prompt_list {
-                        zelf.right_prompt_buff.push_utfstr(&i);
+                        self.right_prompt_buff.push_utfstr(&i);
                     }
                 }
             }
@@ -4221,17 +4201,17 @@ impl<'a> Reader<'a> {
         // Write the screen title. Do not reset the cursor position: exec_prompt is called when there
         // may still be output on the line from the previous command (#2499) and we need our PROMPT_SP
         // hack to work.
-        reader_write_title(L!(""), zelf.parser, false);
+        reader_write_title(L!(""), self.parser, false);
 
         // Reap jobs but do NOT trigger a repaint.
         // This is to prevent infinite loops in case a job from the prompt triggers a repaint.
         // See #9796.
-        job_reap(zelf.parser, true);
+        job_reap(self.parser, true);
 
         // Some prompt may have requested an exit (#8033).
-        let exit_current_script = zelf.parser.libdata().exit_current_script;
-        zelf.exit_loop_requested |= exit_current_script;
-        zelf.parser.libdata_mut().exit_current_script = false;
+        let exit_current_script = self.parser.libdata().exit_current_script;
+        self.exit_loop_requested |= exit_current_script;
+        self.parser.libdata_mut().exit_current_script = false;
     }
 }
 

@@ -339,6 +339,16 @@ impl LibraryDataRef {
         )
         .into_cleanup()
     }
+
+    /// Mark that we are or are not interactive for the duration of the scope.
+    pub fn scoped_set_interactive(&self, interactive: bool) -> Cleanup<impl ScopeGuarding> {
+        scoped_push_replacer_ctx(
+            self.make_clone(),
+            |ld, new_value| std::mem::replace(&mut ld.borrow_mut().is_interactive, new_value),
+            interactive,
+        )
+        .into_cleanup()
+    }
 }
 
 impl Default for LoopStatus {
@@ -1339,4 +1349,18 @@ fn test_suppress_fish_trace() {
     assert!(ld.borrow().suppress_fish_trace);
     drop(_restore);
     assert!(!ld.borrow().suppress_fish_trace);
+}
+
+#[test]
+fn test_set_interactive() {
+    let ld = LibraryDataRef::new();
+    assert!(!ld.borrow().is_interactive);
+    let _restore = ld.scoped_set_interactive(true);
+    assert!(ld.borrow().is_interactive);
+    let _restore2 = ld.scoped_set_interactive(false);
+    assert!(!ld.borrow().is_interactive);
+    drop(_restore2);
+    assert!(ld.borrow().is_interactive);
+    drop(_restore);
+    assert!(!ld.borrow().is_interactive);
 }
