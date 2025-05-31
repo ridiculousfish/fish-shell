@@ -30,6 +30,9 @@ pub enum FeatureFlag {
 
     /// Do not look up $TERM in terminfo database.
     ignore_terminfo,
+
+    /// Whether concurrent execution is supported.
+    concurrent,
 }
 
 struct Features {
@@ -118,6 +121,14 @@ pub const METADATA: &[FeatureMetadata] = &[
         default_value: true,
         read_only: false,
     },
+    FeatureMetadata {
+        flag: FeatureFlag::concurrent,
+        name: L!("concurrent"),
+        groups: L!("5"),
+        description: L!("support for concurrent execution"),
+        default_value: true,
+        read_only: false,
+    },
 ];
 
 thread_local!(
@@ -180,6 +191,7 @@ impl Features {
                 AtomicBool::new(METADATA[4].default_value),
                 AtomicBool::new(METADATA[5].default_value),
                 AtomicBool::new(METADATA[6].default_value),
+                AtomicBool::new(METADATA[7].default_value),
             ],
         }
     }
