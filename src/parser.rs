@@ -3,8 +3,8 @@
 use crate::ast::{self, Node};
 use crate::builtins::shared::STATUS_ILLEGAL_CMD;
 use crate::common::{
-    escape_string, wcs2string, CancelChecker, EscapeFlags, EscapeStringStyle, FilenameRef,
-    ScopeGuarding, ScopedCell, ScopedRefCell, PROFILING_ACTIVE,
+    assert_send, escape_string, wcs2string, CancelChecker, EscapeFlags, EscapeStringStyle,
+    FilenameRef, ScopeGuarding, ScopedCell, ScopedRefCell, PROFILING_ACTIVE,
 };
 use crate::complete::CompletionList;
 use crate::env::{EnvMode, EnvStack, EnvStackSetResult, Environment, Statuses};
@@ -43,11 +43,11 @@ use std::fs::File;
 use std::io::Write;
 use std::num::NonZeroU32;
 use std::os::fd::OwnedFd;
-use std::rc::Rc;
 #[cfg(target_has_atomic = "64")]
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub enum BlockData {
     Function {
         /// Name of the function
@@ -55,7 +55,7 @@ pub enum BlockData {
         /// Arguments passed to the function
         args: Vec<WString>,
     },
-    Event(Rc<Event>),
+    Event(Arc<Event>),
     Source {
         /// The sourced file
         file: Arc<WString>,
@@ -63,7 +63,7 @@ pub enum BlockData {
 }
 
 /// block_t represents a block of commands.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Block {
     /// Type of block.
     block_type: BlockType,
@@ -153,7 +153,7 @@ impl Block {
     }
     pub fn event_block(event: Event) -> Block {
         let mut b = Block::new(BlockType::event);
-        b.data = Some(Box::new(BlockData::Event(Rc::new(event))));
+        b.data = Some(Box::new(BlockData::Event(Arc::new(event))));
         b
     }
     pub fn function_block(name: WString, args: Vec<WString>, shadows: bool) -> Block {
@@ -271,7 +271,7 @@ impl Default for ScopedData {
 }
 
 /// Miscellaneous data used to avoid recursion and others.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct LibraryData {
     /// The current filename we are evaluating, either from builtin source or on the command line.
     pub current_filename: Option<FilenameRef>,
@@ -344,7 +344,7 @@ impl Default for LoopStatus {
 }
 
 /// Status variables set by the main thread as jobs are parsed and read by various consumers.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StatusVars {
     /// Used to get the head of the current job (not the current command, at least for now)
     /// for `status current-command`.
@@ -1222,6 +1222,53 @@ impl Parser {
     /// Checks if the max eval depth has been exceeded
     pub fn is_eval_depth_exceeded(&self) -> bool {
         self.scope().eval_level >= FISH_MAX_EVAL_DEPTH
+    }
+}
+
+/// Bits of a Parser which can be sent across threads.
+/// This is used when branching a new Parser from an existing one; stuff that should
+/// initially be empty (like the job list) is omitted.
+pub struct ParserPieces {
+    variables: EnvStack,
+    library_data: LibraryData,
+    scoped_data: ScopedData,
+    block_list: Vec<Block>,
+}
+
+impl ParserPieces {
+    pub fn into_parser(self) -> Parser {
+        let Self {
+            variables,
+            library_data,
+            block_list,
+            scoped_data,
+        } = self;
+        let mut parser = Parser::new(variables, CancelBehavior::default());
+        *parser.block_list.get_mut() = block_list;
+        *parser.library_data.get_mut() = library_data;
+        *parser.scoped_data.get_mut() = scoped_data;
+        parser
+    }
+}
+
+const _: () = assert_send::<ParserPieces>();
+
+impl Parser {
+    /// Branch this parser: return pieces of a new Parser suitable for executing in another thread. Like
+    /// fork() but for parsers.
+    pub fn branch(&self) -> ParserPieces {
+        let variables = self
+            .variables
+            .create_child(self.variables.dispatches_var_changes());
+        let block_list = self.block_list.borrow().clone();
+        let library_data = self.library_data.borrow().clone();
+        let scoped_data = self.scope();
+        ParserPieces {
+            variables,
+            library_data,
+            block_list,
+            scoped_data,
+        }
     }
 }
 

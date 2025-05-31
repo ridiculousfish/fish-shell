@@ -199,6 +199,10 @@ impl EnvStack {
         }
     }
 
+    pub fn dispatches_var_changes(&self) -> bool {
+        self.dispatches_var_changes
+    }
+
     fn lock(&self) -> EnvMutexGuard<'_, EnvStackImpl> {
         self.inner.lock()
     }

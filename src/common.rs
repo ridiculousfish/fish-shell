@@ -1726,6 +1726,7 @@ impl<T: Copy> ScopedCell<T> {
 }
 
 /// A wrapper around RefCell which supports modifying the contents, scoped to a region of code.
+#[derive(Clone)]
 pub struct ScopedRefCell<T>(RefCell<T>);
 
 impl<T> Deref for ScopedRefCell<T> {
