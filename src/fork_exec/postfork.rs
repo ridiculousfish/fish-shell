@@ -186,6 +186,22 @@ pub fn child_setup_process(
     // Set the handling for job control signals back to the default.
     // Do this after any tcsetpgrp call so that we swallow SIGTTIN.
     signal_reset_handlers();
+
+    // If we are executing in a thread with blocked signals, we need to
+    // unblock them. Unblock everything not blocked.
+    unsafe {
+        let mut new_sigmask = sigmask.copied().unwrap_or(std::mem::zeroed());
+        let mut act: libc::sigaction = std::mem::zeroed();
+
+        // If our SIGHUP handler is SIG_IGN, then block SIGHUP in the child.
+        libc::sigaction(libc::SIGHUP, std::ptr::null(), &mut act);
+        if act.sa_sigaction == libc::SIG_IGN {
+            libc::sigaddset(&mut new_sigmask, libc::SIGHUP);
+        }
+        let err = libc::sigprocmask(libc::SIG_SETMASK, &new_sigmask, std::ptr::null_mut());
+        assert!(err == 0, "sigprocmask should always succeed");
+    }
+
     0
 }
 
