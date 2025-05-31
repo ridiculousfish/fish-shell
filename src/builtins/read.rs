@@ -19,6 +19,7 @@ use crate::reader::commandline_set_buffer;
 use crate::reader::reader_save_screen_state;
 use crate::reader::ReaderConfig;
 use crate::reader::{reader_pop, reader_push, reader_readline};
+use crate::threads::assert_is_main_thread;
 use crate::tokenizer::Tokenizer;
 use crate::tokenizer::TOK_ACCEPT_UNFINISHED;
 use crate::tokenizer::TOK_ARGUMENT_LIST;
@@ -211,6 +212,12 @@ fn read_interactive(
     commandline: &Option<WString>,
     inputfd: RawFd,
 ) -> BuiltinResult {
+    // Disallow reading interactively in pipelines or background processes.
+    if !parser.is_root() {
+        return Err(STATUS_CMD_ERROR);
+    }
+    assert_is_main_thread();
+
     let mut exit_res = Ok(SUCCESS);
 
     // Construct a configuration.
