@@ -49,7 +49,7 @@ use fish::{
     parse_constants::{ParseErrorList, ParseTreeFlags},
     parse_tree::ParsedSource,
     parse_util::parse_util_detect_errors_in_ast,
-    parser::{BlockType, CancelBehavior, Parser},
+    parser::{BlockType, Parser},
     path::path_get_config,
     printf,
     proc::{
@@ -520,7 +520,7 @@ fn throwing_main() -> i32 {
 
     // Construct the root parser!
     let env = EnvStack::globals().create_child(true /* dispatches_var_changes */);
-    let parser = &Parser::new(env, CancelBehavior::Clear);
+    let parser = &Parser::new_root(env);
     parser.set_syncs_uvars(!opts.no_config);
 
     if !opts.no_exec && !opts.no_config {
