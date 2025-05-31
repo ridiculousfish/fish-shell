@@ -433,6 +433,9 @@ pub struct Parser {
     /// including sending on-variable change events.
     syncs_uvars: RelaxedAtomicBool,
 
+    /// If set, this parser is the root parser, i.e. the one that was created by the main thread.
+    is_root: bool,
+
     /// The behavior when fish itself receives a signal and there are no blocks on the stack.
     cancel_behavior: CancelBehavior,
 
@@ -461,6 +464,7 @@ impl Parser {
             profile_items: RefCell::default(),
             global_event_blocks: AtomicU64::new(0),
             blocking_query: OnceCell::new(),
+            is_root: false,
         };
 
         match open_dir(CStr::from_bytes_with_nul(b".\0").unwrap(), BEST_O_SEARCH) {
@@ -473,6 +477,18 @@ impl Parser {
         }
 
         result
+    }
+
+    // Create the root parser.
+    pub fn new_root(variables: EnvStack) -> Parser {
+        let mut res = Parser::new(variables, CancelBehavior::Clear);
+        res.is_root = true;
+        res
+    }
+
+    /// Return true if we are the root parser.
+    pub fn is_root(&self) -> bool {
+        self.is_root
     }
 
     /// Adds a job to the beginning of the job list.
