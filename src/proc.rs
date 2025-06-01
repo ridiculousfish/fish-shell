@@ -519,7 +519,7 @@ impl Process {
 
     /// Create a wait handle for the process.
     /// As a process does not know its job id, we pass it in.
-    /// Note this will return null if the process is not waitable (has no pid).
+    /// Note this will return null if the process is not waitable.
     pub fn make_wait_handle(&self, jid: InternalJobId) -> Option<WaitHandleRef> {
         let pid = self.pid()?;
         if self.wait_handle.borrow().is_none() {

@@ -12,7 +12,6 @@ use crate::common::{
     ScopeGuard,
 };
 use crate::env::{EnvMode, EnvStack, Environment, Statuses, READ_BYTE_LIMIT};
-#[cfg(FISH_USE_POSIX_SPAWN)]
 use crate::env_dispatch::use_posix_spawn;
 use crate::fds::{
     make_autoclose_pipes, make_fd_blocking, open_cloexec, sync_fchdir_lock, PIPE_ERROR,
@@ -26,6 +25,7 @@ use crate::fork_exec::postfork::{
 #[cfg(FISH_USE_POSIX_SPAWN)]
 use crate::fork_exec::spawn::PosixSpawner;
 use crate::function::{self, FunctionProperties};
+use crate::future_feature_flags::{feature_test, FeatureFlag};
 use crate::io::{
     BufferedOutputStream, FdOutputStream, IoBufferfill, IoChain, IoClose, IoMode, IoPipe,
     IoStreams, OutputStream, SeparatedBuffer, StringOutputStream,
@@ -42,7 +42,8 @@ use crate::proc::{
 };
 use crate::reader::{reader_run_count, safe_restore_term_mode};
 use crate::redirection::{dup2_list_resolve_chain, Dup2List};
-use crate::threads::{iothread_perform_cant_wait, is_forked_child};
+#[cfg(FISH_USE_POSIX_SPAWN)]
+use crate::threads::{self, iothread_perform_cant_wait, is_forked_child};
 use crate::trace::trace_if_enabled_with_args;
 use crate::tty_handoff::TtyHandoff;
 use crate::wchar::prelude::*;
@@ -984,7 +985,7 @@ fn function_restore_environment(parser: &Parser, block: BlockId) {
 // This accepts a place to execute as `parser` and then executes the result, returning a status.
 // This is factored out in this funny way in preparation for concurrent execution.
 type ProcPerformer =
-    dyn FnOnce(&Parser, Option<&mut OutputStream>, Option<&mut OutputStream>) -> ProcStatus;
+    dyn FnOnce(&Parser, Option<&mut OutputStream>, Option<&mut OutputStream>) -> ProcStatus + Send;
 
 // Return a function which may be to run the given block node process 'p'.
 fn get_performer_for_block_node(p: &Process, job: &Job, io_chain: &IoChain) -> Box<ProcPerformer> {
@@ -1043,6 +1044,46 @@ fn get_performer_for_function(
         }
         res.status
     }))
+}
+
+/// Execute a block node or function process concurrently (in a background thread).
+fn exec_concurrent_block_or_func_process(
+    parser: &Parser,
+    j: &Job,
+    p: &Process,
+    io_chain: IoChain,
+) -> LaunchResult {
+    let performer = if p.is_block_node() {
+        get_performer_for_block_node(p, j, &io_chain)
+    } else {
+        // Note this may fail if the function was erased.
+        get_performer_for_function(p, j, &io_chain)?
+    };
+
+    // We can perform this process.
+    // Branch our parser so we have a new place to execute.
+    let bg_executor = parser.branch();
+
+    // Make an internal process.
+    let internal_proc = Arc::new(InternalProc::new());
+    FLOGF!(
+        proc_internal_proc,
+        "Created internal proc %llu to concurrently exec proc '%ls'",
+        internal_proc.get_id(),
+        p.argv0().unwrap_or_default()
+    );
+    p.internal_proc.replace(Some(Arc::clone(&internal_proc)));
+
+    let launched = threads::spawn(move || {
+        let parser = bg_executor.into_parser();
+        let status: ProcStatus = performer(&parser, None, None);
+        internal_proc.mark_exited(status);
+    });
+    if launched {
+        LaunchResult::Ok(())
+    } else {
+        LaunchResult::Err(())
+    }
 }
 
 /// Execute a block node or function "process".
@@ -1196,6 +1237,11 @@ struct PartialPipes {
     write: Option<OwnedFd>,
 }
 
+/// Returns true if we should use concurrent internal processes for the given job.
+fn use_concurrent_internal_procs(j: &Job) -> bool {
+    feature_test(FeatureFlag::concurrent) && j.processes.len() > 1
+}
+
 /// Executes a process \p `in` `job`, using the pipes `pipes` (which may have invalid fds if this
 /// is the first or last process).
 /// `deferred_pipes` represents the pipes from our deferred process; if set ensure they get closed
@@ -1299,6 +1345,9 @@ fn exec_process_in_job(
         );
     }
 
+    // Decide whether internal fish processes should run concurrently or serially.
+    let concurrent_procs = use_concurrent_internal_procs(j);
+
     // Decide if outputting to a pipe may deadlock.
     // This happens if fish pipes from an internal process into another internal process:
     //    echo $big | string match...
@@ -1308,18 +1357,24 @@ fn exec_process_in_job(
     // fish wants to run `echo` before launching external_proc, so the pipe may deadlock.
     // However if we are a deferred run, it means that we are piping into an external process
     // which got launched before us!
-    let piped_output_needs_buffering = !p.is_last_in_job && !is_deferred_run;
+    let piped_output_needs_buffering = !concurrent_procs && !p.is_last_in_job && !is_deferred_run;
 
     // Execute the process.
     p.check_generations_before_launch();
     match p.typ {
-        ProcessType::Function | ProcessType::BlockNode(_) => exec_block_or_func_process(
-            parser,
-            j,
-            p,
-            process_net_io_chain,
-            piped_output_needs_buffering,
-        ),
+        ProcessType::Function | ProcessType::BlockNode(_) => {
+            if concurrent_procs {
+                exec_concurrent_block_or_func_process(parser, j, p, process_net_io_chain)
+            } else {
+                exec_block_or_func_process(
+                    parser,
+                    j,
+                    p,
+                    process_net_io_chain,
+                    piped_output_needs_buffering,
+                )
+            }
+        }
         ProcessType::Builtin => exec_builtin_process(
             parser,
             j,
@@ -1350,6 +1405,11 @@ fn exec_process_in_job(
 // This should show the output as it comes, not buffer until the end.
 // Any such process (only one per job) will be called the "deferred" process.
 fn get_deferred_process(j: &Job) -> Option<usize> {
+    // Do not defer processes if we are using concurrent execution, because there's no benefit
+    if use_concurrent_internal_procs(j) {
+        return None;
+    }
+
     // Common case is no deferred proc.
     if j.processes().len() <= 1 {
         return None;
