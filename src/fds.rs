@@ -1,17 +1,18 @@
 use crate::common::wcs2zstring;
 use crate::flog::FLOG;
 use crate::signal::signal_check_cancel;
-#[cfg(test)]
-use crate::tests::prelude::*;
 use crate::wchar::prelude::*;
 use crate::wutil::perror;
 use libc::{c_int, EINTR, FD_CLOEXEC, F_GETFD, F_GETFL, F_SETFD, F_SETFL, O_NONBLOCK};
 use nix::fcntl::FcntlArg;
 use nix::{fcntl::OFlag, unistd};
+use once_cell::sync::OnceCell;
 use std::ffi::CStr;
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::os::fd::OwnedFd;
 use std::os::unix::prelude::*;
+use std::sync::{Arc, Condvar, Mutex};
 
 localizable_consts!(
     pub PIPE_ERROR
@@ -337,25 +338,141 @@ pub fn make_fd_blocking(fd: RawFd) -> Result<(), io::Error> {
     Ok(())
 }
 
-#[test]
-#[serial]
-fn test_pipes() {
-    let _cleanup = test_init();
-    // Here we just test that each pipe has CLOEXEC set and is in the high range.
-    // Note pipe creation may fail due to fd exhaustion; don't fail in that case.
-    let mut pipes = vec![];
-    for _i in 0..10 {
-        if let Ok(pipe) = make_autoclose_pipes() {
-            pipes.push(pipe);
+/// A simple "lock" which prevents changing the current working directory.
+pub struct ChdirLock {
+    locked: bool,
+}
+
+impl ChdirLock {
+    pub fn new() -> Self {
+        ChdirLock { locked: false }
+    }
+}
+
+impl Drop for ChdirLock {
+    fn drop(&mut self) {
+        if self.locked {
+            cwd_coordinator().release_1_lock();
         }
     }
-    for pipe in pipes {
-        for fd in [&pipe.read, &pipe.write] {
-            let fd = fd.as_raw_fd();
-            assert!(fd >= FIRST_HIGH_FD);
-            let flags = unsafe { libc::fcntl(fd, F_GETFD, 0) };
-            assert!(flags >= 0);
-            assert!(flags & FD_CLOEXEC != 0);
+}
+
+// Coordinates fchdir calls using a counting lock.
+// The counting lock enables multiple threads which all share the same CWD to call fork()
+// concurrently. This is less of a performance optimization than a way to flush out more bugs,
+// by enabling more concurrency.
+#[derive(Default)]
+struct CwdCoordinatorData {
+    // The cwd itself. Note this is held strongly so as not to thrash calls to fchdir().
+    cwd: Option<Arc<OwnedFd>>,
+
+    // Number of outstanding users for this cwd. This may be zero yet cwd is still set.
+    lock_count: usize,
+
+    // If set, someone else is waiting to apply their cwd. Do not add new users, to prevent
+    // writer starvation.
+    contended: bool,
+}
+
+impl CwdCoordinatorData {
+    // Return true if the given dir_fd is the current working directory.
+    fn cwd_is_fd(&self, dir_fd: &impl AsRawFd) -> bool {
+        self.cwd
+            .as_ref()
+            .is_some_and(|fd| fd.as_raw_fd() == dir_fd.as_raw_fd())
+    }
+}
+
+#[derive(Default)]
+pub struct CwdCoordinator {
+    data: Mutex<CwdCoordinatorData>,
+    // When lock_count reaches zero, this cv is triggered.
+    cv: Condvar,
+}
+
+impl CwdCoordinator {
+    /// Release a lock, posting to the cv if our users goes to zero
+    fn release_1_lock(&self) {
+        let mut data = self.data.lock().unwrap();
+        // We can share the CWD if it's correct, unless we want to lock and it's contended.
+        assert!(data.lock_count > 0, "was not locked");
+        data.lock_count -= 1;
+        let post = data.lock_count == 0;
+        std::mem::drop(data);
+        if post {
+            self.cv.notify_all();
         }
     }
+
+    /// Change the current working directory to `dir_fd`, which must be a valid
+    /// directory file descriptor. If `out_lock` is provided, then the directory
+    /// will not be changed until the lock is released.
+    fn fchdir(
+        &self,
+        dir_fd: &Arc<OwnedFd>,
+        mut out_lock: Option<&mut ChdirLock>,
+    ) -> std::io::Result<()> {
+        if let Some(out_lock) = &mut out_lock {
+            assert!(!out_lock.locked, "Should not be locked");
+        };
+        let mut data = self.data.lock().unwrap();
+
+        // Wait until existing users of other fds are done, or until we can share the fd.
+        while data.lock_count > 0 {
+            // We can share the CWD if it's correct, unless we want to lock and it's contended.
+            let can_share_cwd = data.cwd_is_fd(dir_fd) && (out_lock.is_none() || !data.contended);
+            if can_share_cwd {
+                break;
+            }
+            // Mark that we want to lock so that we are not starved by other threads.
+            data.contended = true;
+            data = self.cv.wait(data).unwrap();
+        }
+
+        // Our turn.
+        if !data.cwd_is_fd(dir_fd) {
+            assert!(data.lock_count == 0, "Should be unlocked");
+            let ret = unsafe { libc::fchdir(dir_fd.as_raw_fd()) };
+            if ret != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            data.cwd = Some(Arc::clone(dir_fd));
+            data.contended = false;
+        }
+
+        // Either the above or a previous fchdir() must have succeeded.
+        if let Some(out_lock) = out_lock {
+            out_lock.locked = true;
+            data.lock_count += 1;
+        }
+        Ok(())
+    }
+}
+
+// Get the singleton CwdCoordinator instance.
+fn cwd_coordinator() -> &'static CwdCoordinator {
+    static CWD_COORDINATOR: OnceCell<CwdCoordinator> = OnceCell::new();
+    CWD_COORDINATOR.get_or_init(Default::default)
+}
+
+// Change the current working directory to `dir_fd`, which must be a valid
+// directory file descriptor. Note that the CWD may change immediately after,
+// so this is really just about checking for errors.
+pub fn sync_fchdir(fd: &Arc<OwnedFd>) -> std::io::Result<()> {
+    cwd_coordinator().fchdir(fd, None)
+}
+
+// Change the current working directory to `dir_fd`, which must be a valid
+// directory file descriptor. The returned `ChdirLock` will prevent changing
+// the current working directory until it is released or dropped.
+pub fn sync_fchdir_lock(fd: &Arc<OwnedFd>) -> std::io::Result<ChdirLock> {
+    let mut lock = ChdirLock::new();
+    cwd_coordinator().fchdir(fd, Some(&mut lock))?;
+    Ok(lock)
+}
+
+// Test helpers.
+#[cfg(test)]
+pub fn sync_fchdir_lock_count() -> usize {
+    cwd_coordinator().data.lock().unwrap().lock_count
 }
