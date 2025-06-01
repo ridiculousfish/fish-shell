@@ -10,6 +10,7 @@ mod env;
 mod env_universal_common;
 mod expand;
 mod fd_monitor;
+mod fds;
 mod history;
 mod input;
 mod input_common;
