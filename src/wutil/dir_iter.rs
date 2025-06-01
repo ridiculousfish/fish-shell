@@ -1,5 +1,7 @@
 use super::wopendir;
 use crate::common::{str2wcstring, wcs2zstring};
+#[cfg(test)]
+use crate::tests::prelude::*;
 use crate::wchar::{wstr, WString};
 use crate::wutil::DevInode;
 use libc::{
@@ -347,6 +349,7 @@ fn test_no_dots() {
 }
 
 #[test]
+#[serial]
 fn test_dots() {
     use crate::wchar::L;
     // DirIter returns . or .. if you ask nicely.
