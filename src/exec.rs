@@ -14,8 +14,9 @@ use crate::common::{
 use crate::env::{EnvMode, EnvStack, Environment, Statuses, READ_BYTE_LIMIT};
 #[cfg(FISH_USE_POSIX_SPAWN)]
 use crate::env_dispatch::use_posix_spawn;
-use crate::fds::make_fd_blocking;
-use crate::fds::{make_autoclose_pipes, open_cloexec, PIPE_ERROR};
+use crate::fds::{
+    make_autoclose_pipes, make_fd_blocking, open_cloexec, sync_fchdir_lock, PIPE_ERROR,
+};
 use crate::flog::{FLOG, FLOGF};
 use crate::fork_exec::blocked_signals_for_job;
 use crate::fork_exec::postfork::{
@@ -874,6 +875,13 @@ fn exec_external_command(
 
     let actual_cmd = wcs2zstring(&p.actual_cmd);
 
+    // Pull out the cwd for this parser.
+    // We could instead fchdir in the child process, but this is simpler and
+    // typically the parser's current directory is already set so it's a no-op.
+    let libdata = parser.libdata();
+    let cwd_fd = libdata.cwd_fd.as_ref().unwrap();
+    let _fchdir_lock = sync_fchdir_lock(cwd_fd);
+
     #[cfg(FISH_USE_POSIX_SPAWN)]
     // Prefer to use posix_spawn, since it's faster on some systems like OS X.
     if can_use_posix_spawn_for_job(j, &dup2s) {
@@ -916,6 +924,7 @@ fn exec_external_command(
         return Ok(());
     }
 
+    // Non-posix_spawn path.
     fork_child_for_process(j, p, &dup2s, pgroup_policy, |p| {
         safe_launch_process(p, &actual_cmd, &argv, &envv)
     })
