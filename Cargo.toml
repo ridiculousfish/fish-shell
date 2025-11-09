@@ -101,6 +101,7 @@ fish-printf.workspace = true
 fish-tempfile.workspace = true
 fish-wchar.workspace = true
 fish-widecharwidth.workspace = true
+json = "0.12.4"
 libc.workspace = true
 lru.workspace = true
 macro_rules_attribute = "0.2.2"
