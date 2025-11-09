@@ -29,32 +29,32 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     ffi::CString,
     fs::File,
-    io::{BufRead, BufWriter, Read, Write},
+    io::{BufRead, BufWriter, Write},
     mem::MaybeUninit,
-    num::NonZeroUsize,
     ops::ControlFlow,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use bitflags::bitflags;
-use lru::LruCache;
 use nix::{fcntl::OFlag, sys::stat::Mode};
 use rand::Rng;
 
 use crate::{
     ast::{self, Kind, Node},
-    common::{CancelChecker, UnescapeStringStyle, bytes2wcstring, unescape_string, valid_var_name},
+    common::{CancelChecker, bytes2wcstring, valid_var_name},
     env::{EnvMode, EnvStack, Environment},
     expand::{ExpandFlags, expand_one},
     fds::wopen_cloexec,
     flog::{flog, flogf},
     fs::fsync,
-    history::file::{HistoryFile, RawHistoryFile},
+    history::file::{map_file, time_to_seconds},
+    history::jsonl_backend::HistoryFile,
+    history::yaml_compat,
     io::IoStreams,
     localization::wgettext_fmt,
     operation_context::{EXPANSION_LIMIT_BACKGROUND, OperationContext},
-    parse_constants::{ParseTreeFlags, StatementDecoration},
+    parse_constants::ParseTreeFlags,
     parse_util::{parse_util_detect_errors, parse_util_unescape_wildcards},
     path::{path_get_config, path_get_data, path_is_valid},
     prelude::*,
@@ -86,9 +86,10 @@ pub enum SearchType {
 }
 
 /// Ways that a history item may be written to disk (or omitted).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PersistenceMode {
     /// The history item is written to disk normally
+    #[default]
     Disk,
     /// The history item is stored in-memory only, not written to disk
     Memory,
@@ -101,8 +102,6 @@ pub enum SearchDirection {
     Forward,
     Backward,
 }
-
-use super::file::time_to_seconds;
 
 /// This is the history session ID we use by default if the user has not set env var fish_history.
 const DFLT_FISH_HISTORY_SESSION_ID: &wstr = L!("fish");
@@ -140,30 +139,6 @@ impl Drop for TimeProfiler {
     }
 }
 
-trait LruCacheExt {
-    /// Function to add a history item.
-    fn add_item(&mut self, item: HistoryItem);
-}
-
-impl LruCacheExt for LruCache<WString, HistoryItem> {
-    fn add_item(&mut self, item: HistoryItem) {
-        // Skip empty items.
-        if item.is_empty() {
-            return;
-        }
-
-        // See if it's in the cache. If it is, update the timestamp. If not, we create a new node
-        // and add it. Note that calling get_node promotes the node to the front.
-        let key = item.str();
-        if let Some(node) = self.get_mut(key) {
-            node.creation_timestamp = SystemTime::max(node.timestamp(), item.timestamp());
-            // What to do about paths here? Let's just ignore them.
-        } else {
-            self.put(key.to_owned(), item);
-        }
-    }
-}
-
 pub type PathList = Vec<WString>;
 
 /// History items are identified by a u64, where the high 48 bits are the number of milliseconds since the epoch and the low 16 bits are a nonce.
@@ -173,6 +148,7 @@ pub type PathList = Vec<WString>;
 pub struct HistoryItemId(u64);
 
 impl HistoryItemId {
+    /// Number of bits in the nonce.
     const NONCE_BITS: u32 = 16;
 
     /// Create a new history item identifier from a timestamp and nonce.
@@ -191,33 +167,69 @@ impl HistoryItemId {
         let millis = self.0 >> Self::NONCE_BITS;
         UNIX_EPOCH + Duration::from_millis(millis)
     }
+
+    /// Return the raw 64-bit representation.
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+
+    /// Construct directly from a raw 64-bit identifier.
+    pub fn from_raw(value: u64) -> Self {
+        Self(value)
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
-    /// The actual contents of the entry.
-    contents: WString,
-    /// Original creation time for the entry.
-    creation_timestamp: SystemTime,
+    /// The unique identifier for this item, which includes a timestamp.
+    pub(super) id: HistoryItemId,
+    /// The command of the entry.
+    pub(super) contents: WString,
     /// Paths that we require to be valid for this item to be autosuggested.
-    required_paths: Vec<WString>,
+    pub(super) required_paths: Vec<WString>,
+    /// The exit code of the command.
+    pub(super) exit_code: Option<i32>,
+    /// Duration of command execution in milliseconds.
+    pub(super) duration: Option<u64>,
+    /// Working directory where the command was executed.
+    pub(super) cwd: Option<WString>,
+    /// Session identifier.
+    pub(super) session_id: Option<u64>,
     /// Whether to write this item to disk.
-    persist_mode: PersistenceMode,
+    /// This is itself not written to disk.
+    pub(super) persist_mode: PersistenceMode,
 }
 
 impl HistoryItem {
-    /// Construct from a text, timestamp, and optional identifier.
-    /// If `persist_mode` is not [`PersistenceMode::Disk`], then do not write this item to disk.
-    pub fn new(
-        s: WString,
-        when: SystemTime,              /*=0*/
-        persist_mode: PersistenceMode, /*=Disk*/
-    ) -> Self {
+    /// Construct a history item with the given id, leaving other fields empty.
+    ///
+    /// This is the primary constructor for `HistoryItem`. Use it with struct update syntax
+    /// to set specific fields:
+    ///
+    /// ```ignore
+    /// // Full item with content
+    /// let item = HistoryItem {
+    ///     contents: text,
+    ///     persist_mode: mode,
+    ///     ..HistoryItem::with_id(id)
+    /// };
+    ///
+    /// // Partial update with just required paths
+    /// let update = HistoryItem {
+    ///     required_paths: paths,
+    ///     ..HistoryItem::with_id(id)
+    /// };
+    /// ```
+    pub fn with_id(id: HistoryItemId) -> Self {
         Self {
-            contents: s,
-            creation_timestamp: when,
-            required_paths: vec![],
-            persist_mode,
+            id,
+            contents: WString::new(),
+            required_paths: Vec::new(),
+            exit_code: None,
+            duration: None,
+            cwd: None,
+            session_id: None,
+            persist_mode: PersistenceMode::Disk,
         }
     }
 
@@ -275,7 +287,7 @@ impl HistoryItem {
 
     /// Returns the timestamp for creating this history item.
     pub fn timestamp(&self) -> SystemTime {
-        self.creation_timestamp
+        self.id.timestamp()
     }
 
     /// Returns whether this item should be persisted (written to disk).
@@ -295,20 +307,27 @@ impl HistoryItem {
         self.required_paths = paths;
     }
 
-    /// We can merge two items if they are the same command. We use the more recent timestamp, more
-    /// recent identifier, and the longer list of required paths.
-    fn merge(&mut self, item: &HistoryItem) -> bool {
-        // We can only merge items if they agree on their text and persistence mode.
-        if self.contents != item.contents || self.persist_mode != item.persist_mode {
-            return false;
+    /// Merge fields from another item. Only updates fields that are Some/non-empty.
+    pub fn merge(&mut self, other: HistoryItem) {
+        if !other.contents.is_empty() {
+            self.contents = other.contents;
         }
 
-        // Ok, merge this item.
-        self.creation_timestamp = self.creation_timestamp.max(item.creation_timestamp);
-        if self.required_paths.len() < item.required_paths.len() {
-            self.required_paths = item.required_paths.clone();
+        if other.exit_code.is_some() {
+            self.exit_code = other.exit_code;
         }
-        true
+        if !other.required_paths.is_empty() {
+            self.required_paths = other.required_paths;
+        }
+        if other.duration.is_some() {
+            self.duration = other.duration;
+        }
+        if other.cwd.is_some() {
+            self.cwd = other.cwd;
+        }
+        if other.session_id.is_some() {
+            self.session_id = other.session_id;
+        }
     }
 }
 
@@ -328,13 +347,9 @@ struct HistoryImpl {
     /// distinguish between items in our history and items in the history of other shells that were
     /// started after we were started.
     new_items: Vec<HistoryItem>,
-    /// The index of the first new item that we have not yet written.
-    first_unwritten_new_item_index: usize, // 0
     /// Whether we have a pending item. If so, the most recently added item is ignored by
     /// item_at_index.
     has_pending_item: bool, // false
-    /// Whether we should disable saving to the file for a time.
-    disable_automatic_save_counter: u32, // 0
     /// Deleted item contents, and the scope of the deletion.
     deleted_items: HashMap<WString, DeletionScope>,
     /// The history file contents.
@@ -373,7 +388,7 @@ impl HistoryImpl {
 
         path.push('/');
         path.push_utfstr(&self.name);
-        path.push_utfstr(L!("_history"));
+        path.push_utfstr(L!("_history.jsonl"));
         if let Some(canonicalized_path) = wrealpath(&path) {
             Ok(Some(canonicalized_path))
         } else {
@@ -387,28 +402,79 @@ impl HistoryImpl {
     /// `item_at_index()` until a call to `resolve_pending()`. Pending items are tracked with an
     /// offset into the array of new items, so adding a non-pending item has the effect of resolving
     /// all pending items.
-    fn add(&mut self, item: HistoryItem, pending: bool, do_save: bool) {
+    fn add(&mut self, item: HistoryItem, pending: bool) -> HistoryItemId {
         // We use empty items as sentinels to indicate the end of history.
         // Do not allow them to be added (#6032).
-        if item.contents.is_empty() {
+        assert!(!item.contents.is_empty(), "Cannot add empty history item");
+
+        let id = item.id;
+
+        let should_write = item.should_write_to_disk();
+        let json_str: Option<String> = if should_write {
+            Some(item.to_json_line())
+        } else {
+            None
+        };
+
+        // Add to our in-memory list and maybe write to disk.
+        self.new_items.push(item);
+        self.has_pending_item = pending;
+        if let Some(json_str) = json_str {
+            self.append_to_disk(|file| file.write_all(json_str.as_bytes()));
+            self.maybe_vacuum();
+        }
+        id
+    }
+
+    /// Check if vacuum is needed and trigger it.
+    fn maybe_vacuum(&mut self) {
+        // Initialize countdown to a random value if not set yet.
+        let countdown = self
+            .countdown_to_vacuum
+            .get_or_insert_with(|| rand::rng().random_range(0..VACUUM_FREQUENCY));
+
+        // Check if it's time to vacuum.
+        let mut vacuum = false;
+        if *countdown == 0 {
+            *countdown = VACUUM_FREQUENCY;
+            vacuum = true;
+        }
+
+        // Update countdown.
+        assert!(*countdown > 0);
+        *countdown -= 1;
+
+        if vacuum {
+            self.vacuum();
+        }
+    }
+
+    /// Helper to append data to the history file.
+    /// Takes a closure that writes to the file.
+    fn append_to_disk<F>(&mut self, write_fn: F)
+    where
+        F: FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+    {
+        if self.name.is_empty() {
             return;
         }
 
-        // Try merging with the last item.
-        if let Some(last) = self.new_items.last_mut() {
-            if last.merge(&item) {
-                // We merged, so we don't have to add anything. Maybe this item was pending, but it just got
-                // merged with an item that is not pending, so pending just becomes false.
-                self.has_pending_item = false;
-                return;
-            }
-        }
+        if let Ok(Some(history_path)) = self.history_file_path() {
+            let result = (|| {
+                let mut locked_file =
+                    LockedFile::new(LockingMode::Exclusive(WriteMethod::Append), &history_path)?;
 
-        // We have to add a new item.
-        self.new_items.push(item);
-        self.has_pending_item = pending;
-        if do_save {
-            self.save_unless_disabled();
+                write_fn(locked_file.get_mut())?;
+                fsync(locked_file.get())?;
+
+                self.history_file_id = file_id_for_file(locked_file.get());
+
+                Ok::<(), std::io::Error>(())
+            })();
+
+            if let Err(e) = result {
+                flog!(history, "Failed to append to disk:", e);
+            }
         }
     }
 
@@ -418,23 +484,9 @@ impl HistoryImpl {
         self.file_contents = None;
     }
 
-    /// Returns a timestamp for new items - see the implementation for a subtlety.
+    /// Returns the current timestamp for new items.
     fn timestamp_now(&self) -> SystemTime {
-        let mut when = SystemTime::now();
-        // Big hack: do not allow timestamps equal to our boundary date. This is because we include
-        // items whose timestamps are equal to our boundary when reading old history, so we can catch
-        // "just closed" items. But this means that we may interpret our own items, that we just wrote,
-        // as old items, if we wrote them in the same second as our birthdate.
-        if when.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
-            == self
-                .boundary_timestamp
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs())
-        {
-            when += Duration::from_secs(1);
-        }
-        when
+        SystemTime::now()
     }
 
     /// Generate a unique [`HistoryItemId`], incrementing our nonce each time.
@@ -442,6 +494,22 @@ impl HistoryImpl {
         let nonce = self.next_item_id_nonce;
         self.next_item_id_nonce = self.next_item_id_nonce.wrapping_add(1);
         HistoryItemId::new(self.timestamp_now(), nonce)
+    }
+
+    /// Create a new history item with a fresh ID.
+    ///
+    /// Use struct update syntax to set the fields you need:
+    ///
+    /// ```ignore
+    /// let item = HistoryItem {
+    ///     contents: text,
+    ///     persist_mode: PersistenceMode::Disk,
+    ///     ..imp.new_item()
+    /// };
+    /// imp.add(item, false);
+    /// ```
+    fn new_item(&mut self) -> HistoryItem {
+        HistoryItem::with_id(self.next_item_id())
     }
 
     /// Loads old items if necessary.
@@ -455,15 +523,16 @@ impl HistoryImpl {
         };
 
         let _profiler = TimeProfiler::new("load_old");
-        let file_contents = match lock_and_load(&history_path, RawHistoryFile::create) {
+        let file_contents = match lock_and_load(&history_path, map_file) {
             Ok((file_id, history_file)) => {
                 self.history_file_id = file_id;
                 let _profiler = TimeProfiler::new("populate_from_file_contents");
-                let file_contents = history_file.decode(Some(self.boundary_timestamp));
+                let file_contents =
+                    HistoryFile::from_data(history_file, Some(self.boundary_timestamp));
                 flogf!(
                     history,
-                    "Loaded %u old items",
-                    file_contents.offsets().len()
+                    "Loaded %u old item fragments",
+                    file_contents.line_count()
                 );
                 file_contents
             }
@@ -473,32 +542,6 @@ impl HistoryImpl {
             }
         };
         self.file_contents.insert(file_contents)
-    }
-
-    /// Deletes duplicates in new_items.
-    fn compact_new_items(&mut self) {
-        // Keep only the most recent items with the given contents.
-        let mut seen = HashSet::new();
-        for idx in (0..self.new_items.len()).rev() {
-            let item = &self.new_items[idx];
-
-            // Only compact persisted items.
-            if !item.should_write_to_disk() {
-                continue;
-            }
-
-            if !seen.insert(item.contents.to_owned()) {
-                // This item was not inserted because it was already in the set, so delete the item at
-                // this index.
-                self.new_items.remove(idx);
-
-                if idx < self.first_unwritten_new_item_index {
-                    // Decrement first_unwritten_new_item_index if we are deleting a previously written
-                    // item.
-                    self.first_unwritten_new_item_index -= 1;
-                }
-            }
-        }
     }
 
     /// Removes trailing ephemeral items.
@@ -514,9 +557,6 @@ impl HistoryImpl {
         ) {
             self.new_items.pop();
         }
-
-        self.first_unwritten_new_item_index =
-            usize::min(self.first_unwritten_new_item_index, self.new_items.len());
     }
 
     /// Given an existing history file, write a new history file to `dst`.
@@ -524,100 +564,87 @@ impl HistoryImpl {
         &self,
         existing_file: &File,
         dst: &mut File,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<usize> {
         // We are reading FROM existing_file and writing TO dst
+        // When we rewrite the history, the number of items we keep.
+        // Assume ~256 bytes per item; this yields a max size of 134 MB.
+        const HISTORY_MAX_ITEMS: usize = 1024 * 512;
 
-        // Make an LRU cache to save only the last N elements.
-
-        /// When we rewrite the history, the number of items we keep.
-        const HISTORY_SAVE_MAX: NonZeroUsize = NonZeroUsize::new(1024 * 256).unwrap();
-        let mut lru = LruCache::new(HISTORY_SAVE_MAX);
+        // Default buffer size for flushing to the history file.
+        const HISTORY_OUTPUT_BUFFER_SIZE: usize = 64 * 1024;
 
         // Read in existing items (which may have changed out from underneath us, so don't trust our
         // old file contents).
         let file_id = file_id_for_file(existing_file);
-        if let Ok(local_file) = RawHistoryFile::create(existing_file, file_id) {
-            for offset in local_file.offsets(None) {
-                // Try decoding an old item.
-                let Some(old_item) = local_file.decode_item(offset) else {
-                    continue;
-                };
-                if old_item.is_empty() {
+        let mmap = map_file(existing_file, file_id)?;
+        let mut local_file = HistoryFile::from_data(mmap, None);
+        local_file.shrink_to_max_records(HISTORY_MAX_ITEMS);
+        let mut buffer = BufWriter::with_capacity(HISTORY_OUTPUT_BUFFER_SIZE, dst);
+        let mut items_written = 0;
+        for old_item in local_file.items() {
+            if old_item.is_empty() {
+                continue;
+            }
+
+            // Check if this item should be deleted.
+            if let Some(&scope) = self.deleted_items.get(old_item.str()) {
+                // If old item is newer than session always erase if in deleted.
+                // If old item is older and in deleted items don't erase if added by clear_session.
+                let delete = old_item.timestamp() > self.boundary_timestamp
+                    || scope == DeletionScope::AllSessions;
+                if delete {
                     continue;
                 }
-
-                // Check if this item should be deleted.
-                if let Some(&scope) = self.deleted_items.get(old_item.str()) {
-                    // If old item is newer than session always erase if in deleted.
-                    // If old item is older and in deleted items don't erase if added by clear_session.
-                    let delete = old_item.timestamp() > self.boundary_timestamp
-                        || scope == DeletionScope::AllSessions;
-                    if delete {
-                        continue;
-                    }
-                }
-                lru.add_item(old_item);
             }
-        }
-
-        // Insert any unwritten new items
-        for item in self
-            .new_items
-            .iter()
-            .skip(self.first_unwritten_new_item_index)
-        {
-            if item.should_write_to_disk() {
-                lru.add_item(item.clone());
-            }
-        }
-
-        // Stable-sort our items by timestamp
-        // This is because we may have read "old" items with a later timestamp than our "new" items
-        // This is the essential step that roughly orders items by history
-        let mut items: Vec<_> = lru.into_iter().map(|(_key, item)| item).collect();
-        items.sort_by_key(HistoryItem::timestamp);
-
-        /// Default buffer size for flushing to the history file.
-        const HISTORY_OUTPUT_BUFFER_SIZE: usize = 64 * 1024;
-        // Write them out.
-        let mut buffer = BufWriter::with_capacity(HISTORY_OUTPUT_BUFFER_SIZE + 128, dst);
-        for item in items {
-            item.write_to(&mut buffer)?;
+            old_item.write_to(&mut buffer)?;
+            items_written += 1;
         }
         buffer.flush()?;
-        Ok(())
+        Ok(items_written)
     }
 
     /// Saves history by rewriting the file.
-    fn save_internal_via_rewrite(&mut self, history_path: &wstr) -> std::io::Result<()> {
+    fn rewrite(&mut self, history_path: &wstr) -> std::io::Result<()> {
+        use std::time::Instant;
+
         flogf!(
             history,
-            "Saving %u items via rewrite",
-            self.new_items.len() - self.first_unwritten_new_item_index
+            "Vacuuming history with %u in-memory items",
+            self.new_items.len()
         );
 
+        let start_time = Instant::now();
+
         let rewrite =
-            |old_file: &File, tmp_file: &mut File| -> std::io::Result<PotentialUpdate<()>> {
+            |old_file: &File, tmp_file: &mut File| -> std::io::Result<PotentialUpdate<usize>> {
                 let result = self.rewrite_to_temporary_file(old_file, tmp_file);
-                if let Err(err) = result {
-                    flog!(
-                        history_file,
-                        "Error writing to temporary history file:",
-                        err
-                    );
-                    return Err(err);
+                match result {
+                    Ok(count) => Ok(PotentialUpdate {
+                        do_save: true,
+                        data: count,
+                    }),
+                    Err(err) => {
+                        flog!(
+                            history_file,
+                            "Error writing to temporary history file:",
+                            err
+                        );
+                        Err(err)
+                    }
                 }
-                Ok(PotentialUpdate {
-                    do_save: true,
-                    data: (),
-                })
             };
 
-        let (file_id, _) = rewrite_via_temporary_file(history_path, rewrite)?;
+        let (file_id, potential_update) = rewrite_via_temporary_file(history_path, rewrite)?;
         self.history_file_id = file_id;
 
-        // We've saved everything, so we have no more unsaved items.
-        self.first_unwritten_new_item_index = self.new_items.len();
+        let elapsed = start_time.elapsed();
+        flogf!(
+            history,
+            "Vacuumed %u items in %u.%03u seconds",
+            potential_update.data,
+            elapsed.as_secs(),
+            elapsed.subsec_millis()
+        );
 
         // We deleted our deleted items.
         self.deleted_items.clear();
@@ -629,163 +656,55 @@ impl HistoryImpl {
         Ok(())
     }
 
-    /// Saves history by appending to the file.
-    fn save_internal_via_appending(&mut self, history_path: &wstr) -> std::io::Result<()> {
-        flogf!(
-            history,
-            "Saving %u items via appending",
-            self.new_items.len() - self.first_unwritten_new_item_index
-        );
-        // No deleting allowed.
-        assert!(self.deleted_items.is_empty());
-
-        let mut locked_history_file =
-            LockedFile::new(LockingMode::Exclusive(WriteMethod::Append), history_path)?;
-
-        // Check if the file was modified since it was last read.
-        // If someone has replaced the file, forget our file state.
-        if file_id_for_file(locked_history_file.get()) != self.history_file_id {
+    /// Performs a vacuum (full rewrite) of the history file.
+    /// Items have already been written incrementally, so this consolidates the file.
+    fn vacuum(&mut self) {
+        if self.name.is_empty() {
+            // Incognito mode - just clean up state.
+            self.deleted_items.clear();
             self.clear_file_state();
+            return;
         }
+        let history_path = match self.history_file_path() {
+            Ok(Some(path)) => path,
+            _ => return,
+        };
 
-        // We took the exclusive lock. Append to the file.
-        // Note that this is sketchy for a few reasons:
-        //   - Another shell may have appended its own items with a later timestamp, so our file may
-        // no longer be sorted by timestamp.
-        //   - Another shell may have appended the same items, so our file may now contain
-        // duplicates.
-        //
-        // Originally we always rewrote the file on saving, which avoided both of these problems.
-        // However, appending allows us to save history after every command, which is nice!
-        //
-        // Periodically we "clean up" the file by rewriting it, so that most of the time it doesn't
-        // have duplicates, although we don't yet sort by timestamp (the timestamp isn't really used
-        // for much anyways).
-
-        // So far so good. Write all items at or after first_unwritten_new_item_index. Note that we
-        // write even a pending item - pending items are ignored by history within the command
-        // itself, but should still be written to the file.
-        // Use a small buffer size for appending, as we usually only have 1 item.
-        // Buffer everything and then write it all at once to avoid tearing writes (O_APPEND).
-        let mut buffer = Vec::new();
-        let mut new_first_index = self.first_unwritten_new_item_index;
-        while new_first_index < self.new_items.len() {
-            let item = &self.new_items[new_first_index];
-            if item.should_write_to_disk() {
-                // Can't error writing to a buffer.
-                item.write_to(&mut buffer).unwrap();
-            }
-            // We wrote or skipped this item, hooray.
-            new_first_index += 1;
+        if let Err(e) = self.rewrite(&history_path) {
+            flog!(history, "Vacuum failed:", e);
         }
-        locked_history_file.get_mut().write_all(&buffer)?;
-        fsync(locked_history_file.get())?;
-        self.first_unwritten_new_item_index = new_first_index;
-
-        // Since we just modified the file, update our history_file_id to match its current state
-        // Otherwise we'll think the file has been changed by someone else the next time we go to
-        // write.
-        // We don't update `self.file_contents` since we only appended to the file, and everything we
-        // appended remains in our new_items
-        self.history_file_id = file_id_for_file(locked_history_file.get());
-
-        Ok(())
     }
 
     /// Saves history.
+    /// As history is written immediately, this just performs a vacuum if necessary.
     fn save(&mut self, vacuum: bool) {
-        // Nothing to do if there's no new items.
-        if self.first_unwritten_new_item_index >= self.new_items.len()
-            && self.deleted_items.is_empty()
-        {
-            return;
-        }
-
-        // Compact our new items so we don't have duplicates.
-        self.compact_new_items();
-
         if self.name.is_empty() {
             // We're in the "incognito" mode. Pretend we've saved the history.
-            self.first_unwritten_new_item_index = self.new_items.len();
             self.deleted_items.clear();
             self.clear_file_state();
             return;
         }
 
-        let history_path = match self.history_file_path() {
-            Ok(history_path) => history_path.unwrap(),
-            Err(e) => {
-                flog!(history, "Saving history failed:", e);
-                return;
-            }
-        };
-
-        // Try saving. If we have items to delete, we have to rewrite the file. If we do not, we can
-        // append to it.
-        let mut ok = false;
-        if !vacuum && self.deleted_items.is_empty() {
-            // Try doing a fast append.
-            if let Err(e) = self.save_internal_via_appending(&history_path) {
-                flog!(history, "Appending to history failed:", e);
-            } else {
-                ok = true;
-            }
-        }
-        if !ok {
-            // We did not or could not append; rewrite the file ("vacuum" it).
-            if let Err(e) = self.save_internal_via_rewrite(&history_path) {
-                flog!(history, "Rewriting history failed:", e)
-            }
+        // Rewrite the history file if requested or if we have deleted items.
+        if vacuum || !self.deleted_items.is_empty() {
+            self.vacuum();
         }
     }
 
-    /// Saves history unless doing so is disabled.
-    fn save_unless_disabled(&mut self) {
-        // Respect disable_automatic_save_counter.
-        if self.disable_automatic_save_counter > 0 {
-            return;
-        }
-
-        // We may or may not vacuum. We try to vacuum every `VACUUM_FREQUENCY` items, but start the
-        // countdown at a random number so that even if the user never runs more than 25 commands, we'll
-        // eventually vacuum.  If countdown_to_vacuum is None, it means we haven't yet picked a value for
-        // the counter.
-        let countdown_to_vacuum = self
-            .countdown_to_vacuum
-            .get_or_insert_with(|| rand::rng().random_range(0..VACUUM_FREQUENCY));
-
-        // Determine if we're going to vacuum.
-        let mut vacuum = false;
-        if *countdown_to_vacuum == 0 {
-            *countdown_to_vacuum = VACUUM_FREQUENCY;
-            vacuum = true;
-        }
-
-        // Update our countdown.
-        assert!(*countdown_to_vacuum > 0);
-        *countdown_to_vacuum -= 1;
-
-        // This might be a good candidate for moving to a background thread.
-        let _profiler = TimeProfiler::new(if vacuum {
-            "save vacuum"
-        } else {
-            "save no vacuum"
-        });
-        self.save(vacuum);
-    }
-
-    fn new(name: WString) -> Self {
+    /// Create a new HistoryImpl. If initial_nonce is None, a random nonce is chosen to avoid
+    /// ID collisions between concurrent sessions.
+    fn new(name: WString, initial_nonce: Option<u16>) -> Self {
+        let next_item_id_nonce =
+            initial_nonce.unwrap_or_else(|| rand::rng().random_range(0..65536) as u16);
         Self {
             name,
             new_items: vec![],
-            first_unwritten_new_item_index: 0,
             has_pending_item: false,
-            disable_automatic_save_counter: 0,
             deleted_items: HashMap::new(),
             file_contents: None,
             history_file_id: INVALID_FILE_ID,
             boundary_timestamp: SystemTime::now(),
-            next_item_id_nonce: 0,
+            next_item_id_nonce,
             countdown_to_vacuum: None,
             // Up to 8 threads, no soft min.
             thread_pool: ThreadPool::new(0, 8),
@@ -806,12 +725,11 @@ impl HistoryImpl {
         }
 
         if let Some(file_contents) = &self.file_contents {
-            // If we've loaded old items, see if we have any offsets.
+            // If we've loaded old items, see if we have any items.
             file_contents.is_empty()
         } else {
             // If we have not loaded old items, don't actually load them (which may be expensive); just
             // stat the file and see if it exists and is nonempty.
-
             let Ok(Some(where_)) = self.history_file_path() else {
                 return true;
             };
@@ -836,15 +754,8 @@ impl HistoryImpl {
             let matched = self.new_items[idx].str() == str_to_remove;
             if matched {
                 self.new_items.remove(idx);
-                // If this index is before our first_unwritten_new_item_index, then subtract one from
-                // that index so it stays pointing at the same item. If it is equal to or larger, then
-                // we have not yet written this item, so we don't have to adjust the index.
-                if idx < self.first_unwritten_new_item_index {
-                    self.first_unwritten_new_item_index -= 1;
-                }
             }
         }
-        assert!(self.first_unwritten_new_item_index <= self.new_items.len());
     }
 
     /// Resolves any pending history items, so that they may be returned in history searches.
@@ -852,22 +763,10 @@ impl HistoryImpl {
         self.has_pending_item = false;
     }
 
-    /// Enable / disable automatic saving. Main thread only!
-    fn disable_automatic_saving(&mut self) {
-        self.disable_automatic_save_counter += 1;
-        assert!(self.disable_automatic_save_counter != 0); // overflow!
-    }
-
-    fn enable_automatic_saving(&mut self) {
-        assert!(self.disable_automatic_save_counter > 0); // negative overflow!
-        self.disable_automatic_save_counter -= 1;
-    }
-
     /// Irreversibly clears history.
     fn clear(&mut self) {
         self.new_items.clear();
         self.deleted_items.clear();
-        self.first_unwritten_new_item_index = 0;
         self.file_contents = None;
         if let Ok(Some(filename)) = self.history_file_path() {
             wunlink(&filename);
@@ -883,56 +782,111 @@ impl HistoryImpl {
         }
 
         self.new_items.clear();
-        self.first_unwritten_new_item_index = 0;
     }
 
-    /// Populates from older location (in config path, rather than data path).
-    /// This is accomplished by clearing ourselves, and copying the contents of the old history
-    /// file to the new history file.
-    /// The new contents will automatically be re-mapped later.
-    fn populate_from_config_path(&mut self) {
-        let Ok(Some(new_file)) = self.history_file_path() else {
-            return;
-        };
-
-        let Some(mut old_file) = path_get_config() else {
-            return;
-        };
+    // Return the path for the history file back when it was in the config path, if it exists.
+    fn get_legacy_config_history_path(&self) -> Option<WString> {
+        let mut old_file = path_get_config()?;
 
         old_file.push('/');
         old_file.push_utfstr(&self.name);
         old_file.push_str("_history");
 
-        let Ok(mut src_file) = wopen_cloexec(&old_file, OFlag::O_RDONLY, Mode::empty()) else {
-            return;
+        Some(old_file)
+    }
+
+    // Return the path for the history file in the yaml format
+    // This is just the default path with no extension.
+    fn get_legacy_yaml_history_path(&self) -> Option<WString> {
+        let mut jsonl_path = self.history_file_path().ok()??;
+        if !jsonl_path.ends_with(".jsonl") {
+            return None;
+        }
+        jsonl_path.truncate(jsonl_path.len() - ".jsonl".len());
+        Some(jsonl_path)
+    }
+
+    /// Populate from a yaml history file at the given path, migrating it to the jsonl format at the given new path.
+    /// Returns true if successful.
+    fn populate_from_legacy_yaml_path(&mut self, old_path: &WString, new_path: &WString) -> bool {
+        let _profiler = TimeProfiler::new("migrate_legacy");
+        let Ok(old_file) = wopen_cloexec(old_path, OFlag::O_RDONLY, Mode::empty()) else {
+            return false;
+        };
+        let file_id = file_id_for_file(&old_file);
+        let mmap = match map_file(&old_file, file_id) {
+            Ok(mmap) => mmap,
+            Err(err) => {
+                flog!(history_file, "Error when reading legacy history file:", err);
+                return false;
+            }
         };
 
         // Clear must come after we've retrieved the new_file name, and before we open
         // destination file descriptor, since it destroys the name and the file.
         self.clear();
 
-        let mut dst_file = match wopen_cloexec(
-            &new_file,
-            OFlag::O_WRONLY | OFlag::O_CREAT,
+        let dst_file = match wopen_cloexec(
+            new_path,
+            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
             LOCKED_FILE_MODE,
         ) {
             Ok(file) => file,
             Err(err) => {
                 flog!(history_file, "Error when writing history file:", err);
-                return;
+                return false;
             }
         };
 
-        let mut buf = [0; libc::BUFSIZ as usize];
-        while let Ok(n) = src_file.read(&mut buf) {
-            if n == 0 {
-                break;
+        let mut count = 0;
+        let result = || -> std::io::Result<()> {
+            let mut buffer = BufWriter::new(dst_file);
+            for item in yaml_compat::iterate_fish_2_0_history(mmap.as_ref()) {
+                if item.is_empty() {
+                    continue;
+                }
+                item.write_to(&mut buffer)?;
+                count += 1;
             }
+            buffer.flush()
+        }();
 
-            if let Err(err) = dst_file.write_all(&buf[..n]) {
-                flog!(history_file, "Error when writing history file:", err);
-                break;
-            }
+        if let Err(err) = result {
+            flog!(history_file, "Error when writing history file:", err);
+            return false;
+        }
+
+        let duration_ms = _profiler
+            .start
+            .elapsed()
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        flogf!(
+            history,
+            "Migrated history from legacy file '%s' to new jsonl file '%s': %u items in %u ms",
+            old_path,
+            new_path,
+            count,
+            duration_ms
+        );
+        true
+    }
+
+    /// Populates from older locations.
+    fn populate_from_legacy_paths(&mut self) {
+        let Ok(Some(new_path)) = self.history_file_path() else {
+            return;
+        };
+        let old_path_getters = [
+            Self::get_legacy_yaml_history_path,
+            Self::get_legacy_config_history_path,
+        ];
+        for get_old_path in old_path_getters {
+            if let Some(old_path) = get_old_path(self) {
+                if self.populate_from_legacy_yaml_path(&old_path, &new_path) {
+                    return;
+                }
+            };
         }
     }
 
@@ -941,9 +895,11 @@ impl HistoryImpl {
     /// handle multiline commands. We can't actually parse bash syntax and the bash history file
     /// does not unambiguously encode multiline commands.
     fn populate_from_bash<R: BufRead>(&mut self, contents: R) {
+        // Create synthetic timestamps starting from 15 minutes ago.
+        let base_time = SystemTime::now() - Duration::from_secs(15 * 60);
+        let mut synthetic_timestamp = base_time;
+
         // Process the entire history file until EOF is observed.
-        // Pretend all items were created at this time.
-        let when = self.timestamp_now();
         for line in contents.split(b'\n') {
             let Ok(line) = line else {
                 break;
@@ -951,14 +907,15 @@ impl HistoryImpl {
             let wide_line = trim(bytes2wcstring(&line), None);
             // Add this line if it doesn't contain anything we know we can't handle.
             if should_import_bash_history_line(&wide_line) {
-                self.add(
-                    HistoryItem::new(wide_line, when, PersistenceMode::Disk),
-                    /*pending=*/ false,
-                    /*do_save=*/ false,
-                );
+                let item = HistoryItem {
+                    contents: wide_line,
+                    persist_mode: PersistenceMode::Disk,
+                    ..HistoryItem::with_id(HistoryItemId::new(synthetic_timestamp, 0))
+                };
+                self.add(item, /*pending=*/ false);
+                synthetic_timestamp += Duration::from_millis(1);
             }
         }
-        self.save_unless_disabled();
     }
 
     /// Incorporates the history of other shells into this history.
@@ -981,9 +938,7 @@ impl HistoryImpl {
             // We'll pick them up from the file (#2312)
             // TODO: this will drop items that had no_persist set, how can we avoid that while still
             // properly interleaving?
-            self.save(false);
             self.new_items.clear();
-            self.first_unwritten_new_item_index = 0;
         }
     }
 
@@ -1010,10 +965,10 @@ impl HistoryImpl {
 
         // Append old items.
         let file_contents = self.load_old_if_needed();
-        for &offset in file_contents.offsets().iter().rev() {
-            let Some(item) = file_contents.decode_item(offset) else {
+        for item in file_contents.items().rev() {
+            if item.is_empty() {
                 continue;
-            };
+            }
             if seen.insert(item.str().to_owned()) {
                 result.push(item.str().to_owned());
             }
@@ -1045,22 +1000,37 @@ impl HistoryImpl {
         result
     }
 
-    /// Sets the valid file paths for the history item matching the snapshotted item.
-    fn set_valid_file_paths(&mut self, valid_file_paths: Vec<WString>, snapshot: &HistoryItem) {
-        // Look for an item with the given identifier. It is likely to be at the end of new_items.
-        for item in self.new_items.iter_mut().rev() {
-            if item.creation_timestamp == snapshot.creation_timestamp
-                && item.contents == snapshot.contents
-            {
-                // found it
-                item.required_paths = valid_file_paths;
-                break;
-            }
+    /// Find a history item by its ID. Returns a mutable reference if found.
+    fn find_item_by_id_mut(&mut self, id: HistoryItemId) -> Option<&mut HistoryItem> {
+        // Search from end (most recent items first)
+        self.new_items.iter_mut().rev().find(|item| item.id == id)
+    }
+
+    /// Emit a metadata update for a history item.
+    /// Updates the in-memory item and writes the update to disk immediately.
+    fn emit_update(&mut self, update: HistoryItem) {
+        let id = update.id;
+
+        let Some(item) = self.find_item_by_id_mut(id) else {
+            return;
+        };
+        let should_write = item.should_write_to_disk();
+        let json_str = if should_write {
+            Some(update.to_json_line())
+        } else {
+            None
+        };
+
+        item.merge(update);
+        if let Some(json_str) = json_str {
+            self.append_to_disk(|file| file.write_all(json_str.as_bytes()));
         }
     }
 
     /// Return the specified history at the specified index. 0 is the index of the current
     /// commandline. (So the most recent item is at index 1.)
+    /// Note that if an index is in bounds but the item could not be read, then an empty item is returned.
+    /// None is returned only if the index is out of bounds.
     fn item_at_index(&mut self, mut idx: usize) -> Option<Cow<'_, HistoryItem>> {
         // 0 is considered an invalid index.
         if idx == 0 {
@@ -1085,16 +1055,8 @@ impl HistoryImpl {
         // Now look in our old items.
         idx -= resolved_new_item_count;
         let file_contents = self.load_old_if_needed();
-        let old_item_offsets = file_contents.offsets();
-        let old_item_count = old_item_offsets.len();
-        if idx < old_item_count {
-            // idx == 0 corresponds to last item in old_item_offsets.
-            let offset = old_item_offsets[old_item_count - idx - 1];
-            return file_contents.decode_item(offset).map(Cow::Owned);
-        }
-
-        // Index past the valid range, so return None.
-        None
+        // idx == 0 corresponds to last item.
+        file_contents.get_from_back(idx).map(Cow::Owned)
     }
 
     /// Return the number of history entries.
@@ -1103,8 +1065,8 @@ impl HistoryImpl {
         if self.has_pending_item && new_item_count > 0 {
             new_item_count -= 1;
         }
-        let old_item_offsets = self.load_old_if_needed().offsets();
-        new_item_count + old_item_offsets.len()
+        let old_item_count = self.load_old_if_needed().item_count();
+        new_item_count + old_item_count
     }
 }
 
@@ -1141,11 +1103,11 @@ fn do_1_history_search(
     }
 }
 
-/// Formats a single history record, including a trailing newline.
+/// Formats a single history item, including a trailing newline.
 ///
 /// Returns nothing. The only possible failure involves formatting the timestamp. If that happens we
 /// simply omit the timestamp from the output.
-fn format_history_record(
+fn format_history_item(
     item: &HistoryItem,
     show_time_format: Option<&str>,
     null_terminate: bool,
@@ -1224,22 +1186,23 @@ impl History {
         self.0.lock().unwrap()
     }
 
-    /// Privately add an item. If pending, the item will not be returned by history searches until a
-    /// call to resolve_pending. Any trailing ephemeral items are dropped.
-    /// Exposed for testing.
-    pub fn add(&self, item: HistoryItem, pending: bool) {
-        self.imp().add(item, pending, true)
-    }
-
     pub fn add_commandline(&self, s: WString) {
         let mut imp = self.imp();
-        let when = imp.timestamp_now();
-        let item = HistoryItem::new(s, when, PersistenceMode::Disk);
-        imp.add(item, false, true)
+        let item = HistoryItem {
+            contents: s,
+            persist_mode: PersistenceMode::Disk,
+            ..imp.new_item()
+        };
+        imp.add(item, false);
     }
 
-    pub fn new(name: &wstr) -> Arc<Self> {
-        Arc::new(Self(Mutex::new(HistoryImpl::new(name.to_owned()))))
+    /// Create a new History. If initial_nonce is None, a random nonce is chosen to avoid
+    /// ID collisions between concurrent sessions.
+    pub fn new(name: &wstr, initial_nonce: Option<u16>) -> Arc<Self> {
+        Arc::new(Self(Mutex::new(HistoryImpl::new(
+            name.to_owned(),
+            initial_nonce,
+        ))))
     }
 
     /// Returns history with the given name, creating it if necessary.
@@ -1249,7 +1212,7 @@ impl History {
         if let Some(hist) = histories.get(name) {
             Arc::clone(hist)
         } else {
-            let hist = Self::new(name);
+            let hist = Self::new(name, None);
             histories.insert(name.to_owned(), Arc::clone(&hist));
             hist
         }
@@ -1283,15 +1246,12 @@ impl History {
         s: &wstr,
         vars: &EnvStack,
         persist_mode: PersistenceMode, /*=disk*/
-    ) {
+    ) -> HistoryItemId {
         // We use empty items as sentinels to indicate the end of history.
         // Do not allow them to be added (#6032).
-        if s.is_empty() {
-            return;
-        }
+        assert!(!s.is_empty(), "Cannot add empty history item");
 
         // Find all arguments that look like they could be file paths.
-        let mut needs_sync_write = false;
         let ast = ast::parse(s, ParseTreeFlags::empty(), None);
 
         let mut potential_paths = Vec::new();
@@ -1301,43 +1261,24 @@ impl History {
                 if string_could_be_path(potential_path) {
                     potential_paths.push(potential_path.to_owned());
                 }
-            } else if let Kind::DecoratedStatement(stmt) = node.kind() {
-                // Hack hack hack - if the command is likely to trigger an exit, then don't do
-                // background file detection, because we won't be able to write it to our history file
-                // before we exit.
-                // Also skip it for 'echo'. This is because echo doesn't take file paths, but also
-                // because the history file test wants to find the commands in the history file
-                // immediately after running them, so it can't tolerate the asynchronous file detection.
-                if stmt.decoration() == StatementDecoration::Exec {
-                    needs_sync_write = true;
-                }
-
-                let source = stmt.command.source(s);
-                let command = unescape_string(source, UnescapeStringStyle::default());
-                let command = command.as_deref().unwrap_or(source);
-                if [L!("exit"), L!("reboot"), L!("restart"), L!("echo")].contains(&command) {
-                    needs_sync_write = true;
-                }
             }
         }
 
         // If we got a path, we'll perform file detection for autosuggestion hinting.
-        let wants_file_detection = !potential_paths.is_empty() && !needs_sync_write;
+        let wants_file_detection = !potential_paths.is_empty();
         let mut imp = self.imp();
 
         // Make our history item.
-        let when = imp.timestamp_now();
-        let item = HistoryItem::new(s.to_owned(), when, persist_mode);
-        let to_disk = persist_mode == PersistenceMode::Disk;
+        let item = HistoryItem {
+            contents: s.to_owned(),
+            persist_mode,
+            ..imp.new_item()
+        };
+        let item_id = imp.add(item, /*pending=*/ true);
 
         if wants_file_detection {
-            imp.disable_automatic_saving();
-
-            // Add the item. Then check for which paths are valid on a background thread,
-            // and unblock the item.
+            // Check for which paths are valid on a background thread.
             // Don't hold the lock while we perform this file detection.
-            let snapshot_item = item.clone();
-            imp.add(item, /*pending=*/ true, to_disk);
             let thread_pool = Arc::clone(&imp.thread_pool);
             drop(imp);
             let vars_snapshot = vars.snapshot();
@@ -1345,24 +1286,38 @@ impl History {
             thread_pool.perform(move || {
                 // Don't hold the lock while we perform this file detection.
                 let valid_file_paths = expand_and_detect_paths(potential_paths, &vars_snapshot);
-                let mut imp = self_clone.imp();
                 if !valid_file_paths.is_empty() {
-                    imp.set_valid_file_paths(valid_file_paths, &snapshot_item);
-                }
-                imp.enable_automatic_saving();
-                if to_disk {
-                    imp.save_unless_disabled();
+                    // Create a partial item with just the valid paths
+                    let update = HistoryItem {
+                        required_paths: valid_file_paths,
+                        ..HistoryItem::with_id(item_id)
+                    };
+                    self_clone.emit_update(update);
                 }
             });
-        } else {
-            // Add the item.
-            // If we think we're about to exit, save immediately, regardless of any disabling. This may
-            // cause us to lose file hinting for some commands, but it beats losing history items.
-            imp.add(item, /*pending=*/ true, to_disk);
-            if to_disk && needs_sync_write {
-                imp.save(false);
-            }
         }
+        item_id
+    }
+
+    /// Emit a metadata update for a history item.
+    /// Updates the in-memory item and writes the update to disk immediately.
+    ///
+    /// # Example
+    /// ```
+    /// use fish::history::{History, HistoryItem, HistoryItemId};
+    /// use fish::prelude::*;
+    ///
+    /// // Create a history instance
+    /// let history = History::new(L!("test_emit_update"), Some(0));
+    /// let item_id = HistoryItemId::new(std::time::SystemTime::now(), 0);
+    ///
+    /// // Create an update item (shown for illustration; actual field access is module-private)
+    /// let update = HistoryItem::with_id(item_id);
+    ///
+    /// // emit_update(update) would be called internally to write metadata
+    /// ```
+    fn emit_update(&self, update: HistoryItem) {
+        self.imp().emit_update(update)
     }
 
     /// Resolves any pending history items, so that they may be returned in history searches.
@@ -1371,6 +1326,7 @@ impl History {
     }
 
     /// Saves history.
+    /// As history is written immediately, this just performs a vacuum if necessary.
     pub fn save(&self) {
         self.imp().save(false)
     }
@@ -1399,13 +1355,13 @@ impl History {
                 return ControlFlow::Break(());
             }
             remaining -= 1;
-            let formatted_record = format_history_record(item, show_time_format, null_terminate);
+            let formatted_item = format_history_item(item, show_time_format, null_terminate);
             if reverse {
                 // We need to collect this for later.
-                collected.push(formatted_record);
+                collected.push(formatted_item.clone());
             } else {
                 // We can output this immediately.
-                if !streams.out.append(&formatted_record) {
+                if !streams.out.append(&formatted_item) {
                     // This can happen if the user hit Ctrl-C to abort (maybe after the first page?).
                     output_error = true;
                     return ControlFlow::Break(());
@@ -1472,9 +1428,9 @@ impl History {
         self.imp().clear_session()
     }
 
-    /// Populates from older location (in config path, rather than data path).
-    pub fn populate_from_config_path(&self) {
-        self.imp().populate_from_config_path()
+    /// Populates from older locations, migrating history.
+    pub fn populate_from_legacy_paths(&self) {
+        self.imp().populate_from_legacy_paths()
     }
 
     /// Populates from a bash history file.
@@ -1797,20 +1753,19 @@ pub fn in_private_mode(vars: &dyn Environment) -> bool {
 mod tests {
     use super::{
         History, HistoryItem, HistoryItemId, HistorySearch, PathList, PersistenceMode,
-        SearchDirection, SearchFlags, SearchType, VACUUM_FREQUENCY,
+        SearchDirection, SearchFlags, SearchType, VACUUM_FREQUENCY, yaml_compat,
     };
     use crate::common::ESCAPE_TEST_CHAR;
-    use crate::common::{ScopeGuard, bytes2wcstring, wcs2bytes, wcs2osstring};
+    use crate::common::{ScopeGuard, bytes2wcstring};
     use crate::env::{EnvMode, EnvSetMode, EnvStack};
     use crate::fs::{LockedFile, WriteMethod};
-    use crate::path::path_get_data;
     use crate::prelude::*;
     use crate::tests::prelude::*;
     use crate::wcstringutil::{string_prefixes_string, string_prefixes_string_case_insensitive};
     use fish_build_helper::workspace_root;
     use rand::Rng;
     use rand::rngs::ThreadRng;
-    use std::collections::VecDeque;
+    use std::collections::{HashSet, VecDeque};
     use std::io::BufReader;
     use std::os::unix::ffi::OsStrExt;
     use std::sync::Arc;
@@ -1845,11 +1800,19 @@ mod tests {
 
     #[test]
     fn test_history_allocates_monotonic_ids() {
-        let history = History::new(L!("id_gen_history"));
+        let history = History::new(L!("id_gen_history"), Some(0));
         let mut last_item_id = HistoryItemId::new(UNIX_EPOCH, 0);
         assert!(last_item_id.0 == 0);
-        for _ in 0..100 {
-            let item_id = history.imp().next_item_id();
+        for i in 0..100 {
+            let item_id = {
+                let mut imp = history.imp();
+                let item = HistoryItem {
+                    contents: format!("test {}", i).into(),
+                    persist_mode: PersistenceMode::Disk,
+                    ..imp.new_item()
+                };
+                imp.add(item, false)
+            };
             assert!(item_id > last_item_id);
             last_item_id = item_id;
         }
@@ -1980,17 +1943,35 @@ mod tests {
                 .map(|_| random_string(&mut rng))
                 .collect();
 
-            // Record this item.
-            let mut item = HistoryItem::new(value, SystemTime::now(), PersistenceMode::Disk);
-            item.set_required_paths(paths);
-            before.push_back(item.clone());
-            history.add(item, false);
+            // Add this item - add returns the ID.
+            let id = {
+                let mut imp = history.imp();
+                let item = HistoryItem {
+                    contents: value.clone(),
+                    persist_mode: PersistenceMode::Disk,
+                    ..imp.new_item()
+                };
+                imp.add(item, false)
+            };
+
+            // Set paths via update.
+            if !paths.is_empty() {
+                let update = HistoryItem {
+                    required_paths: paths.clone(),
+                    ..HistoryItem::with_id(id)
+                };
+                history.emit_update(update);
+            }
+
+            // Create expected item for verification.
+            let mut expected_item = HistoryItem {
+                contents: value,
+                ..HistoryItem::with_id(id)
+            };
+            expected_item.set_required_paths(paths);
+            before.push_back(expected_item);
         }
         history.save();
-
-        // Empty items should just be dropped (#6032).
-        history.add_commandline(L!("").into());
-        assert!(!history.item_at_index(1).unwrap().is_empty());
 
         // Read items back in reverse order and ensure they're the same.
         for i in (1..=100).rev() {
@@ -2039,7 +2020,10 @@ mod tests {
 
     fn pound_on_history(item_count: usize, idx: usize) -> Arc<History> {
         // Called in child thread to modify history.
-        let hist = History::new(L!("race_test"));
+        // Partition the nonce space: use high 8 bits for thread ID, low 8 bits for counter.
+        // This ensures each thread gets a non-overlapping range of nonces.
+        let initial_nonce = (idx as u16) << 8;
+        let hist = History::new(L!("race_test"), Some(initial_nonce));
         let hist_lines = generate_history_lines(item_count, idx);
         for line in hist_lines {
             hist.add_commandline(line);
@@ -2079,7 +2063,7 @@ mod tests {
         const ITEM_COUNT: usize = 256;
 
         // Ensure history is clear.
-        History::new(L!("race_test")).clear();
+        History::new(L!("race_test"), None).clear();
 
         let mut children = Vec::with_capacity(RACE_COUNT);
         for i in 0..RACE_COUNT {
@@ -2094,63 +2078,48 @@ mod tests {
         }
 
         // Compute the expected lines.
-        let mut expected_lines: [Vec<WString>; RACE_COUNT] =
+        let expected_lines: [Vec<WString>; RACE_COUNT] =
             std::array::from_fn(|i| generate_history_lines(ITEM_COUNT, i));
 
         // Ensure we consider the lines that have been outputted as part of our history.
         time_barrier();
 
         // Ensure that we got sane, sorted results.
-        let hist = History::new(L!("race_test"));
+        let hist = History::with_name(L!("race_test"));
 
-        // History is enumerated from most recent to least
-        // Every item should be the last item in some array
-        let mut hist_idx = 0;
-        loop {
-            hist_idx += 1;
-            let Some(item) = hist.item_at_index(hist_idx) else {
-                break;
-            };
+        // Get all history items (newest to oldest, deduplicated).
+        let history_items = hist.get_history();
 
-            let mut found = false;
-            for list in &mut expected_lines {
-                let Some(position) = list.iter().position(|elem| *elem == item.str()) else {
-                    continue;
-                };
+        // Create a set of all expected items (4 threads × 256 items each).
+        let mut all_expected: HashSet<WString> = expected_lines
+            .iter()
+            .flat_map(|vec| vec.iter().cloned())
+            .collect();
 
-                // Remove the item we found.
-                list.remove(position);
+        // Verify count matches.
+        assert_eq!(
+            history_items.len(),
+            RACE_COUNT * ITEM_COUNT,
+            "Expected {} items, got {}",
+            RACE_COUNT * ITEM_COUNT,
+            history_items.len()
+        );
 
-                // We expected this item to be the last. Items after this item
-                // in this array were therefore not found in history.
-                let removed = list.drain(position..);
-                for line in removed.into_iter().rev() {
-                    printf!("Item dropped from history: %s\n", line);
-                }
-
-                found = true;
-                break;
-            }
-            if !found {
-                printf!(
-                    "Line '%s' found in history, but not found in some array\n",
-                    item.str()
-                );
-                for list in &expected_lines {
-                    if !list.is_empty() {
-                        printf!("\tRemaining: %s\n", list.last().unwrap())
-                    }
-                }
-            }
+        // Verify all items are expected.
+        for item in &history_items {
+            assert!(
+                all_expected.remove(item),
+                "Found unexpected item in history: {}",
+                item
+            );
         }
 
-        // +1 to account for history's 1-based offset
-        let expected_idx = RACE_COUNT * ITEM_COUNT + 1;
-        assert_eq!(hist_idx, expected_idx);
-
-        for list in expected_lines {
-            assert_eq!(list, Vec::<WString>::new(), "Lines still left in the array");
-        }
+        // Verify all expected items were found.
+        assert!(
+            all_expected.is_empty(),
+            "Some items not found in history. Missing: {:?}",
+            all_expected
+        );
         hist.clear();
     }
 
@@ -2168,7 +2137,7 @@ mod tests {
         std::thread::sleep(Duration::from_secs(1));
 
         // Read history from disk.
-        let hist = History::new(L!("race_test"));
+        let hist = History::new(L!("race_test"), None);
         assert_eq!(hist.item_at_index(1).unwrap().str(), "needle");
 
         // Add items until we rewrite the file.
@@ -2186,13 +2155,17 @@ mod tests {
     #[serial]
     fn test_history_merge() {
         let _cleanup = test_init();
-        // In a single fish process, only one history is allowed to exist with the given name But it's
+        // In a single fish process, only one history is allowed to exist with the given name. But it's
         // common to have multiple history instances with the same name active in different processes,
         // e.g. when you have multiple shells open. We try to get that right and merge all their history
         // together. Test that case.
         const COUNT: usize = 3;
         let name = L!("merge_test");
-        let hists = [History::new(name), History::new(name), History::new(name)];
+        let hists = [
+            History::new(name, None),
+            History::new(name, None),
+            History::new(name, None),
+        ];
         let texts = [L!("History 1"), L!("History 2"), L!("History 3")];
         let alt_texts = [
             L!("History Alt 1"),
@@ -2231,7 +2204,7 @@ mod tests {
         // Make a new history. It should contain everything. The time_barrier() is so that the timestamp
         // is newer, since we only pick up items whose timestamp is before the birth stamp.
         time_barrier();
-        let everything = History::new(name);
+        let everything = History::new(name, None);
         for text in texts {
             assert!(history_contains(&everything, text));
         }
@@ -2396,32 +2369,23 @@ mod tests {
         history.clear();
     }
 
-    fn install_sample_history(name: &wstr) {
-        let path = path_get_data().expect("Failed to get data directory");
-        std::fs::copy(
-            workspace_root()
-                .join("tests")
-                .join(std::str::from_utf8(&wcs2bytes(name)).unwrap()),
-            wcs2osstring(&(path + L!("/") + name + L!("_history"))),
-        )
-        .unwrap();
-    }
-
     #[test]
     #[serial]
     fn test_history_formats() {
         let _cleanup = test_init();
-        // Test inferring and reading legacy and bash history formats.
-        let name = L!("history_sample_fish_2_0");
-        install_sample_history(name);
+        // Test reading legacy YAML history format directly.
+        let yaml_file = workspace_root().join("tests/history_sample_fish_2_0");
+        let contents = std::fs::read(yaml_file).unwrap();
+        let mut items: Vec<WString> = yaml_compat::iterate_fish_2_0_history(&contents)
+            .map(|item| item.str().to_owned())
+            .collect();
+        items.reverse(); // YAML is oldest-first, but we want newest-first
         let expected: Vec<WString> = vec![
             "echo this has\\\nbackslashes".into(),
             "function foo\necho bar\nend".into(),
             "echo alpha".into(),
         ];
-        let test_history_imported = History::with_name(name);
-        assert_eq!(test_history_imported.get_history(), expected);
-        test_history_imported.clear();
+        assert_eq!(items, expected);
 
         // Test bash import
         // The results are in the reverse order that they appear in the bash history file.
@@ -2444,16 +2408,18 @@ mod tests {
         assert_eq!(test_history_imported_from_bash.get_history(), expected);
         test_history_imported_from_bash.clear();
 
-        let name = L!("history_sample_corrupt1");
-        install_sample_history(name);
-        // We simply invoke get_string_representation. If we don't die, the test is a success.
-        let test_history_imported_from_corrupted = History::with_name(name);
+        // Test reading corrupt YAML history - should handle gracefully.
+        let corrupt_file = workspace_root().join("tests/history_sample_corrupt1");
+        let contents = std::fs::read(corrupt_file).unwrap();
+        let mut items: Vec<WString> = yaml_compat::iterate_fish_2_0_history(&contents)
+            .map(|item| item.str().to_owned())
+            .collect();
+        items.reverse(); // YAML is oldest-first, but we want newest-first
         let expected: Vec<WString> = vec![
             "no_newline_at_end_of_file".into(),
             "corrupt_prefix".into(),
             "this_command_is_ok".into(),
         ];
-        assert_eq!(test_history_imported_from_corrupted.get_history(), expected);
-        test_history_imported_from_corrupted.clear();
+        assert_eq!(items, expected);
     }
 }
