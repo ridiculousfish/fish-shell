@@ -21,12 +21,11 @@ end
 rm $fish_variables
 
 # fish_history
-set -l history_file $XDG_DATA_HOME/fish/fish_history
-set -l target_file $XDG_DATA_HOME/fish/target_fish_history
-set -l backup_file $XDG_DATA_HOME/fish/fish_history_backup
+set -l history_file $XDG_DATA_HOME/fish/fish_history.jsonl
+set -l target_file $XDG_DATA_HOME/fish/target_fish_history.jsonl
+set -l backup_file $XDG_DATA_HOME/fish/fish_history_backup.jsonl
 
-echo '- cmd: echo I will be deleted from history
-        when: 1614577746' >$target_file
+echo '{"id":"AAAAAGA8gFI","cmd":"echo I will be deleted from history"}' >$target_file
 cp $target_file $backup_file
 ln -sf $target_file $history_file
 # The one way to ensure non-interactive fish writes to the history file
