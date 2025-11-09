@@ -166,6 +166,33 @@ impl LruCacheExt for LruCache<WString, HistoryItem> {
 
 pub type PathList = Vec<WString>;
 
+/// History items are identified by a u64, where the high 48 bits are the number of milliseconds since the epoch and the low 16 bits are a nonce.
+/// Multiple records that all contribute to an item will have the same ID.
+/// Note this gives thousands of years at millisecond resolution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HistoryItemId(u64);
+
+impl HistoryItemId {
+    const NONCE_BITS: u32 = 16;
+
+    /// Create a new history item identifier from a timestamp and nonce.
+    pub fn new(timestamp: SystemTime, nonce: u16) -> Self {
+        // Note we are unconcerned with wraparound here: should the clock be set to thousands of years in the future
+        // the worst case is we get items with wrong timestamps.
+        let millis = timestamp
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_millis() as u64;
+        Self((millis << Self::NONCE_BITS) | u64::from(nonce))
+    }
+
+    /// Extract the timestamp (millisecond precision) encoded in this identifier.
+    pub fn timestamp(self) -> SystemTime {
+        let millis = self.0 >> Self::NONCE_BITS;
+        UNIX_EPOCH + Duration::from_millis(millis)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
     /// The actual contents of the entry.
@@ -319,6 +346,8 @@ struct HistoryImpl {
     /// ignored by this instance (unless they came from this instance). The timestamp may be adjusted
     /// by incorporate_external_changes().
     boundary_timestamp: SystemTime,
+    /// Next nonce used when constructing [`HistoryItemId`]s.
+    next_item_id_nonce: u16,
     /// How many items we add until the next vacuum. Initially a random value.
     countdown_to_vacuum: Option<usize>,
     /// Thread pool for background operations.
@@ -406,6 +435,13 @@ impl HistoryImpl {
             when += Duration::from_secs(1);
         }
         when
+    }
+
+    /// Generate a unique [`HistoryItemId`], incrementing our nonce each time.
+    fn next_item_id(&mut self) -> HistoryItemId {
+        let nonce = self.next_item_id_nonce;
+        self.next_item_id_nonce = self.next_item_id_nonce.wrapping_add(1);
+        HistoryItemId::new(self.timestamp_now(), nonce)
     }
 
     /// Loads old items if necessary.
@@ -749,6 +785,7 @@ impl HistoryImpl {
             file_contents: None,
             history_file_id: INVALID_FILE_ID,
             boundary_timestamp: SystemTime::now(),
+            next_item_id_nonce: 0,
             countdown_to_vacuum: None,
             // Up to 8 threads, no soft min.
             thread_pool: ThreadPool::new(0, 8),
@@ -1759,8 +1796,8 @@ pub fn in_private_mode(vars: &dyn Environment) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        History, HistoryItem, HistorySearch, PathList, PersistenceMode, SearchDirection,
-        SearchFlags, SearchType, VACUUM_FREQUENCY,
+        History, HistoryItem, HistoryItemId, HistorySearch, PathList, PersistenceMode,
+        SearchDirection, SearchFlags, SearchType, VACUUM_FREQUENCY,
     };
     use crate::common::ESCAPE_TEST_CHAR;
     use crate::common::{ScopeGuard, bytes2wcstring, wcs2bytes, wcs2osstring};
@@ -1804,6 +1841,18 @@ mod tests {
             result.push(c);
         }
         result
+    }
+
+    #[test]
+    fn test_history_allocates_monotonic_ids() {
+        let history = History::new(L!("id_gen_history"));
+        let mut last_item_id = HistoryItemId::new(UNIX_EPOCH, 0);
+        assert!(last_item_id.0 == 0);
+        for _ in 0..100 {
+            let item_id = history.imp().next_item_id();
+            assert!(item_id > last_item_id);
+            last_item_id = item_id;
+        }
     }
 
     #[test]
