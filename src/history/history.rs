@@ -18,7 +18,7 @@ use crate::{
     ast::{self, Kind, Node as _},
     common::valid_var_name,
     env::{EnvMode, EnvSetMode, EnvStack, EnvVar, Environment},
-    expand::{ExpandFlags, expand_one},
+    expand::{ExpandFlags, expand_one, replace_home_directory_with_tilde},
     fds::wopen_cloexec,
     flog::{flog, flogf},
     fs::{
@@ -1477,9 +1477,16 @@ impl History {
         let mut imp = self.imp();
 
         // Make our history item.
+        let mut cwd = replace_home_directory_with_tilde(vars.get_pwd_slash(), vars);
+        // Strip trailing slash unless it's the root directory.
+        if cwd.len() > 1 && cwd.ends_with('/') {
+            cwd.pop();
+        }
+
         let item = HistoryItem {
             contents: s.to_owned(),
             persist_mode,
+            cwd: Some(cwd),
             ..imp.new_item()
         };
         let item_id = imp.add(item, /*pending=*/ true);
@@ -1986,11 +1993,11 @@ mod tests {
     };
     use crate::{
         common::ESCAPE_TEST_CHAR,
-        env::{EnvMode, EnvSetMode, EnvStack},
+        env::{EnvMode, EnvSetMode, EnvStack, Environment as _},
         fs::{LockedFile, WriteMethod},
         history::{HistoryId, yaml_compat},
         prelude::*,
-        tests::prelude::test_init,
+        tests::prelude::*,
     };
     use fish_build_helper::workspace_root;
     use fish_tempfile::TempDir;
@@ -2694,5 +2701,50 @@ mod tests {
             "this_command_is_ok".into(),
         ];
         assert_eq!(items, expected);
+    }
+
+    #[test]
+    #[serial]
+    fn test_history_item_cwd() {
+        test_init();
+        let tmpdir = fish_tempfile::new_dir().unwrap();
+        let hist_dir = osstr2wcstring(tmpdir.path());
+
+        let vars = EnvStack::globals();
+        let global_mode = EnvSetMode::new(EnvMode::GLOBAL, false);
+
+        let home = vars
+            .get_unless_empty(L!("HOME"))
+            .expect("HOME not set")
+            .as_string();
+
+        // Regular path (not under HOME)
+        vars.set_one(L!("PWD"), global_mode, L!("/usr/local/bin").to_owned());
+        let history = create_test_history(L!("test_cwd"), &hist_dir);
+        history.add_pending_with_file_detection(L!("echo test1"), vars, PersistenceMode::Disk);
+
+        // Path under HOME - should be abbreviated to ~/subdir
+        let home_subdir = home + L!("/test_history_subdir");
+        vars.set_one(L!("PWD"), global_mode, home_subdir);
+        history.add_pending_with_file_detection(L!("echo test2"), vars, PersistenceMode::Disk);
+
+        // Root directory
+        vars.set_one(L!("PWD"), global_mode, L!("/").to_owned());
+        history.add_pending_with_file_detection(L!("echo test3"), vars, PersistenceMode::Disk);
+
+        history.resolve_pending();
+
+        assert_eq!(
+            history.item_at_index(3).unwrap().cwd.as_deref(),
+            Some(L!("/usr/local/bin"))
+        );
+        assert_eq!(
+            history.item_at_index(2).unwrap().cwd.as_deref(),
+            Some(L!("~/test_history_subdir"))
+        );
+        assert_eq!(
+            history.item_at_index(1).unwrap().cwd.as_deref(),
+            Some(L!("/"))
+        );
     }
 }
