@@ -53,8 +53,8 @@ use crate::highlight::{
     parse_text_face_for_highlight,
 };
 use crate::history::{
-    History, HistorySearch, PersistenceMode, SearchDirection, SearchFlags, SearchType,
-    history_session_id, in_private_mode,
+    History, HistoryItem, HistoryItemId, HistorySearch, PersistenceMode, SearchDirection,
+    SearchFlags, SearchType, history_session_id, in_private_mode,
 };
 use crate::input_common::BackgroundColorQuery;
 use crate::input_common::CursorPositionQueryReason;
@@ -574,6 +574,9 @@ struct ReadlineLoopState {
     /// If the last "complete" readline command has inserted text into the command line.
     completion_action: Option<CompletionAction>,
 
+    /// The last history item added. This is used for "late" data such as exit status and duration.
+    last_history_item: Option<HistoryItemId>,
+
     /// Whether the loop has finished, due to reaching the character limit or through executing a
     /// command.
     finished: bool,
@@ -588,6 +591,7 @@ impl ReadlineLoopState {
             last_cmd: None,
             yank_len: 0,
             completion_action: None,
+            last_history_item: None,
             finished: false,
             nchars: None,
         }
@@ -845,7 +849,8 @@ fn read_i(parser: &Parser) {
     while !check_exit_loop_maybe_warning(Some(&mut data)) {
         RUN_COUNT.fetch_add(1, Ordering::Relaxed);
 
-        let Some(command) = data.readline(set_shell_modes_temporarily(data.conf.inputfd), None)
+        let Some((command, history_item_id)) =
+            data.readline(set_shell_modes_temporarily(data.conf.inputfd), None)
         else {
             continue;
         };
@@ -862,8 +867,20 @@ fn read_i(parser: &Parser) {
         event::fire_generic(parser, L!("fish_preexec").to_owned(), vec![command.clone()]);
         let eval_res = reader_run_command(parser, &command);
         signal_clear_cancel();
-        if !eval_res.no_status {
+        let has_status = !eval_res.no_status;
+        if has_status {
             STATUS_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        // Update history with exit status and duration.
+        if let Some(id) = history_item_id {
+            let exit_code = has_status.then_some(eval_res.status.status_value());
+            let duration: Option<u64> = eval_res.duration.as_millis().try_into().ok();
+            let update = HistoryItem {
+                exit_code,
+                duration,
+                ..HistoryItem::with_id(id)
+            };
+            data.history.emit_update(update);
         }
 
         // If the command requested an exit, then process it now and clear it.
@@ -1227,7 +1244,8 @@ pub fn reader_readline(
 ) -> Option<WString> {
     let data = current_data().unwrap();
     let mut reader = Reader { parser, data };
-    reader.readline(old_modes, nchars)
+    let (command, _history_item_id) = reader.readline(old_modes, nchars)?;
+    Some(command)
 }
 
 /// Get the command line state. This may be fetched on a background thread.
@@ -2553,7 +2571,7 @@ impl<'a> Reader<'a> {
         &mut self,
         old_modes: Option<Termios>,
         nchars: Option<NonZeroUsize>,
-    ) -> Option<WString> {
+    ) -> Option<(WString, Option<HistoryItemId>)> {
         let mut tty = TtyHandoff::new(reader_save_screen_state);
 
         self.rls = Some(ReadlineLoopState::new());
@@ -2662,10 +2680,11 @@ impl<'a> Reader<'a> {
             }
             Outputter::stdoutput().borrow_mut().reset_text_face();
         }
-        let result = self
-            .rls()
-            .finished
-            .then(|| self.command_line.text().to_owned());
+        let result = self.rls().finished.then(|| {
+            let command = self.command_line.text().to_owned();
+            let history_item_id = self.rls().last_history_item;
+            (command, history_item_id)
+        });
         self.rls = None;
         result
     }
@@ -4527,7 +4546,7 @@ impl<'a> Reader<'a> {
         // Delete any autosuggestion.
         self.autosuggestion.clear();
 
-        self.add_to_history();
+        self.rls_mut().last_history_item = self.add_to_history();
         self.rls_mut().finished = true;
         self.command_line.pending_position = Some(self.command_line.position());
         self.update_buff_pos(elt, Some(self.command_line_len()));
@@ -6433,9 +6452,10 @@ impl<'a> Reader<'a> {
     }
 
     // Add the current command line contents to history.
-    fn add_to_history(&mut self) {
+    // Returns the ID of the added history item, or none if nothing was added.
+    fn add_to_history(&mut self) -> Option<HistoryItemId> {
         if self.conf.in_silent_mode {
-            return;
+            return None;
         }
 
         // Historical behavior is to trim trailing spaces, unless escape (#7661).
@@ -6452,7 +6472,7 @@ impl<'a> Reader<'a> {
         // Remove ephemeral items - even if the text is empty.
         self.history.remove_ephemeral_items();
         if text.is_empty() {
-            return;
+            return None;
         }
 
         // Mark this item as ephemeral if should_add_to_history says no (#615).
@@ -6463,8 +6483,10 @@ impl<'a> Reader<'a> {
         } else {
             PersistenceMode::Disk
         };
-        self.history
-            .add_pending_with_file_detection(&text, &self.parser.variables, mode);
+        let item_id =
+            self.history
+                .add_pending_with_file_detection(&text, &self.parser.variables, mode);
+        Some(item_id)
     }
 
     /// Check if we have background jobs that we have not warned about.
