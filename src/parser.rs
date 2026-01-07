@@ -359,6 +359,9 @@ pub struct EvalRes {
 
     /// If set, no commands produced a $status value.
     pub no_status: bool,
+
+    /// The duration of command execution.
+    pub duration: std::time::Duration,
 }
 
 impl EvalRes {
@@ -510,7 +513,10 @@ impl Parser {
     }
 
     pub fn eval(&mut self, cmd: &wstr, io: &IoChain) -> EvalRes {
-        self.eval_with(cmd, io, None, BlockType::Top)
+        let start = std::time::Instant::now();
+        let mut eval_res = self.eval_with(cmd, io, None, BlockType::Top);
+        eval_res.duration = start.elapsed();
+        eval_res
     }
 
     /// Evaluate the expressions contained in cmd.
@@ -577,6 +583,7 @@ impl Parser {
                 break_expand: false,
                 was_empty: true,
                 no_status: true,
+                ..Default::default()
             }
         }
     }
@@ -719,6 +726,7 @@ impl Parser {
                 break_expand,
                 was_empty: !break_expand && prev_exec_count == new_exec_count,
                 no_status: prev_status_count == new_status_count,
+                ..Default::default()
             }
         }
     }
