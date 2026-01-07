@@ -6342,19 +6342,16 @@ fn reader_run_command(parser: &Parser, cmd: &wstr) -> EvalRes {
         .set_text_face(TextFace::default());
     term_donate(false);
 
-    let time_before = Instant::now();
     let eval_res = parser.eval(cmd, &IoChain::new());
     job_reap(parser, true, None);
 
     // Update the execution duration iff a command is requested for execution
     // issue - #4926
     if !ft.is_empty() {
-        let time_after = Instant::now();
-        let duration = time_after.duration_since(time_before);
         parser.set_one(
             ENV_CMD_DURATION,
             ParserEnvSetMode::new(EnvMode::UNEXPORT),
-            duration.as_millis().to_wstring(),
+            eval_res.duration.as_millis().to_wstring(),
         );
     }
 
