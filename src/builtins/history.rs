@@ -62,6 +62,7 @@ struct Options {
     case_sensitive: bool,
     null_terminate: bool,
     reverse: bool,
+    compact: bool,
     color: ColorEnabled,
 }
 
@@ -85,6 +86,7 @@ const LONG_OPTIONS: &[WOption] = &[
     wopt(L!("clear"), ArgType::NoArgument, '\x04'),
     wopt(L!("merge"), ArgType::NoArgument, '\x05'),
     wopt(L!("reverse"), ArgType::NoArgument, 'R'),
+    wopt(L!("compact"), ArgType::NoArgument, '\x06'),
     wopt(L!("color"), ArgType::RequiredArgument, COLOR_OPTION_CHAR),
 ];
 
@@ -115,7 +117,17 @@ fn check_for_unexpected_hist_args(
     args: &[&wstr],
     streams: &mut IoStreams,
 ) -> bool {
-    if opts.search_type.is_some() || opts.show_time_format.is_some() || opts.null_terminate {
+    // For the save command, --compact is allowed but other options are not.
+    let has_unexpected_option = if opts.hist_cmd == HistCmd::Save {
+        opts.search_type.is_some() || opts.show_time_format.is_some() || opts.null_terminate
+    } else {
+        opts.search_type.is_some()
+            || opts.show_time_format.is_some()
+            || opts.null_terminate
+            || opts.compact
+    };
+
+    if has_unexpected_option {
         let subcmd_str = opts.hist_cmd.to_wstr();
         err_str!("subcommand takes no options")
             .subcmd(cmd, subcmd_str)
@@ -170,6 +182,9 @@ fn parse_cmd_opts(
                 if !set_hist_cmd(cmd, &mut opts.hist_cmd, HistCmd::Merge, streams) {
                     return Err(STATUS_CMD_ERROR);
                 }
+            }
+            '\x06' => {
+                opts.compact = true;
             }
             'C' => {
                 opts.case_sensitive = true;
@@ -317,14 +332,14 @@ pub fn history(parser: &mut Parser, streams: &mut IoStreams, args: &mut [&wstr])
                 return Err(STATUS_INVALID_ARGS);
             }
             history.clear();
-            history.save();
+            history.save(false);
         }
         HistCmd::ClearSession => {
             if check_for_unexpected_hist_args(&opts, cmd, args, streams) {
                 return Err(STATUS_INVALID_ARGS);
             }
             history.clear_session();
-            history.save();
+            history.save(false);
         }
         HistCmd::Merge => {
             if check_for_unexpected_hist_args(&opts, cmd, args, streams) {
@@ -343,7 +358,7 @@ pub fn history(parser: &mut Parser, streams: &mut IoStreams, args: &mut [&wstr])
             if check_for_unexpected_hist_args(&opts, cmd, args, streams) {
                 return Err(STATUS_INVALID_ARGS);
             }
-            history.save();
+            history.save(opts.compact);
         }
         HistCmd::Append => {
             for &arg in args {
