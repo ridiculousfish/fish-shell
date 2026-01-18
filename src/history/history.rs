@@ -1383,8 +1383,9 @@ impl History {
 
     /// Saves history.
     /// As history is written immediately, this just performs a vacuum if necessary.
-    pub fn save(&self) {
-        self.imp().save(false);
+    /// If vacuum is true, forces a full rewrite to compact the history file.
+    pub fn save(&self, vacuum: bool) {
+        self.imp().save(vacuum);
     }
 
     /// Searches history.
@@ -1715,7 +1716,7 @@ impl HistorySearch {
 /// Saves the new history to disk.
 pub fn save_all() {
     for hist in HISTORIES.lock().unwrap().values() {
-        hist.save();
+        hist.save(false);
     }
 }
 
@@ -2047,7 +2048,7 @@ mod tests {
             expected_item.set_required_paths(paths);
             before.push_back(expected_item);
         }
-        history.save();
+        history.save(false);
 
         // Read items back in reverse order and ensure they're the same.
         for i in (1..=100).rev() {
@@ -2104,7 +2105,7 @@ mod tests {
         let hist_lines = generate_history_lines(item_count, idx);
         for line in hist_lines {
             hist.add_commandline(line);
-            hist.save();
+            hist.save(false);
         }
         hist
     }
@@ -2204,7 +2205,7 @@ mod tests {
         {
             let hist = write_history_entries(&hist_dir, VACUUM_FREQUENCY / 2, 0);
             hist.add_commandline("needle".into());
-            hist.save();
+            hist.save(false);
         }
         std::thread::sleep(Duration::from_secs(1));
 
@@ -2261,7 +2262,7 @@ mod tests {
 
         // Save them.
         for hist in &hists {
-            hist.save();
+            hist.save(false);
         }
 
         // Make sure each history contains what it ought to, but they have not leaked into each other.

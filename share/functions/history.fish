@@ -6,7 +6,7 @@ function history --description "display or manipulate interactive command histor
     set -l cmd history
     set -l options --exclusive 'c,e,p' --exclusive 'S,D,M,V,X'
     set -a options h/help c/contains e/exact p/prefix
-    set -a options C/case-sensitive R/reverse z/null 't/show-time=?' 'n#max' 'color='
+    set -a options C/case-sensitive R/reverse z/null 't/show-time=?' 'n#max' 'color=' compact
     # The following options are deprecated and will be removed in the next major release.
     # Note that they do not have usable short flags.
     set -a options S-search D-delete M-merge V-save X-clear
@@ -182,7 +182,7 @@ function history --description "display or manipulate interactive command histor
             end
 
         case save # save our interactive command history to the persistent history
-            builtin history save $color_opt $search_mode $show_time $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv
+            builtin history save $_flag_compact $color_opt $search_mode $show_time $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv
         case merge # merge the persistent interactive command history with our history
             builtin history merge $color_opt $search_mode $show_time $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv
         case clear # clear the interactive command history

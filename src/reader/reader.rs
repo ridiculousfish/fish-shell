@@ -1079,7 +1079,7 @@ pub fn reader_change_history(name: &wstr) {
         return;
     };
 
-    data.history.save();
+    data.history.save(false);
     data.history = History::with_name(name);
     commandline_state_snapshot().history = Some(data.history.clone());
 }
@@ -3556,7 +3556,7 @@ impl<'a> Reader<'a> {
                     } else {
                         &self.autosuggestion.text
                     });
-                    self.history.save();
+                    self.history.save(false);
                     if is_history_search {
                         self.history_search.handle_deletion();
                         self.update_command_line_from_history_search();
@@ -3574,7 +3574,7 @@ impl<'a> Reader<'a> {
                     self.pager.selected_completion(&self.current_page_rendering)
                 {
                     self.history.remove(&completion.completion);
-                    self.history.save();
+                    self.history.save(false);
                     self.fill_history_pager(
                         HistoryPagerInvocation::Refresh,
                         None,
