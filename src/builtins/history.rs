@@ -55,6 +55,7 @@ struct HistoryCmdOpts {
     hist_cmd: HistCmd,
     search_type: Option<history::SearchType>,
     show_time_format: Option<String>,
+    format: Option<WString>,
     max_items: Option<usize>,
     print_help: bool,
     case_sensitive: bool,
@@ -68,13 +69,14 @@ struct HistoryCmdOpts {
 /// the non-flag subcommand form. While many of these flags are deprecated they must be
 /// supported at least until fish 3.0 and possibly longer to avoid breaking everyones
 /// config.fish and other scripts.
-const SHORT_OPTIONS: &wstr = L!("CRcehmn:pt::z");
+const SHORT_OPTIONS: &wstr = L!("CRcef:hmn:pt::z");
 const LONG_OPTIONS: &[WOption] = &[
     wopt(L!("prefix"), ArgType::NoArgument, 'p'),
     wopt(L!("contains"), ArgType::NoArgument, 'c'),
     wopt(L!("help"), ArgType::NoArgument, 'h'),
     wopt(L!("show-time"), ArgType::OptionalArgument, 't'),
     wopt(L!("exact"), ArgType::NoArgument, 'e'),
+    wopt(L!("format"), ArgType::RequiredArgument, 'f'),
     wopt(L!("max"), ArgType::RequiredArgument, 'n'),
     wopt(L!("null"), ArgType::NoArgument, 'z'),
     wopt(L!("case-sensitive"), ArgType::NoArgument, 'C'),
@@ -116,9 +118,9 @@ fn check_for_unexpected_hist_args(
 ) -> bool {
     // For the save command, --compact is allowed but other options are not.
     let has_unexpected_option = if opts.hist_cmd == HistCmd::Save {
-        opts.search_type.is_some() || opts.show_time_format.is_some() || opts.null_terminate
+        opts.search_type.is_some() || opts.show_time_format.is_some() || opts.null_terminate || opts.format.is_some()
     } else {
-        opts.search_type.is_some() || opts.show_time_format.is_some() || opts.null_terminate || opts.compact
+        opts.search_type.is_some() || opts.show_time_format.is_some() || opts.null_terminate || opts.compact || opts.format.is_some()
     };
 
     if has_unexpected_option {
@@ -200,6 +202,9 @@ fn parse_cmd_opts(
             }
             'e' => {
                 opts.search_type = Some(history::SearchType::Exact);
+            }
+            'f' => {
+                opts.format = Some(w.woptarg.unwrap().to_owned());
             }
             't' => {
                 opts.show_time_format = Some(w.woptarg.unwrap_or(L!("# %c%n")).to_string());
@@ -301,6 +306,7 @@ pub fn history(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> 
                     .unwrap_or(history::SearchType::ContainsGlob),
                 args,
                 opts.show_time_format.as_deref(),
+                opts.format.as_deref(),
                 opts.max_items.unwrap_or(usize::MAX),
                 opts.case_sensitive,
                 opts.null_terminate,

@@ -6,7 +6,7 @@ function history --description "display or manipulate interactive command histor
     set -l cmd history
     set -l options --exclusive 'c,e,p' --exclusive 'S,D,M,V,X'
     set -a options h/help c/contains e/exact p/prefix
-    set -a options C/case-sensitive R/reverse z/null 't/show-time=?' 'n#max' 'color=' compact
+    set -a options C/case-sensitive R/reverse z/null 't/show-time=?' 'n#max' 'color=' 'f/format=' compact
     # The following options are deprecated and will be removed in the next major release.
     # Note that they do not have usable short flags.
     set -a options S-search D-delete M-merge V-save X-clear
@@ -34,6 +34,11 @@ function history --description "display or manipulate interactive command histor
         set show_time --show-time=$_flag_show_time
     else if set -q _flag_show_time
         set show_time --show-time
+    end
+
+    set -l format_opt
+    if set -q _flag_format[1]
+        set format_opt --format=$_flag_format
     end
 
     set -q _flag_prefix
@@ -90,9 +95,9 @@ function history --description "display or manipulate interactive command histor
                 not set -qx LV # ask the pager lv not to strip colors
                 and set -fx LV -c
 
-                builtin history search --color=always $search_mode $show_time $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv | $pager
+                builtin history search --color=always $search_mode $show_time $format_opt $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv | $pager
             else
-                builtin history search $color_opt $search_mode $show_time $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv
+                builtin history search $color_opt $search_mode $show_time $format_opt $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv
             end
 
         case delete # interactively delete history

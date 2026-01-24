@@ -1139,51 +1139,162 @@ fn do_1_history_search(
     }
 }
 
+/// Format a timestamp using strftime.
+/// The format must be a null-terminated byte string.
+fn format_time(timestamp: SystemTime, format: *const libc::c_char) -> WString {
+    let seconds = time_to_seconds(timestamp);
+    #[allow(deprecated)]
+    let seconds = seconds as libc::time_t;
+    let mut tm = MaybeUninit::uninit();
+    if unsafe { libc::localtime_r(&seconds, tm.as_mut_ptr()).is_null() } {
+        return WString::new();
+    }
+    const MAX_TIMESTAMP_LENGTH: usize = 100;
+    let mut buffer = [0_u8; MAX_TIMESTAMP_LENGTH];
+    let len = unsafe {
+        libc::strftime(
+            buffer.as_mut_ptr().cast(),
+            MAX_TIMESTAMP_LENGTH,
+            format,
+            tm.as_ptr(),
+        )
+    };
+    if len == 0 {
+        return WString::new();
+    }
+    let cstr = CStr::from_bytes_until_nul(&buffer).unwrap();
+    cstr2wcstring(cstr)
+}
+
+/// Format a duration in milliseconds into a human-readable string.
+fn format_duration(millis: u64) -> WString {
+    if millis < 1000 {
+        sprintf!("%lums", millis)
+    } else if millis < 60_000 {
+        let secs = millis as f64 / 1000.0;
+        sprintf!("%.2fs", secs)
+    } else if millis < 3_600_000 {
+        let mins = millis / 60_000;
+        let secs = (millis % 60_000) / 1000;
+        if secs > 0 {
+            sprintf!("%lum %lus", mins, secs)
+        } else {
+            sprintf!("%lum", mins)
+        }
+    } else {
+        let hours = millis / 3_600_000;
+        let mins = (millis % 3_600_000) / 60_000;
+        if mins > 0 {
+            sprintf!("%luh %lum", hours, mins)
+        } else {
+            sprintf!("%luh", hours)
+        }
+    }
+}
+
+/// Format a history item using a template string with {variable} placeholders.
+/// Supported placeholders: {command}, {time}, {duration}, {exit}, {directory}
+fn format_with_template(
+    item: &HistoryItem,
+    template: &wstr,
+    parser: &Parser,
+    color_enabled: bool,
+) -> WString {
+    let mut result = WString::new();
+    let mut chars = template.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            // Collect the placeholder name
+            let mut placeholder = WString::new();
+            while let Some(&next) = chars.peek() {
+                if next == '}' {
+                    chars.next();
+                    break;
+                }
+                placeholder.push(chars.next().unwrap());
+            }
+
+            // Replace the placeholder with the appropriate value
+            if placeholder == "command" {
+                let mut command = item.str().to_owned();
+                if color_enabled {
+                    command = bytes2wcstring(&highlight_and_colorize(
+                        &command,
+                        &parser.context(),
+                        parser.vars(),
+                    ));
+                }
+                result.push_utfstr(&command);
+            } else if placeholder == "time" {
+                // Default format: ISO 8601
+                result.push_utfstr(&format_time(
+                    item.timestamp(),
+                    c"%Y-%m-%d %H:%M:%S".as_ptr().cast(),
+                ));
+            } else if placeholder == "duration" {
+                if let Some(dur) = item.duration {
+                    result.push_utfstr(&format_duration(dur));
+                }
+            } else if placeholder == "exit" {
+                if let Some(exit) = item.exit_code {
+                    result.push_utfstr(&sprintf!("%d", exit));
+                }
+            } else if placeholder == "directory" || placeholder == "cwd" {
+                if let Some(ref cwd) = item.cwd {
+                    result.push_utfstr(cwd);
+                }
+            } else {
+                // Unknown placeholder - leave as-is
+                result.push('{');
+                result.push_utfstr(&placeholder);
+                result.push('}');
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
+}
+
 /// Formats a single history record, including a trailing newline.
 fn format_history_record(
     item: &HistoryItem,
     show_time_format: Option<&str>,
+    format: Option<&wstr>,
     null_terminate: bool,
     parser: &Parser,
     color_enabled: bool,
 ) -> WString {
     let mut result = WString::new();
-    let seconds = time_to_seconds(item.timestamp());
-    // This warns for musl, but the warning is useless to us - there is nothing we can or should do.
-    #[allow(deprecated)]
-    let seconds = seconds as libc::time_t;
-    let mut timestamp = MaybeUninit::uninit();
-    if let Some(show_time_format) = show_time_format.and_then(|s| CString::new(s).ok()) {
-        if !unsafe { libc::localtime_r(&seconds, timestamp.as_mut_ptr()).is_null() } {
-            const MAX_TIMESTAMP_LENGTH: usize = 100;
-            let mut timestamp_str = [0_u8; MAX_TIMESTAMP_LENGTH];
-            if unsafe {
-                libc::strftime(
-                    timestamp_str.as_mut_ptr().cast(),
-                    MAX_TIMESTAMP_LENGTH,
-                    show_time_format.as_ptr(),
-                    timestamp.as_ptr(),
-                )
-            } != 0
-            {
-                // SAFETY: strftime terminates the string with a null byte. If there is insufficient
-                // space, strftime returns 0.
-                let timestamp_cstr = CStr::from_bytes_until_nul(&timestamp_str).unwrap();
-                result.push_utfstr(&cstr2wcstring(timestamp_cstr));
-            }
-        }
+
+    // Handle --show-time: prepend timestamp on its own line
+    if let Some(fmt) = show_time_format.and_then(|s| CString::new(s).ok()) {
+        result.push_utfstr(&format_time(item.timestamp(), fmt.as_ptr()));
     }
 
-    let mut command = item.str().to_owned();
-    if color_enabled {
-        command = bytes2wcstring(&highlight_and_colorize(
-            &command,
-            &parser.context(),
-            parser.vars(),
+    // Handle --format: use template formatting
+    if let Some(format_str) = format {
+        result.push_utfstr(&format_with_template(
+            item,
+            format_str,
+            parser,
+            color_enabled,
         ));
+    } else {
+        // Default: just output the command
+        let mut command = item.str().to_owned();
+        if color_enabled {
+            command = bytes2wcstring(&highlight_and_colorize(
+                &command,
+                &parser.context(),
+                parser.vars(),
+            ));
+        }
+        result.push_utfstr(&command);
     }
 
-    result.push_utfstr(&command);
     result.push(if null_terminate { '\0' } else { '\n' });
     result
 }
@@ -1397,6 +1508,7 @@ impl History {
         search_type: SearchType,
         search_args: &[&wstr],
         show_time_format: Option<&str>,
+        format: Option<&wstr>,
         max_items: usize,
         case_sensitive: bool,
         null_terminate: bool,
@@ -1417,6 +1529,7 @@ impl History {
             let formatted_record = format_history_record(
                 item,
                 show_time_format,
+                format,
                 null_terminate,
                 parser,
                 color_enabled,
@@ -2542,5 +2655,30 @@ mod tests {
             history.item_at_index(1).unwrap().cwd.as_deref(),
             Some(L!("/"))
         );
+    }
+
+    #[test]
+    fn test_format_duration() {
+        use super::format_duration;
+
+        // Milliseconds
+        assert_eq!(format_duration(0), L!("0ms"));
+        assert_eq!(format_duration(500), L!("500ms"));
+        assert_eq!(format_duration(999), L!("999ms"));
+
+        // Seconds
+        assert_eq!(format_duration(1000), L!("1.00s"));
+        assert_eq!(format_duration(1500), L!("1.50s"));
+        assert_eq!(format_duration(59000), L!("59.00s"));
+
+        // Minutes
+        assert_eq!(format_duration(60000), L!("1m"));
+        assert_eq!(format_duration(90000), L!("1m 30s"));
+        assert_eq!(format_duration(3540000), L!("59m")); // 59 minutes exactly
+
+        // Hours
+        assert_eq!(format_duration(3600000), L!("1h"));
+        assert_eq!(format_duration(3660000), L!("1h 1m"));
+        assert_eq!(format_duration(7200000), L!("2h"));
     }
 }
