@@ -79,3 +79,17 @@ builtin history delete --prefix abc
 
 builtin history delete --exact abc
 #CHECKERR: builtin history delete --exact requires --case-sensitive
+set -g fish_private_mode 0
+
+# Test --format option is rejected for non-search subcommands
+builtin history save --format "{command}"
+#CHECKERR: history save: subcommand takes no options
+
+builtin history clear --format "{command}"
+#CHECKERR: history clear: subcommand takes no options
+
+builtin history merge --format "{command}"
+#CHECKERR: history merge: subcommand takes no options
+
+# Test that --format works with search (just check it doesn't error)
+builtin history search --format "{command}" --max 0
