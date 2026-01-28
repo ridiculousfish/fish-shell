@@ -102,8 +102,8 @@ pub enum SearchDirection {
     Backward,
 }
 
-/// This is the history session ID we use by default if the user has not set env var fish_history.
-const DFLT_FISH_HISTORY_SESSION_ID: &wstr = L!("fish");
+/// This is the history namespace we use by default if the user has not set env var fish_history.
+const DFLT_FISH_HISTORY_NAMESPACE: &wstr = L!("fish");
 
 pub const VACUUM_FREQUENCY: usize = 25;
 
@@ -720,7 +720,7 @@ impl HistoryImpl {
 
     /// Returns whether this is using the default name.
     fn is_default(&self) -> bool {
-        self.name == DFLT_FISH_HISTORY_SESSION_ID
+        self.name == DFLT_FISH_HISTORY_NAMESPACE
     }
 
     /// Determines whether the history is empty. Unfortunately this cannot be const, since it may
@@ -1689,28 +1689,29 @@ pub fn save_all() {
     }
 }
 
-/// Return the prefix for the files to be used for command and read history.
-pub fn history_session_id(vars: &dyn Environment) -> WString {
-    history_session_id_from_var(vars.get(L!("fish_history")))
+/// Return the namespace (file name prefix) for the history file.
+/// This is determined by the `fish_history` environment variable.
+pub fn history_namespace(vars: &dyn Environment) -> WString {
+    history_namespace_from_var(vars.get(L!("fish_history")))
 }
 
-pub fn history_session_id_from_var(history_name_var: Option<EnvVar>) -> WString {
+pub fn history_namespace_from_var(history_name_var: Option<EnvVar>) -> WString {
     let Some(var) = history_name_var else {
-        return DFLT_FISH_HISTORY_SESSION_ID.to_owned();
+        return DFLT_FISH_HISTORY_NAMESPACE.to_owned();
     };
-    let session_id = var.as_string();
-    if session_id.is_empty() || valid_var_name(&session_id) {
-        session_id
+    let namespace = var.as_string();
+    if namespace.is_empty() || valid_var_name(&namespace) {
+        namespace
     } else {
         flog!(
             error,
             wgettext_fmt!(
-                "History session ID '%s' is not a valid variable name. Falling back to `%s`.",
-                &session_id,
-                DFLT_FISH_HISTORY_SESSION_ID
+                "History namespace '%s' is not a valid variable name. Falling back to `%s`.",
+                &namespace,
+                DFLT_FISH_HISTORY_NAMESPACE
             ),
         );
-        DFLT_FISH_HISTORY_SESSION_ID.to_owned()
+        DFLT_FISH_HISTORY_NAMESPACE.to_owned()
     }
 }
 

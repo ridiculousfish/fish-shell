@@ -262,8 +262,8 @@ fn handle_term_size_change(vars: &EnvStack) {
 }
 
 fn handle_fish_history_change(vars: &EnvStack) {
-    let session_id = crate::history::history_session_id(vars);
-    reader_change_history(&session_id);
+    let namespace = crate::history::history_namespace(vars);
+    reader_change_history(&namespace);
 }
 
 fn handle_fish_cursor_selection_mode_change(vars: &EnvStack) {

@@ -15,7 +15,7 @@ use crate::complete::{CompleteFlags, Completion, CompletionList, CompletionRecei
 use crate::env::{EnvVar, Environment};
 use crate::exec::exec_subshell_for_expand;
 use crate::future_feature_flags::{FeatureFlag, feature_test};
-use crate::history::{History, history_session_id};
+use crate::history::{History, history_namespace};
 use crate::operation_context::OperationContext;
 use crate::parse_constants::{ParseError, ParseErrorCode, ParseErrorList, SOURCE_LOCATION_UNKNOWN};
 use crate::parse_util::{MaybeParentheses, expand_variable_error, locate_cmdsubst_range};
@@ -637,7 +637,7 @@ fn expand_variables(
     let mut history = None;
     let mut var = None;
     if var_name == "history" {
-        history = Some(History::with_name(&history_session_id(vars)));
+        history = Some(History::with_name(&history_namespace(vars)));
     } else if var_name.as_char_slice() != [VARIABLE_EXPAND_EMPTY] {
         var = vars.get(var_name);
     }

@@ -54,7 +54,7 @@ use crate::highlight::{
 };
 use crate::history::{
     History, HistoryItem, HistoryItemId, HistorySearch, PersistenceMode, SearchDirection,
-    SearchFlags, SearchType, history_session_id, in_private_mode,
+    SearchFlags, SearchType, history_namespace, in_private_mode,
 };
 use crate::input_common::BackgroundColorQuery;
 use crate::input_common::CursorPositionQueryReason;
@@ -838,7 +838,7 @@ fn read_i(parser: &Parser) {
         conf.right_prompt_cmd = RIGHT_PROMPT_FUNCTION_NAME.to_owned();
     }
 
-    let mut data = reader_push(parser, &history_session_id(parser.vars()), conf);
+    let mut data = reader_push(parser, &history_namespace(parser.vars()), conf);
     data.import_history_if_necessary();
 
     // Set up tty protocols. These should be enabled while we're reading interactively,

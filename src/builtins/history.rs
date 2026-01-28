@@ -1,7 +1,7 @@
 //! Implementation of the history builtin.
 
 use crate::history::in_private_mode;
-use crate::history::{self, History, history_session_id};
+use crate::history::{self, History, history_namespace};
 use crate::reader::commandline_get_state;
 
 use super::prelude::*;
@@ -261,7 +261,7 @@ pub fn history(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> 
     // from webconfig.py.
     let history = commandline_get_state(true)
         .history
-        .unwrap_or_else(|| History::with_name(&history_session_id(parser.vars())));
+        .unwrap_or_else(|| History::with_name(&history_namespace(parser.vars())));
 
     // If a history command hasn't already been specified via a flag check the first word.
     // Note that this can be simplified after we eliminate allowing subcommands as flags.

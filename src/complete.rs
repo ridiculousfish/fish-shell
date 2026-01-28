@@ -26,7 +26,7 @@ use crate::{
     },
     flog::{flog, flogf},
     function,
-    history::{History, history_session_id},
+    history::{History, history_namespace},
     operation_context::OperationContext,
     parse_constants::SourceRange,
     parse_util::{get_cmdsubst_extent, get_process_extent, unescape_wildcards},
@@ -1679,7 +1679,7 @@ impl<'ctx> Completer<'ctx> {
                 // $history can be huge, don't put all of it in the completion description; see
                 // #6288.
                 if env_name == "history" {
-                    let history = History::with_name(&history_session_id(self.ctx.vars()));
+                    let history = History::with_name(&history_namespace(self.ctx.vars()));
                     for i in 1..std::cmp::min(history.size(), 64) {
                         if i > 1 {
                             desc.push(' ');
