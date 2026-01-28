@@ -80,7 +80,9 @@ impl HistoryItem {
         }
         obj.set_opt("exit", &self.exit_code);
         obj.set_opt("dur", &self.duration);
-        obj.set_opt("sid", &self.session_id);
+        if let Some(sid) = self.session_id {
+            obj["sid"] = JsonValue::String(base64_encode_u64(sid));
+        }
         obj
     }
 
@@ -112,7 +114,10 @@ impl HistoryItem {
         if let Some(cwd) = obj["cwd"].as_str() {
             self.cwd = Some(utf8_to_wstring(cwd));
         }
-        if let Some(sid) = obj["sid"].as_u64() {
+        if let Some(sid) = obj["sid"]
+            .as_str()
+            .and_then(|s| base64_decode_u64(s.as_bytes()))
+        {
             self.session_id = Some(sid);
         }
     }

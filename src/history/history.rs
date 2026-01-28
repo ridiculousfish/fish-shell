@@ -39,7 +39,7 @@ use std::{
 
 use bitflags::bitflags;
 use nix::{fcntl::OFlag, sys::stat::Mode};
-use rand::Rng;
+use rand::{Rng, RngCore};
 
 use crate::{
     ast::{self, Kind, Node},
@@ -174,6 +174,29 @@ impl HistoryItemId {
     /// Construct directly from a raw 64-bit identifier.
     pub fn from_raw(value: u64) -> Self {
         Self(value)
+    }
+}
+
+/// A 48-bit identifier for a fish shell instance.
+/// Randomly generated when History is created.
+/// Stored as the low 48 bits of a u64.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HistorySessionId(u64);
+
+impl HistorySessionId {
+    const BITS: u32 = 48;
+    const MASK: u64 = (1 << Self::BITS) - 1;
+
+    pub fn new_random() -> Self {
+        Self(rand::rng().next_u64() & Self::MASK)
+    }
+
+    pub fn from_raw(value: u64) -> Self {
+        Self(value & Self::MASK)
+    }
+
+    pub fn raw(self) -> u64 {
+        self.0
     }
 }
 
@@ -363,6 +386,8 @@ struct HistoryImpl {
     boundary_timestamp: SystemTime,
     /// Next nonce used when constructing [`HistoryItemId`]s.
     next_item_id_nonce: u16,
+    /// Session ID for this fish instance, written to each history item.
+    session_id: HistorySessionId,
     /// How many items we add until the next vacuum. Initially a random value.
     countdown_to_vacuum: Option<usize>,
     /// Thread pool for background operations.
@@ -517,7 +542,10 @@ impl HistoryImpl {
     /// imp.add(item, false);
     /// ```
     fn new_item(&mut self) -> HistoryItem {
-        HistoryItem::with_id(self.next_item_id())
+        HistoryItem {
+            session_id: Some(self.session_id.raw()),
+            ..HistoryItem::with_id(self.next_item_id())
+        }
     }
 
     /// Loads old items if necessary.
@@ -702,6 +730,7 @@ impl HistoryImpl {
     /// Create a new HistoryImpl.
     fn new(name: WString, custom_directory: Option<WString>) -> Self {
         let next_item_id_nonce = rand::rng().random_range(0..65536) as u16;
+        let session_id = HistorySessionId::new_random();
         Self {
             name,
             custom_directory,
@@ -712,6 +741,7 @@ impl HistoryImpl {
             history_file_id: INVALID_FILE_ID,
             boundary_timestamp: SystemTime::now(),
             next_item_id_nonce,
+            session_id,
             countdown_to_vacuum: None,
             // Up to 8 threads, no soft min.
             thread_pool: ThreadPool::new(0, 8),
@@ -1334,7 +1364,7 @@ impl History {
     /// use fish::prelude::*;
     ///
     /// // Create a history instance
-    /// let history = History::new(L!("test_emit_update"), Some(0));
+    /// let history = History::new(L!("test_emit_update"), Some(0), None);
     /// let item_id = HistoryItemId::new(std::time::SystemTime::now(), 0);
     ///
     /// // Create an update item (shown for illustration; actual field access is module-private)
