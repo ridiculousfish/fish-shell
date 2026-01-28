@@ -45,7 +45,7 @@ use bitflags::bitflags;
 use fish_wcstringutil::{subsequence_in_string, trim_in_place};
 use fish_widestring::{ANY_STRING, bytes2wcstring, cstr2wcstring, subslice_position};
 use nix::{fcntl::OFlag, sys::stat::Mode};
-use rand::RngExt as _;
+use rand::{Rng as _, RngExt as _};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap, HashSet},
@@ -309,6 +309,29 @@ impl HistoryItemId {
     }
 }
 
+/// A 48-bit identifier for a fish shell instance.
+/// Randomly generated when History is created.
+/// Stored as the low 48 bits of a u64.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HistorySessionId(u64);
+
+impl HistorySessionId {
+    const BITS: u32 = 48;
+    const MASK: u64 = (1 << Self::BITS) - 1;
+
+    pub fn new_random() -> Self {
+        Self(rand::rng().next_u64() & Self::MASK)
+    }
+
+    pub fn from_raw(value: u64) -> Self {
+        Self(value & Self::MASK)
+    }
+
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
     /// The unique identifier for this item, which includes a timestamp.
@@ -503,6 +526,8 @@ struct HistoryImpl {
     boundary_timestamp: SystemTime,
     /// Next nonce used when constructing [`HistoryItemId`]s.
     next_item_id_nonce: u16,
+    /// Session ID for this fish instance, written to each history item.
+    session_id: HistorySessionId,
     /// How many items we add until the next vacuum. Initially a random value.
     countdown_to_vacuum: Option<usize>,
     /// Thread pool for background operations.
@@ -646,7 +671,10 @@ impl HistoryImpl {
 
     /// Create a new history item with a fresh ID.
     fn new_item(&mut self) -> HistoryItem {
-        HistoryItem::with_id(self.next_item_id())
+        HistoryItem {
+            session_id: Some(self.session_id.raw()),
+            ..HistoryItem::with_id(self.next_item_id())
+        }
     }
 
     /// Loads old items if necessary.
@@ -828,6 +856,7 @@ impl HistoryImpl {
         // shells) writing items in the same millisecond are unlikely to allocate colliding
         // HistoryItemIds.
         let next_item_id_nonce = rand::rng().random_range(0..65536) as u16;
+        let session_id = HistorySessionId::new_random();
         Self {
             name,
             custom_directory,
@@ -838,6 +867,7 @@ impl HistoryImpl {
             history_file_id: INVALID_FILE_ID,
             boundary_timestamp: SystemTime::now(),
             next_item_id_nonce,
+            session_id,
             countdown_to_vacuum: None,
             // Up to 8 threads, no soft min.
             thread_pool: ThreadPool::new(0, 8),
