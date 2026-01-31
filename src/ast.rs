@@ -25,6 +25,7 @@ use crate::tokenizer::{
 use macro_rules_attribute::derive;
 use std::borrow::Cow;
 use std::convert::AsMut;
+use std::num::NonZeroU32;
 use std::ops::{ControlFlow, Deref};
 
 /**
@@ -364,7 +365,7 @@ pub trait Leaf: Node {
     /// unable to parse the node, either because we had a parse error and recovered, or because
     /// we accepted incomplete and the token stream was exhausted.
     fn range(&self) -> Option<SourceRange>;
-    fn range_mut(&mut self) -> &mut Option<SourceRange>;
+    fn range_mut(&mut self) -> &mut Option<NonemptySourceRange>;
     fn has_source(&self) -> bool {
         self.range().is_some()
     }
@@ -437,9 +438,9 @@ macro_rules! Leaf {
     ($name:ident) => {
         impl Leaf for $name {
             fn range(&self) -> Option<SourceRange> {
-                self.range
+                self.range.map(Into::into)
             }
-            fn range_mut(&mut self) -> &mut Option<SourceRange> {
+            fn range_mut(&mut self) -> &mut Option<NonemptySourceRange> {
                 &mut self.range
             }
         }
@@ -466,7 +467,7 @@ macro_rules! define_keyword_node {
     ( $name:ident, $($allowed:ident),* $(,)? ) => {
         #[derive(Default, Debug, Leaf!)]
         pub struct $name {
-            range: Option<SourceRange>,
+            range: Option<NonemptySourceRange>,
             keyword: ParseKeyword,
         }
         impl Node for $name {
@@ -499,7 +500,7 @@ macro_rules! define_token_node {
     ( $name:ident, $($allowed:ident),* $(,)? ) => {
         #[derive(Default, Debug, Leaf!)]
         pub struct $name {
-            range: Option<SourceRange>,
+            range: Option<NonemptySourceRange>,
             parse_token_type: ParseTokenType,
         }
         impl Node for $name {
@@ -1042,7 +1043,7 @@ define_list_node!(CaseItemList, CaseItem);
 /// A variable_assignment contains a source range like FOO=bar.
 #[derive(Default, Debug, Node!, Leaf!)]
 pub struct VariableAssignment {
-    range: Option<SourceRange>,
+    range: Option<NonemptySourceRange>,
 }
 impl CheckParse for VariableAssignment {
     fn can_be_parsed(pop: &mut Populator<'_>) -> bool {
@@ -1067,14 +1068,14 @@ impl CheckParse for VariableAssignment {
 /// Zero or more newlines.
 #[derive(Default, Debug, Node!, Leaf!)]
 pub struct MaybeNewlines {
-    range: Option<SourceRange>,
+    range: Option<NonemptySourceRange>,
 }
 
 /// An argument is just a node whose source range determines its contents.
 /// This is a separate type because it is sometimes useful to find all arguments.
 #[derive(Default, Debug, Node!, Leaf!)]
 pub struct Argument {
-    range: Option<SourceRange>,
+    range: Option<NonemptySourceRange>,
 }
 impl CheckParse for Argument {
     fn can_be_parsed(pop: &mut Populator<'_>) -> bool {
@@ -1685,6 +1686,7 @@ macro_rules! parse_error_range {
         $(, $args:expr)*
         $(,)?
     ) => {
+        let range: SourceRange = $range.into();
         let text = if $self.out_errors.is_some() && !$self.unwinding {
             Some(wgettext_fmt!($fmt $(, $args)*))
         } else {
@@ -1699,16 +1701,16 @@ macro_rules! parse_error_range {
 
             flogf!(ast_construction, "%*sparse error - begin unwinding", $self.spaces(), "");
             // TODO: can store this conditionally dependent on flags.
-            if $range.start() != SOURCE_OFFSET_INVALID {
-                $self.errors.push($range);
+            if range.start() != SOURCE_OFFSET_INVALID {
+                $self.errors.push(range);
             }
 
             if let Some(errors) = &mut $self.out_errors {
                 let mut err = ParseError::default();
                 err.text = text.unwrap();
                 err.code = $code;
-                err.source_start = $range.start();
-                err.source_length = $range.length();
+                err.source_start = range.start();
+                err.source_length = range.length();
                 errors.push(err);
             }
         }
@@ -2599,7 +2601,7 @@ impl<'s> Populator<'s> {
             arg.range = None;
             return;
         }
-        arg.range = Some(self.consume_token_type(ParseTokenType::String));
+        arg.range = self.consume_token_type(ParseTokenType::String).into();
     }
 
     fn visit_variable_assignment(&mut self, varas: &mut VariableAssignment) {
@@ -2614,7 +2616,7 @@ impl<'s> Populator<'s> {
                 "Should not have created variable_assignment_t from this token"
             );
         }
-        varas.range = Some(self.consume_token_type(ParseTokenType::String));
+        varas.range = self.consume_token_type(ParseTokenType::String).into();
     }
 
     fn visit_job_continuation(&mut self, node: &mut JobContinuation) {
@@ -2662,7 +2664,7 @@ impl<'s> Populator<'s> {
         }
         let tok = self.consume_any_token();
         *token.token_type_mut() = tok.typ;
-        *token.range_mut() = Some(tok.range());
+        *token.range_mut() = tok.range().into();
     }
 
     // Overload for keyword fields.
@@ -2705,7 +2707,7 @@ impl<'s> Populator<'s> {
         }
         let tok = self.consume_any_token();
         *keyword.keyword_mut() = tok.keyword;
-        *keyword.range_mut() = Some(tok.range());
+        *keyword.range_mut() = tok.range().into();
         VisitResult::Continue(())
     }
 
@@ -2725,7 +2727,7 @@ impl<'s> Populator<'s> {
                 range.length = r.start + r.length - range.start;
             }
         }
-        nls.range = Some(range);
+        nls.range = range.into();
     }
 }
 
@@ -2783,6 +2785,42 @@ impl From<TokenType> for ParseTokenType {
 
 fn is_keyword_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '\'' || c == '"' || c == '\\' || c == '\n' || c == '!'
+}
+
+/// A nonempty source range. Option<NonemptySourceRange> is 8 bytes.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub struct NonemptySourceRange {
+    pub start: u32,
+    pub length: NonZeroU32,
+}
+
+impl NonemptySourceRange {
+    pub fn start(&self) -> usize {
+        self.start.try_into().unwrap()
+    }
+
+    pub fn length(&self) -> usize {
+        self.length.get().try_into().unwrap()
+    }
+}
+
+impl From<NonemptySourceRange> for SourceRange {
+    fn from(value: NonemptySourceRange) -> Self {
+        SourceRange {
+            start: value.start,
+            length: value.length.get(),
+        }
+    }
+}
+
+impl From<SourceRange> for Option<NonemptySourceRange> {
+    fn from(value: SourceRange) -> Self {
+        let length = NonZeroU32::new(value.length)?;
+        Some(NonemptySourceRange {
+            start: value.start,
+            length,
+        })
+    }
 }
 
 /// Given a token, returns unescaped keyword, or the empty string.
