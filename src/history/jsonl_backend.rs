@@ -938,3 +938,150 @@ mod tests {
         assert_eq!(history.item_count(), 3);
     }
 }
+
+#[cfg(feature = "benchmark")]
+#[cfg(test)]
+mod bench {
+    extern crate test;
+    use super::*;
+    use crate::common::wcs2osstring;
+    use crate::history::{History, HistorySearch, SearchDirection, SearchFlags, SearchType};
+    use rand::prelude::IndexedRandom;
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
+    use std::path::Path;
+    use std::sync::Arc;
+    use test::{Bencher, black_box};
+
+    // Generate random text with a mix of ASCII and some Unicode characters.
+    fn random_text(rng: &mut StdRng, len: usize) -> WString {
+        const ASCII: &[u8; 26] = b"abcdefghijklmnopqrstuvwxyz";
+        const UNICODE: [char; 6] = ['λ', 'ß', '中', '界', 'Ж', '🙂'];
+        std::iter::repeat_with(|| {
+            if rng.random_bool(1.0 / 16.0) {
+                *UNICODE.choose(rng).unwrap()
+            } else {
+                *ASCII.choose(rng).unwrap() as char
+            }
+        })
+        .take(len)
+        .collect()
+    }
+
+    fn write_item_records(
+        buffer: &mut Vec<u8>,
+        id: HistoryItemId,
+        rng: &mut StdRng,
+        needle: Option<&wstr>,
+    ) {
+        let cmd_len = rng.random_range(8..96);
+        let mut cmd = random_text(rng, cmd_len);
+        if let Some(needle) = needle {
+            cmd.push(' ');
+            cmd.push_utfstr(needle);
+        }
+        let mut cmd_item = HistoryItem::with_id(id);
+        cmd_item.contents = cmd;
+        cmd_item.write_to(buffer).unwrap();
+
+        let cwd = format!("/home/user/{}", random_text(rng, 8));
+        let path1 = format!(
+            "/home/user/{}/file{}",
+            random_text(rng, 8),
+            random_text(rng, 4)
+        );
+        let path2 = format!(
+            "/home/user/{}/file{}",
+            random_text(rng, 8),
+            random_text(rng, 4)
+        );
+
+        let mut meta_item = HistoryItem::with_id(id);
+        meta_item.exit_code = Some(rng.random_range(0..10));
+        meta_item.duration = Some(rng.random_range(1000..10000));
+        meta_item.cwd = Some(WString::from(cwd.as_str()));
+        meta_item.session_id = Some(rng.random::<u64>() & ((1u64 << 48) - 1));
+        meta_item.required_paths =
+            vec![WString::from(path1.as_str()), WString::from(path2.as_str())];
+        meta_item.write_to(buffer).unwrap();
+    }
+
+    // Generate a large in-memory history buffer for benchmarking using the real JSONL writer.
+    // Simulates realistic history by interleaving records with the same ID:
+    // first the command, then the exit status and other fields.
+    fn generate_history_buffer(num_items: usize, needle: &wstr) -> Vec<u8> {
+        let mut rng = StdRng::seed_from_u64(0x42);
+        let mut buffer = Vec::new();
+        for i in 0..num_items {
+            let id = HistoryItemId::from_raw(1_000_000 + i as u64);
+            let needle = if i == 0 { Some(needle) } else { None };
+            write_item_records(&mut buffer, id, &mut rng, needle);
+        }
+        buffer
+    }
+
+    fn create_history_with_file(
+        name: &wstr,
+        hist_dir: &Path,
+        item_count: usize,
+        needle: &wstr,
+    ) -> Arc<History> {
+        let buffer = generate_history_buffer(item_count, needle);
+        let mut filename = name.to_owned();
+        filename.push_utfstr(L!("_history.jsonl"));
+        let tmpfile = hist_dir.join(wcs2osstring(&filename));
+        std::fs::write(&tmpfile, buffer).unwrap();
+        let dir = WString::from_str(hist_dir.to_str().unwrap());
+        History::new(name, Some(dir))
+    }
+
+    #[bench]
+    fn bench_parse_history_file_small(b: &mut Bencher) {
+        let needle = WString::from("needle_token");
+        let buffer = generate_history_buffer(10_000, &needle);
+        b.bytes = buffer.len() as u64;
+        b.iter(|| {
+            let _history = HistoryFile::from_data(buffer.as_slice(), None);
+        });
+    }
+
+    #[bench]
+    fn bench_parse_history_file_large(b: &mut Bencher) {
+        const ITEM_COUNT: usize = 1024 * 512;
+        let needle = WString::from("needle_token");
+        let buffer = generate_history_buffer(ITEM_COUNT, &needle);
+        b.bytes = buffer.len() as u64;
+        b.iter(|| {
+            let _history = HistoryFile::from_data(buffer.as_slice(), None);
+        });
+    }
+
+    #[bench]
+    fn bench_search_history_oldest_match(b: &mut Bencher) {
+        let hist_dir = fish_tempfile::new_dir().unwrap();
+
+        const ITEM_COUNT: usize = 1024 * 512;
+        let needle = WString::from("needle_token");
+        let history = create_history_with_file(
+            L!("bench_search_jsonl"),
+            hist_dir.path(),
+            ITEM_COUNT,
+            &needle,
+        );
+        let needle = WString::from("needle_token");
+        b.iter(|| {
+            let mut searcher = HistorySearch::new_with(
+                Arc::clone(&history),
+                needle.clone(),
+                SearchType::Contains,
+                SearchFlags::empty(),
+                0,
+            );
+            let found = searcher.go_to_next_match(SearchDirection::Backward);
+            black_box(found);
+            if found {
+                black_box(searcher.current_string());
+            }
+        });
+    }
+}
