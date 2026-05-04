@@ -1231,8 +1231,8 @@ impl<T: Copy> ScopedCell<T> {
         let mut val = self.get();
         modifier(&mut val);
         let saved = self.replace(val);
-        let weak_inner = Rc::downgrade(&self.0);
-        ScopeGuard::new((), move |()| weak_inner.upgrade().unwrap().set(saved))
+        let inner = Rc::clone(&self.0);
+        ScopeGuard::new((), move |()| inner.set(saved))
     }
 }
 
@@ -1288,9 +1288,8 @@ impl<T> ScopedRefCell<T> {
     {
         let mut data = self.borrow_mut();
         let mut saved = std::mem::replace(accessor(&mut data), value);
-        let weak_inner = Rc::downgrade(&self.0);
+        let inner = Rc::clone(&self.0);
         ScopeGuard::new((), move |()| {
-            let inner = weak_inner.upgrade().unwrap();
             let mut inner = inner.borrow_mut();
             std::mem::swap((accessor)(&mut inner), &mut saved);
         })
