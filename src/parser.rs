@@ -890,10 +890,10 @@ impl Parser {
     /// Modify the scoped values for the duration of the caller's scope (or whenever the ParserScope is dropped).
     /// This accepts a closure which modifies the ScopedData, and returns a ParserScope which restores the
     /// data when dropped.
-    pub fn push_scope<F: FnOnce(&mut ScopedData) + 'static>(
+    pub fn push_scope<F: FnOnce(&mut ScopedData)>(
         &self,
         modifier: F,
-    ) -> impl DerefMut + 'static {
+    ) -> impl DerefMut + use<F> {
         self.scoped_data.scoped_mod(modifier)
     }
 

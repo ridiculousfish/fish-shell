@@ -1224,13 +1224,10 @@ impl<T: Copy> ScopedCell<T> {
     /// // Restored after scope
     /// assert_eq!(cell.get(), 5);
     /// ```
-    pub fn scoped_mod<Modifier: FnOnce(&mut T) + 'static>(
+    pub fn scoped_mod<Modifier: FnOnce(&mut T)>(
         &self,
         modifier: Modifier,
-    ) -> impl DerefMut + 'static
-    where
-        T: 'static,
-    {
+    ) -> impl DerefMut + use<T, Modifier> {
         let mut val = self.get();
         modifier(&mut val);
         let saved = self.replace(val);
@@ -1252,7 +1249,7 @@ impl<T> Deref for ScopedRefCell<T> {
     }
 }
 
-impl<T: 'static> ScopedRefCell<T> {
+impl<T> ScopedRefCell<T> {
     pub fn new(value: T) -> Self {
         Self(Rc::new(RefCell::new(value)))
     }
@@ -1281,13 +1278,13 @@ impl<T: 'static> ScopedRefCell<T> {
     /// // Restored after scope
     /// assert_eq!(cell.borrow().flag, false);
     /// ```
-    pub fn scoped_set<Accessor, Value: 'static>(
+    pub fn scoped_set<Accessor, Value>(
         &self,
         value: Value,
         accessor: Accessor,
-    ) -> impl DerefMut + 'static
+    ) -> impl DerefMut + use<T, Accessor, Value>
     where
-        Accessor: Fn(&mut T) -> &mut Value + 'static,
+        Accessor: Fn(&mut T) -> &mut Value,
     {
         let mut data = self.borrow_mut();
         let mut saved = std::mem::replace(accessor(&mut data), value);
@@ -1317,7 +1314,7 @@ impl<T: 'static> ScopedRefCell<T> {
     ///
     /// assert_eq!(*cell.borrow(), 10);
     /// ```
-    pub fn scoped_replace(&self, value: T) -> impl DerefMut + 'static {
+    pub fn scoped_replace(&self, value: T) -> impl DerefMut + use<T> {
         self.scoped_set(value, |s| s)
     }
 }
