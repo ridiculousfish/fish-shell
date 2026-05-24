@@ -8,6 +8,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use sonic_rs::{self, JsonValueTrait as _, LazyValue};
 use std::{io::Write as _, time::SystemTime};
 
+use super::history::{PreparedQuery, SearchQuery};
+
 /// Number of base64url (no padding) characters needed to encode a u64.
 const BASE64_U64_LEN: usize = 11;
 
@@ -266,6 +268,86 @@ impl<T: AsRef<[u8]>> HistoryFile<T> {
         range.map(move |idx| self.item_at(idx))
     }
 
+    /// Decode an item at the given index into the provided decoder.
+    /// Reuses allocations in the decoder.
+    pub fn decode_item_at(&self, idx: usize, decoder: &mut HistoryItemDecoder) {
+        let start = self.item_starts[idx];
+        let line_offset = self.line_offsets[start];
+        decoder.reset(line_offset.id);
+
+        let data = self.backing.as_ref().unwrap().as_ref();
+        let mut line_idx = start;
+        while line_idx < self.line_offsets.len() && self.line_offsets[line_idx].id == line_offset.id
+        {
+            let (line, _) = read_line_at(data, self.line_offsets[line_idx].offset);
+            decoder.add_line(line);
+            line_idx += 1;
+        }
+    }
+
+    /// Decode an item by reverse index into the provided decoder.
+    /// Returns false if index is out of bounds.
+    pub fn decode_from_back(&self, idx: usize, decoder: &mut HistoryItemDecoder) -> bool {
+        let item_count = self.item_starts.len();
+        if idx >= item_count {
+            return false;
+        }
+        self.decode_item_at(item_count - idx - 1, decoder);
+        true
+    }
+
+    /// Search if item at index matches the search term.
+    /// Returns true if matches, and decoder will have the item populated.
+    pub fn search_matches(
+        &self,
+        idx: usize,
+        query: &SearchQuery,
+        decoder: &mut HistoryItemDecoder,
+    ) -> bool {
+        let start = self.item_starts[idx];
+        let item_id = self.line_offsets[start].id;
+        let data = self.backing.as_ref().unwrap().as_ref();
+        let prepared = PreparedQuery::from_query(query);
+
+        // Scan forward while same item ID, looking for cmd field.
+        // Break early when found - cmd appears once per item.
+        // "Last wins" semantics are handled by decode_item_at for matches.
+        let mut line_idx = start;
+
+        while line_idx < self.line_offsets.len() && self.line_offsets[line_idx].id == item_id {
+            let (line, _) = read_line_at(data, self.line_offsets[line_idx].offset);
+
+            if let Ok(value) = sonic_rs::get_from_slice(line, &["cmd"]) {
+                if let Some(cmd) = value.as_str() {
+                    if prepared.matches_str(cmd) {
+                        self.decode_item_at(idx, decoder);
+                        return true;
+                    }
+                    // Found cmd but didn't match - no need to check other lines.
+                    return false;
+                }
+            }
+            line_idx += 1;
+        }
+
+        // No cmd field found
+        false
+    }
+
+    /// Search by reverse index.
+    pub fn search_matches_from_back(
+        &self,
+        idx: usize,
+        query: &SearchQuery,
+        decoder: &mut HistoryItemDecoder,
+    ) -> bool {
+        let item_count = self.item_starts.len();
+        if idx >= item_count {
+            return false;
+        }
+        self.search_matches(item_count - idx - 1, query, decoder)
+    }
+
     /// Shrink the history to at most max_records unique items, removing the oldest ones.
     /// This does not modify the file; it merely discards line offsets.
     pub fn shrink_to_max_records(&mut self, max_records: usize) {
@@ -286,6 +368,51 @@ impl<T: AsRef<[u8]>> HistoryFile<T> {
         for start in &mut self.item_starts {
             *start -= oldest;
         }
+    }
+}
+
+/// Decoder for multi-line history items.
+/// Parses lines and accumulates fields into a reusable HistoryItem.
+/// Later lines overwrite earlier ones ("last wins").
+pub(super) struct HistoryItemDecoder {
+    item: HistoryItem,
+}
+
+impl HistoryItemDecoder {
+    pub(super) fn new() -> Self {
+        Self {
+            item: HistoryItem::with_id(HistoryItemId::from_raw(0)),
+        }
+    }
+
+    /// Reset for decoding a new item, keeping allocations.
+    pub(super) fn reset(&mut self, id: HistoryItemId) {
+        self.item.id = id;
+        self.item.contents.clear();
+        self.item.required_paths.clear();
+        self.item.exit_code = None;
+        self.item.duration = None;
+        // Keep cwd allocation if present
+        if let Some(ref mut cwd) = self.item.cwd {
+            cwd.clear();
+        }
+        self.item.cwd = None;
+        self.item.session_id = None;
+    }
+
+    /// Parse a line and merge its fields into the item.
+    pub(super) fn add_line(&mut self, line: &[u8]) {
+        for field in sonic_rs::to_object_iter(line) {
+            let Ok((key, value)) = field else {
+                break;
+            };
+            self.item.apply_json_field(key.as_ref(), value);
+        }
+    }
+
+    /// Get a reference to the accumulated item.
+    pub(super) fn item(&self) -> &HistoryItem {
+        &self.item
     }
 }
 
@@ -385,10 +512,11 @@ pub fn id_for_json_line(line: &[u8]) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        HistoryFile, base64_decode_u64, base64_encode_u64, id_for_json_line, iter_lines,
-        read_line_at, try_parse_id_fast,
+        HistoryFile, HistoryItemDecoder, base64_decode_u64, base64_encode_u64, id_for_json_line,
+        iter_lines, read_line_at, try_parse_id_fast,
     };
     use crate::history::history::{HistoryItem, HistoryItemId};
+    use crate::history::history::{SearchQuery, SearchType};
     use crate::prelude::*;
 
     // Test helper: assert that a HistoryItem matches expected values
@@ -868,6 +996,41 @@ mod tests {
     }
 
     #[test]
+    fn test_search_matches_decodes_escaped_cmd() {
+        let data = json_line(42, r#""cmd":"say \"needle\" \u4f60\u597d","exit":0"#);
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let mut decoder = HistoryItemDecoder::new();
+        let query = SearchQuery::new(
+            WString::from(r#"say "needle" 你好"#),
+            SearchType::Exact,
+            true,
+        );
+
+        assert!(history.search_matches_from_back(0, &query, &mut decoder));
+        assert_eq!(
+            decoder.item().contents,
+            WString::from(r#"say "needle" 你好"#)
+        );
+        assert_eq!(decoder.item().exit_code, Some(0));
+    }
+
+    #[test]
+    fn test_search_matches_finds_cmd_after_metadata_line() {
+        let data = [
+            json_line(100, r#""exit":0"#),
+            json_line(100, r#""cmd":"needle later""#),
+        ]
+        .join("\n");
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let mut decoder = HistoryItemDecoder::new();
+        let query = SearchQuery::new(WString::from("needle"), SearchType::Contains, true);
+
+        assert!(history.search_matches_from_back(0, &query, &mut decoder));
+        assert_eq!(decoder.item().contents, WString::from("needle later"));
+        assert_eq!(decoder.item().exit_code, Some(0));
+    }
+
+    #[test]
     fn test_item_parsing_multiple_items() {
         // Multiple distinct items in the file
         let data = [
@@ -1092,5 +1255,182 @@ mod tests {
         let ts_future = SystemTime::UNIX_EPOCH + Duration::from_secs(10000);
         let history = HistoryFile::from_data(data.as_bytes(), Some(ts_future));
         assert_eq!(history.item_count(), 3);
+    }
+}
+
+#[cfg(feature = "benchmark")]
+#[cfg(test)]
+mod bench {
+    extern crate test;
+    use super::*;
+    use crate::history::{
+        History, HistoryId, HistorySearch, SearchDirection, SearchFlags, SearchType,
+    };
+    use fish_widestring::wcs2osstring;
+    use rand::prelude::IndexedRandom;
+    use rand::rngs::StdRng;
+    use rand::{RngExt, SeedableRng};
+    use std::path::Path;
+    use std::sync::Arc;
+    use test::{Bencher, black_box};
+
+    // Generate random text with a mix of ASCII and some Unicode characters.
+    fn random_text(rng: &mut StdRng, len: usize) -> WString {
+        const ASCII: &[u8; 26] = b"abcdefghijklmnopqrstuvwxyz";
+        const UNICODE: [char; 6] = ['λ', 'ß', '中', '界', 'Ж', '🙂'];
+        std::iter::repeat_with(|| {
+            if rng.random_bool(1.0 / 16.0) {
+                *UNICODE.choose(rng).unwrap()
+            } else {
+                *ASCII.choose(rng).unwrap() as char
+            }
+        })
+        .take(len)
+        .collect()
+    }
+
+    fn write_item_records(
+        buffer: &mut Vec<u8>,
+        id: HistoryItemId,
+        rng: &mut StdRng,
+        needle: Option<&wstr>,
+    ) {
+        let cmd_len = rng.random_range(8..96);
+        let mut cmd = random_text(rng, cmd_len);
+        if let Some(needle) = needle {
+            cmd.push(' ');
+            cmd.push_utfstr(needle);
+        }
+        let mut cmd_item = HistoryItem::with_id(id);
+        cmd_item.contents = cmd;
+        cmd_item.write_to(buffer).unwrap();
+
+        let cwd = format!("/home/user/{}", random_text(rng, 8));
+        let path1 = format!(
+            "/home/user/{}/file{}",
+            random_text(rng, 8),
+            random_text(rng, 4)
+        );
+        let path2 = format!(
+            "/home/user/{}/file{}",
+            random_text(rng, 8),
+            random_text(rng, 4)
+        );
+
+        let mut meta_item = HistoryItem::with_id(id);
+        meta_item.exit_code = Some(rng.random_range(0..10));
+        meta_item.duration = Some(rng.random_range(1000..10000));
+        meta_item.cwd = Some(WString::from(cwd.as_str()));
+        meta_item.session_id = Some(rng.random::<u64>() & ((1u64 << 48) - 1));
+        meta_item.required_paths =
+            vec![WString::from(path1.as_str()), WString::from(path2.as_str())];
+        meta_item.write_to(buffer).unwrap();
+    }
+
+    // Generate a large in-memory history buffer for benchmarking using the real JSONL writer.
+    // Simulates realistic history by interleaving records with the same ID:
+    // first the command, then the exit status and other fields.
+    fn generate_history_buffer(num_items: usize, needle: &wstr) -> Vec<u8> {
+        let mut rng = StdRng::seed_from_u64(0x42);
+        let mut buffer = Vec::new();
+        for i in 0..num_items {
+            let id = HistoryItemId::from_raw(1_000_000 + i as u64);
+            let needle = if i == 0 { Some(needle) } else { None };
+            write_item_records(&mut buffer, id, &mut rng, needle);
+        }
+        buffer
+    }
+
+    fn create_history_with_file(
+        name: &wstr,
+        hist_dir: &Path,
+        item_count: usize,
+        needle: &wstr,
+    ) -> (Arc<History>, usize) {
+        let buffer = generate_history_buffer(item_count, needle);
+        let buffer_len = buffer.len();
+        let mut filename = name.to_owned();
+        filename.push_utfstr(L!("_history.jsonl"));
+        let tmpfile = hist_dir.join(wcs2osstring(&filename));
+        std::fs::write(&tmpfile, buffer).unwrap();
+        let dir = WString::from_str(hist_dir.to_str().unwrap());
+        (
+            History::new_with_directory(
+                HistoryId::Disk {
+                    session_id: name.to_owned(),
+                },
+                Some(dir),
+            ),
+            buffer_len,
+        )
+    }
+
+    #[bench]
+    fn bench_parse_history_file_small(b: &mut Bencher) {
+        let needle = WString::from("needle_token");
+        let buffer = generate_history_buffer(10_000, &needle);
+        b.bytes = buffer.len() as u64;
+        b.iter(|| {
+            let _history = HistoryFile::from_data(buffer.as_slice(), None);
+        });
+    }
+
+    #[bench]
+    fn bench_parse_history_file_large(b: &mut Bencher) {
+        const ITEM_COUNT: usize = 1024 * 512;
+        let needle = WString::from("needle_token");
+        let buffer = generate_history_buffer(ITEM_COUNT, &needle);
+        b.bytes = buffer.len() as u64;
+        b.iter(|| {
+            let _history = HistoryFile::from_data(buffer.as_slice(), None);
+        });
+    }
+
+    #[bench]
+    fn bench_search_history_oldest_match(b: &mut Bencher) {
+        let hist_dir = fish_tempfile::new_dir().unwrap();
+
+        const ITEM_COUNT: usize = 1024 * 64;
+        let needle = WString::from("needle_token");
+        let (history, file_size) = create_history_with_file(
+            L!("bench_search_jsonl"),
+            hist_dir.path(),
+            ITEM_COUNT,
+            &needle,
+        );
+        b.bytes = file_size as u64;
+        let needle = WString::from("needle_token");
+        b.iter(|| {
+            let mut searcher = HistorySearch::new_with(
+                Arc::clone(&history),
+                needle.clone(),
+                SearchType::Contains,
+                SearchFlags::empty(),
+                0,
+            );
+            let found = searcher.go_to_next_match(SearchDirection::Backward);
+            black_box(found);
+            if found {
+                black_box(searcher.current_string());
+            }
+        });
+    }
+
+    #[bench]
+    fn bench_write_history_items(b: &mut Bencher) {
+        let needle = WString::from("needle_token");
+        let buffer = generate_history_buffer(10_000, &needle);
+        b.bytes = buffer.len() as u64;
+        let items: Vec<HistoryItem> = HistoryFile::from_data(buffer.as_slice(), None)
+            .items()
+            .collect();
+
+        b.iter(|| {
+            let mut sink = std::io::sink();
+            for item in &items {
+                item.write_to(&mut sink).unwrap();
+            }
+            black_box(&mut sink);
+        });
     }
 }

@@ -27,7 +27,7 @@ use crate::{
     },
     highlight::highlight_and_colorize,
     history::file::{load_raw_history_file, time_to_seconds},
-    history::jsonl_backend::HistoryFile,
+    history::jsonl_backend::{HistoryFile, HistoryItemDecoder},
     history::yaml_compat,
     io::IoStreams,
     localization::wgettext_fmt,
@@ -74,6 +74,146 @@ pub enum SearchType {
     PrefixGlob,
     /// Search for commands containing the given string as a subsequence
     ContainsSubsequence,
+}
+
+/// A canonicalized search query cached in both wide and UTF-8 forms.
+/// Search backends can borrow the representation that is cheapest for them.
+pub struct SearchQuery {
+    original: WString,
+    canonical: WString,
+    utf8: String,
+    search_type: SearchType,
+    case_sensitive: bool,
+}
+
+impl SearchQuery {
+    pub fn new(original: WString, search_type: SearchType, case_sensitive: bool) -> Self {
+        let canonical = if case_sensitive {
+            original.clone()
+        } else {
+            original.to_lowercase()
+        };
+        let utf8 = canonical.chars().collect();
+        Self {
+            original,
+            canonical,
+            utf8,
+            search_type,
+            case_sensitive,
+        }
+    }
+
+    pub fn original_term(&self) -> &wstr {
+        &self.original
+    }
+
+    pub fn as_wstr(&self) -> &wstr {
+        &self.canonical
+    }
+
+    pub fn as_utf8(&self) -> &str {
+        &self.utf8
+    }
+
+    pub fn search_type(&self) -> SearchType {
+        self.search_type
+    }
+
+    pub fn case_sensitive(&self) -> bool {
+        self.case_sensitive
+    }
+
+    pub fn ignores_case(&self) -> bool {
+        !self.case_sensitive
+    }
+}
+
+/// Case-insensitive substring search without allocation.
+/// Assumes `needle` is already lowercase.
+fn contains_icase(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+/// Case-insensitive prefix check without allocation.
+/// Assumes `needle` is already lowercase.
+fn starts_with_icase(haystack: &str, needle: &str) -> bool {
+    haystack
+        .as_bytes()
+        .get(..needle.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+/// A prepared search query that can match against either UTF-8 or wide string commands.
+/// Constructed from a [`SearchQuery`] for efficient matching.
+pub struct PreparedQuery<'a> {
+    term_utf8: &'a str,
+    term_wstr: &'a wstr,
+    search_type: SearchType,
+    case_sensitive: bool,
+}
+
+impl<'a> PreparedQuery<'a> {
+    pub fn from_query(query: &'a SearchQuery) -> Self {
+        Self {
+            term_utf8: query.as_utf8(),
+            term_wstr: query.as_wstr(),
+            search_type: query.search_type(),
+            case_sensitive: query.case_sensitive(),
+        }
+    }
+
+    /// Check if a UTF-8 command string matches the search criteria.
+    pub fn matches_str(&self, cmd: &str) -> bool {
+        let (term_str, wterm, typ, case_sensitive) = (
+            self.term_utf8,
+            self.term_wstr,
+            self.search_type,
+            self.case_sensitive,
+        );
+        if case_sensitive {
+            match typ {
+                SearchType::Contains => cmd.contains(term_str),
+                SearchType::Prefix => cmd.starts_with(term_str),
+                SearchType::Exact => cmd == term_str,
+                SearchType::LinePrefix => cmd.lines().any(|line| line.starts_with(term_str)),
+                _ => {
+                    let cmd_wstr: WString = cmd.chars().collect();
+                    HistoryItem::matches_search_impl(&cmd_wstr, wterm, typ, case_sensitive)
+                }
+            }
+        } else {
+            match typ {
+                SearchType::Contains => contains_icase(cmd, term_str),
+                SearchType::Prefix => starts_with_icase(cmd, term_str),
+                SearchType::Exact => cmd.eq_ignore_ascii_case(term_str),
+                SearchType::LinePrefix => cmd.lines().any(|line| starts_with_icase(line, term_str)),
+                _ => {
+                    let cmd_wstr: WString = cmd.chars().collect();
+                    HistoryItem::matches_search_impl(&cmd_wstr, wterm, typ, case_sensitive)
+                }
+            }
+        }
+    }
+
+    /// Check if a wide string command matches the search criteria.
+    pub fn matches_wstr(&self, cmd: &WString) -> bool {
+        HistoryItem::matches_search_impl(cmd, self.term_wstr, self.search_type, self.case_sensitive)
+    }
+}
+
+/// Trait for types that can be searched in history.
+pub trait HistorySearchable {
+    /// Check if this item's command matches the prepared query.
+    fn matches_search(&self, query: &PreparedQuery<'_>) -> bool;
 }
 
 /// Ways that a history item may be written to disk (or omitted).
@@ -216,12 +356,23 @@ impl HistoryItem {
 
     /// Returns whether our contents matches a search term.
     pub fn matches_search(&self, term: &wstr, typ: SearchType, case_sensitive: bool) -> bool {
+        Self::matches_search_impl(&self.contents, term, typ, case_sensitive)
+    }
+
+    /// Static helper for matching a command string against a search term.
+    /// This can be used by other types that have a WString command.
+    pub fn matches_search_impl(
+        contents: &WString,
+        term: &wstr,
+        typ: SearchType,
+        case_sensitive: bool,
+    ) -> bool {
         // Note that 'term' has already been lowercased when constructing the
         // search object if we're doing a case insensitive search.
         let content_to_match = if case_sensitive {
-            Cow::Borrowed(&self.contents)
+            Cow::Borrowed(contents)
         } else {
-            Cow::Owned(self.contents.to_lowercase())
+            Cow::Owned(contents.to_lowercase())
         };
 
         match typ {
@@ -313,6 +464,11 @@ pub enum HistoryId {
 }
 
 static HISTORIES: Mutex<BTreeMap<HistoryId, Arc<History>>> = Mutex::new(BTreeMap::new());
+impl HistorySearchable for HistoryItem {
+    fn matches_search(&self, query: &PreparedQuery<'_>) -> bool {
+        query.matches_wstr(&self.contents)
+    }
+}
 
 /// When deleting, whether the deletion should be only for this session or for all sessions.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -351,6 +507,8 @@ struct HistoryImpl {
     countdown_to_vacuum: Option<usize>,
     /// Thread pool for background operations.
     thread_pool: Arc<ThreadPool>,
+    /// Reusable decoder for parsing history items.
+    decoder: HistoryItemDecoder,
 }
 
 impl HistoryImpl {
@@ -683,6 +841,7 @@ impl HistoryImpl {
             countdown_to_vacuum: None,
             // Up to 8 threads, no soft min.
             thread_pool: ThreadPool::new(0, 8),
+            decoder: HistoryItemDecoder::new(),
         }
     }
 
@@ -1035,9 +1194,59 @@ impl HistoryImpl {
 
         // Now look in our old items.
         idx -= resolved_new_item_count;
-        let file_contents = self.load_old_if_needed();
-        // idx == 0 corresponds to the most recently written old item.
-        file_contents.get_from_back(idx).map(Cow::Owned)
+        // Ensure file_contents is loaded, then access fields separately to satisfy borrow checker.
+        self.load_old_if_needed();
+        // Split borrow: immutable ref to file_contents, mutable ref to decoder.
+        let (file_contents, decoder) = (&self.file_contents, &mut self.decoder);
+        let file_contents = file_contents.as_ref().unwrap();
+        // idx == 0 corresponds to last item.
+        if file_contents.decode_from_back(idx, decoder) {
+            Some(Cow::Borrowed(decoder.item()))
+        } else {
+            None
+        }
+    }
+
+    /// Get item at index, but only fully populate if it matches the search.
+    /// This optimizes search by avoiding decode of non-matching items' metadata.
+    fn item_at_index_if_matches(
+        &mut self,
+        mut idx: usize,
+        query: &SearchQuery,
+    ) -> Option<Cow<'_, HistoryItem>> {
+        if idx == 0 {
+            return None;
+        }
+        idx -= 1;
+
+        let mut resolved_new_item_count = self.new_items.len();
+        if self.has_pending_item && resolved_new_item_count > 0 {
+            resolved_new_item_count -= 1;
+        }
+
+        // For new items, we already have the full item - just check match.
+        if idx < resolved_new_item_count {
+            let item = &self.new_items[resolved_new_item_count - idx - 1];
+            let prepared = PreparedQuery::from_query(query);
+            if prepared.matches_wstr(&item.contents) {
+                return Some(Cow::Borrowed(item));
+            }
+            return None;
+        }
+
+        // For old items, use fast search path.
+        idx -= resolved_new_item_count;
+        self.load_old_if_needed();
+
+        let (file_contents, decoder) = (&self.file_contents, &mut self.decoder);
+        let file_contents = file_contents.as_ref().unwrap();
+
+        // Use fast search via the file backend
+        if file_contents.search_matches_from_back(idx, query, decoder) {
+            Some(Cow::Borrowed(decoder.item()))
+        } else {
+            None
+        }
     }
 
     /// Return the number of history entries.
@@ -1190,7 +1399,7 @@ impl History {
     /// Creates a new History with a custom directory path.
     /// The history file will be stored at `{directory}/{name}_history`.
     /// If the directory is None, it will be stored at path_get_data().
-    fn new_with_directory(id: HistoryId, directory: Option<WString>) -> Arc<Self> {
+    pub(super) fn new_with_directory(id: HistoryId, directory: Option<WString>) -> Arc<Self> {
         Arc::new(Self(Mutex::new(HistoryImpl::new(
             match id {
                 HistoryId::Memory(_) => WString::new(),
@@ -1456,6 +1665,29 @@ impl History {
         self.imp().item_at_index(idx).map(Cow::into_owned)
     }
 
+    /// Return the item at index if it matches the search criteria.
+    /// This is optimized to avoid fully decoding non-matching items.
+    pub fn item_at_index_if_matches(
+        &self,
+        idx: usize,
+        term: &wstr,
+        search_type: SearchType,
+        case_sensitive: bool,
+    ) -> Option<HistoryItem> {
+        let query = SearchQuery::new(term.to_owned(), search_type, case_sensitive);
+        self.item_at_index_if_matches_query(idx, &query)
+    }
+
+    fn item_at_index_if_matches_query(
+        &self,
+        idx: usize,
+        query: &SearchQuery,
+    ) -> Option<HistoryItem> {
+        self.imp()
+            .item_at_index_if_matches(idx, query)
+            .map(Cow::into_owned)
+    }
+
     /// Return the number of history entries.
     pub fn size(&self) -> usize {
         self.imp().size()
@@ -1478,12 +1710,8 @@ bitflags! {
 pub struct HistorySearch {
     /// The history in which we are searching.
     history: Arc<History>,
-    /// The original search term.
-    orig_term: WString,
-    /// The (possibly lowercased) search term.
-    canon_term: WString,
-    /// Our search type.
-    search_type: SearchType, // history_search_type_t::contains
+    /// The canonicalized search query.
+    query: SearchQuery,
     /// Our flags.
     flags: SearchFlags, // 0
     /// The current history item.
@@ -1515,27 +1743,19 @@ impl HistorySearch {
         flags: SearchFlags,
         starting_index: usize,
     ) -> Self {
-        let mut search = Self {
+        Self {
             history: hist,
-            orig_term: s.clone(),
-            canon_term: s,
-            search_type,
+            query: SearchQuery::new(s, search_type, !flags.contains(SearchFlags::IGNORE_CASE)),
             flags,
             current_item: None,
             current_index: starting_index,
             deduper: HashSet::new(),
-        };
-
-        if search.ignores_case() {
-            search.canon_term = search.canon_term.to_lowercase();
         }
-
-        search
     }
 
     /// Returns the original search term.
     pub fn original_term(&self) -> &wstr {
-        &self.orig_term
+        self.query.original_term()
     }
 
     pub fn prepare_to_search_after_deletion(&mut self) {
@@ -1555,6 +1775,7 @@ impl HistorySearch {
             return false;
         }
 
+        let history_size = self.history.size();
         let mut index = self.current_index;
         loop {
             // Backwards means increasing our index.
@@ -1567,20 +1788,25 @@ impl HistorySearch {
                 return false;
             }
 
-            // We're done if it's empty or we cancelled.
-            let Some(item) = self.history.item_at_index(index) else {
+            // Check bounds (index is 1-based, so valid range is 1..=size).
+            if index == 0 || index > history_size {
                 self.current_index = match direction {
-                    SearchDirection::Backward => self.history.size() + 1,
+                    SearchDirection::Backward => history_size + 1,
                     SearchDirection::Forward => 0,
                 };
                 self.current_item = None;
                 return false;
-            };
-
-            // Look for an item that matches and (if deduping) that we haven't seen before.
-            if !item.matches_search(&self.canon_term, self.search_type, !self.ignores_case()) {
-                continue;
             }
+
+            // Try to get the item, but only fully decode if it matches.
+            // This optimizes search by avoiding decode of non-matching items' metadata.
+            let Some(item) = self
+                .history
+                .item_at_index_if_matches_query(index, &self.query)
+            else {
+                // Item exists but doesn't match - continue searching.
+                continue;
+            };
 
             // Skip if deduplicating.
             if self.dedup() && !self.deduper.insert(item.str().to_owned()) {
@@ -1610,7 +1836,7 @@ impl HistorySearch {
     }
 
     pub fn canon_term(&self) -> &wstr {
-        &self.canon_term
+        self.query.as_wstr()
     }
 
     /// Returns the current search result item contents.
@@ -1629,7 +1855,7 @@ impl HistorySearch {
 
     /// Returns whether we are case insensitive.
     pub fn ignores_case(&self) -> bool {
-        self.flags.contains(SearchFlags::IGNORE_CASE)
+        self.query.ignores_case()
     }
 
     /// Returns whether we deduplicate items.
