@@ -1,67 +1,57 @@
-This describes the proposed fish history file format based on JSON Lines.
+This describes the fish history architecture, and upcoming JSON Lines-based fish history file format.
 
 ## History files
 
-The fish history file stores commands the user enters, along with associated metadata. History can be displayed and queried by the user. History also supports autosuggestions, offering to complete the command line with previously run commands.
+The fish history file stores commands the user enters, along with associated metadata. History can be displayed and queried by the user, and supports autosuggestions, offering to complete the user's command line with previously run commands.
 
-### Legacy file format
+By default, all sessions append items to a single file. Users may create separate "sessions" with the `fish_history` variable.
 
-The fish history file format, prior to this proposal, is a pseudo-YAML file. Commands are appended to it (with `O_APPEND`) after they are run. This had some disadvantages:
+fish appends to the history file (via `O_APPEND`) after each interactive command is run. On local filesystems, fish uses an advisory lock to serialize writers. On remote filesystems, fish relies on the atomicity of `O_APPEND` for small writes. If even that fails, an individual history item may be corrupted, but the remainder of the file remains valid.
 
-1. It's difficult to add additional fields to history items
-2. It's difficult to annotate an item after it has been posted to history (e.g. with duration, exit status, etc).
+This file grows until it is "vacuumed," which means discarding items (according to some criteria, such as staleness) to reduce the item count below a limit. Item deletion is implemented via marking an item as discardable, and then vacuuming.
 
-### New format requirements
+### File parsing
 
-Any new fish history file format has a number of requirements, some original and some new.
+Parsing the entire history file at startup would slow down shell launch and consume unnecessary memory. Instead, fish quickly scans the history file and records only the offsets of the record delimiters. These offsets form an index into the history file, allowing fish to locate individual records quickly, and parse them lazily.
 
-### Original requirements
+### YAML-like file format (historical)
 
-- _Shared file_. Multiple sessions collaborate on a shared history. fish doesn't overwrite the whole thing like bash does.
-- _Private view_. A fish session loads history that exists at startup. Commands from other running sessions aren’t visible unless the user explicitly requests it (`history merge`).
-- _Fast and expansive_ - History files can be very large. fish must avoid a big up-front parse at startup.
-- _Network safe_ History files may be stored on shared network filesystems that lack reliable locking.
-  - Concurrent writes must not corrupt the file; losing an entry in rare race conditions is tolerable.
-- _Serverless_ There is no "history file server" that coordinates fish sessions; sessions must coordinate themselves. (This is derived from the old universal variables daemon; upgrading this was very painful).
+Starting with fish 2.0.0, the fish history file format is "YAML-like" meaning it is superficially similar to YAML but differs from it in key ways (such as failing to escape colons) which makes it invalid to parse with a standard YAML parser. This is a historical implementation mistake that has been preserved.
 
-### New requirements
+In this format, very little metadata was recorded. Items were deduplicated without concern for metadata. In particular, there is no easy way to extend an item with data that arrives after the command has finished, such as its exit status and duration.
 
-Any new file format should at least offer this:
+## JSONL file format
 
-- _Millisecond precision_ fish history timestamps have millisecond precision over 100+ years.
-- _Metadata support_ fish history items my be annotated with additional metadata (`$CWD`, session ID, file path detection, etc)
-  - This metadata may be produced after the command has executed (duration, exit status)
-  - Future versions of fish can introduce new metadata fields without breaking compatibility.
+In an upcoming version of fish, the file format will be switched to [JSON Lines](https://jsonlines.org), also known as NDJSON ("newline-delimited JSON"). The encoding will remain UTF-8, with fish's normal use of the PUA for non-encodeable bytes. Record boundaries are simply newlines.
 
-### Nice to haves
+Each line contains a separate record. Thus, should any record become corrupted (e.g. torn writes on NFS), the file parser simply advances to the next newline and continue from there. Corrupted records are deleted on vacuuming.
 
-- _Text format_ Text is the preferred Unix file format. Users can inspect and manipulate the history file with standard Unix tools.
+Note `jq` supports JSON Lines.
 
-## Design
-
-These requirements push us towards an append-only database.
+The following describes the planned JSON Lines format.
 
 ### History item IDs
 
-A fish history item is identified by a 64 bit number, which contains a 48 bit _timestamp_ and a 16 bit _nonce_.
+A fish history item is identified by its "id:" a 64 bit unsigned integer, which contains a 48 bit _timestamp_ and a 16 bit _nonce_.
 
 ```
-  Bits 63                                                          16 15          0
+  Bits 63                                                  16 15             0
   +----------------------------------------------------------+---------------+
   |                     timestamp (48 bits)                  |  nonce (16 b) |
   +----------------------------------------------------------+---------------+
-            most significant bits (MSB)                            least significant bits (LSB)
 ```
 
-The timestamp is the number of milliseconds since the epoch, allowing for millions of years of range.
+The timestamp field records milliseconds since the epoch. This provides millisecond precision over nearly 9000 years.
 
-The nonce is chosen randomly at session startup and incremented with each command, making collisions between concurrent sessions very unlikely.
+The nonce is randomized per millisecond, and incremented within a millisecond. This ensures that item IDs from a single session are monotone increasing, and collisions between sessions are very unlikely: you'd need over one hundred items added by different sessions within a millisecond to have a 10% chance of a collision.
 
-Note that sorting by ID also orders items chronologically.
+(This design is similar to a [ULID](https://github.com/ulid/spec), except reduced from 128 to 64 bits for speed and file size considerations.)
+
+IDs are stored in the file as base64, such as `"AZ9StuUE8AY"`. This reduces file size compared to a decimal expansion. Note that sorting by numeric id also orders items chronologically.
 
 ### History item records
 
-A history item is represented by a collection of records, each sharing the same item ID. The _initial_ record contains the command itself; records later in the history file may annotate the item with one or more items of metadata.
+A history item is represented by a collection of records, each sharing the same item ID. The first record contains the command itself; records later in the history file may annotate the item with additional metadata, such as duration.
 
 Note records may be physically interleaved in the file:
 
@@ -75,21 +65,9 @@ Note records may be physically interleaved in the file:
   └─────────────────────────────────────────────────────────┘
 ```
 
-### File format
-
-The history file is in [JSON Lines](https://jsonlines.org/) format with UTF-8. Each line is a JSON object and represents a single record.
-
-Each record contains at least the "id" key, which is the history item ID as described above. It also contains some (ideally short) keys populating the history item.
-
-A single record may have multiple pieces of data. If multiple records have the same metadata for the same history item, the last one wins.
-
-Each line contains a separate record. Thus, should any record become corrupted (e.g. torn writes on NFS), the file parser can simply advance to the next newline and continue from there.
-
-Note `jq` supports JSON Lines.
-
 ### Initial keys
 
-The standard keys currently used in the history file format are:
+The planned keys in the history file format are:
 
 - `id` - the history item ID
 - `cmd` - the command text
@@ -101,15 +79,18 @@ The standard keys currently used in the history file format are:
 
 Additional metadata keys may be introduced in future versions.
 
-## Writing records
+### Vacuum policy
 
-fish will write records to the history file using `O_APPEND`. The kernel guarantees such writes are atomic up to some limit (typically ~4KB) which is more than sufficient for a single record.
+fish will at times _vacuum_ the JSONL file to reduce its size. Vacuuming involves:
 
-## Vacuuming
+1. Collapsing multiple records for the same ID into a single record
+2. Removing oldest items to enforce the item limit
+3. Skipping deleted items
 
-Occasionally fish will _vacuum_ the file to reduce its size. Vacuuming involves:
+fish performs vacuuming by writing an adjacent file and atomically moving it into place. This is performed whenever:
 
-1. Collapsing multiple records into a single record
-2. Removing oldest items to enforce the history file size limit
+1. The number of items in history reaches the _vacuum threshold_, currently 640K items, or
+2. The size of new (unvacuumed) data reaches 25% of the file and at least 64 KiB, or
+3. An item is deleted from history
 
-Vacuuming occurs automatically, by writing an adjacent file and atomically moving it into place. The maximun record count is 1 million.
+Vacuuming keeps the 512K newest items. No deduplication is performed. 512K compacted history items are expected to occupy roughly 64-128 MiB in practice.
