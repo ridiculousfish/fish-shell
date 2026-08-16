@@ -16,7 +16,7 @@ use std::{
 };
 
 /// A type wrapping up the logic around mmap and munmap.
-pub(super) struct MmapRegion {
+pub struct MmapRegion {
     ptr: NonNull<u8>,
     len: NonZeroUsize,
 }
@@ -98,7 +98,7 @@ fn should_mmap() -> bool {
 }
 
 /// Construct a history file contents from a [`File`] reference and its file id.
-pub(super) fn load_raw_history_file(
+pub fn load_raw_history_file(
     history_file: &File,
     file_id: FileId,
 ) -> std::io::Result<MmapRegion> {
@@ -144,7 +144,7 @@ pub(super) fn load_raw_history_file(
     Ok(region)
 }
 
-pub(super) fn time_to_seconds(ts: SystemTime) -> i64 {
+pub fn time_to_seconds(ts: SystemTime) -> i64 {
     match ts.duration_since(UNIX_EPOCH) {
         Ok(d) => {
             // after epoch

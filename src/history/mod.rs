@@ -1,6 +1,6 @@
 mod file;
 #[allow(clippy::module_inception)]
-mod history;
+pub mod history;
 mod jsonl_backend;
 mod yaml_compat;
 

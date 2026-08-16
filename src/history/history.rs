@@ -26,7 +26,7 @@ use crate::{
         lock_and_load, rewrite_via_temporary_file,
     },
     highlight::highlight_and_colorize,
-    history::file::load_raw_history_file,
+    history::file::{load_raw_history_file, time_to_seconds},
     history::jsonl_backend::HistoryFile,
     history::yaml_compat,
     io::IoStreams,
@@ -77,9 +77,10 @@ pub enum SearchType {
 }
 
 /// Ways that a history item may be written to disk (or omitted).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PersistenceMode {
     /// The history item is written to disk normally
+    #[default]
     Disk,
     /// The history item is stored in-memory only, not written to disk
     Memory,
@@ -92,8 +93,6 @@ pub enum SearchDirection {
     Forward,
     Backward,
 }
-
-use super::file::time_to_seconds;
 
 /// This is the history session ID we use by default if the user has not set env var fish_history.
 const DFLT_FISH_HISTORY_SESSION_ID: &wstr = L!("fish");
@@ -2453,5 +2452,18 @@ mod tests {
         test_history_imported_from_bash.populate_from_bash(BufReader::new(file));
         assert_eq!(test_history_imported_from_bash.get_history(), expected);
         test_history_imported_from_bash.clear();
+
+        // Test reading corrupt YAML history - should handle gracefully.
+        let corrupt_file = workspace_root().join("tests/history_sample_corrupt1");
+        let contents = std::fs::read(corrupt_file).unwrap();
+        let mut items: Vec<WString> = yaml_compat::iterate_fish_2_0_history(&contents)
+            .map(|item| item.str().to_owned())
+            .collect();
+        items.reverse(); // YAML is oldest-first, but we want newest-first
+        let expected: Vec<WString> = vec![
+            "no_newline_at_end_of_file".into(),
+            "this_command_is_ok".into(),
+        ];
+        assert_eq!(items, expected);
     }
 }
