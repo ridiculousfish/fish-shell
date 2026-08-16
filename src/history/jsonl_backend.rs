@@ -47,8 +47,6 @@ fn wstring_set_utf8(dest: &mut WString, src: &str) {
 
 impl HistoryItem {
     /// Encode this item as a JSON line string, with a trailing newline.
-    // Not yet called from production code - wired up once add()/emit_update() write immediately.
-    #[allow(dead_code)]
     pub(super) fn to_json_line(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         self.write_to(&mut buf).unwrap();
