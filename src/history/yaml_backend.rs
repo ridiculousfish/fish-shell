@@ -1,7 +1,7 @@
 //! Implementation of the YAML-like history file format.
 
 use super::{HistoryItem, HistoryItemId, PersistenceMode};
-use crate::{flog::flog, history::Timestamps};
+use crate::flog::flog;
 use fish_widestring::{bytes2wcstring, subslice_position};
 use std::{
     borrow::Cow,
@@ -209,13 +209,11 @@ pub fn decode_item_fish_2_0(mut data: &[u8]) -> Option<HistoryItem> {
         }
     }
 
-    let timestamps = Timestamps {
-        last_added: timestamp_last_added.unwrap_or(UNIX_EPOCH),
-        first_added: timestamp_first_added.unwrap_or(UNIX_EPOCH),
-    };
-    // Nonce is hardcoded for now; a real nonce is threaded through once callers iterate items.
-    let id = HistoryItemId::new(timestamps.first_added, 0);
-    let mut result = HistoryItem::new(cmd, timestamps, id, PersistenceMode::Disk);
+    let when = timestamp_last_added
+        .or(timestamp_first_added)
+        .unwrap_or(UNIX_EPOCH);
+    let id = HistoryItemId::new(when, 0);
+    let mut result = HistoryItem::new(cmd, id, PersistenceMode::Disk);
     result.set_required_paths(paths);
     Some(result)
 }

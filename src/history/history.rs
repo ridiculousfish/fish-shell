@@ -142,13 +142,10 @@ impl LruCacheExt for LruCache<WString, HistoryItem> {
             return;
         }
 
-        // See if it's in the cache. If it is, update the timestamp. If not, we create a new node
-        // and add it. Note that calling get_node promotes the node to the front.
+        // See if it's in the cache. If it is, do nothing further (this call still promotes the
+        // node to the front). If not, we create a new node and add it.
         let key = item.str();
-        if let Some(node) = self.get_mut(key) {
-            node.timestamps.update_last_added(item.timestamps);
-            // What to do about paths here? Let's just ignore them.
-        } else {
+        if self.get_mut(key).is_none() {
             self.put(key.to_owned(), item);
         }
     }
@@ -176,6 +173,12 @@ impl HistoryItemId {
         Self((millis << Self::NONCE_BITS) | u64::from(nonce))
     }
 
+    /// Extract the timestamp (millisecond precision) encoded in this identifier.
+    pub fn timestamp(self) -> SystemTime {
+        let millis = self.0 >> Self::NONCE_BITS;
+        UNIX_EPOCH + Duration::from_millis(millis)
+    }
+
     /// Return the raw 64-bit representation.
     pub fn raw(self) -> u64 {
         self.0
@@ -189,46 +192,37 @@ impl HistoryItemId {
 
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
-    /// The unique identifier for this item. Not yet used for anything - items are still
-    /// identified by their contents and timestamps, as before.
+    /// The unique identifier for this item, which includes a timestamp.
     pub id: HistoryItemId,
     /// The actual contents of the entry.
     contents: WString,
-    /// Creation times of this history entry.
-    timestamps: Timestamps,
     /// Paths that we require to be valid for this item to be autosuggested.
     required_paths: Vec<WString>,
     /// Whether to write this item to disk.
     persist_mode: PersistenceMode,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Timestamps {
-    /// Time of most recent re-creation.
-    pub(super) last_added: SystemTime,
-    /// Original creation time for the entry.
-    pub(super) first_added: SystemTime,
-}
-
-impl Timestamps {
-    fn update_last_added(&mut self, new: Timestamps) {
-        self.last_added = self.last_added.max(new.last_added);
-    }
-}
-
 impl HistoryItem {
-    /// Construct from a text, timestamp, and optional identifier.
+    /// Construct a history item with the given id, leaving other fields empty.
+    pub fn with_id(id: HistoryItemId) -> Self {
+        Self {
+            id,
+            contents: WString::new(),
+            required_paths: Vec::new(),
+            persist_mode: PersistenceMode::Disk,
+        }
+    }
+
+    /// Construct from a text, identifier, and persistence mode.
     /// If `persist_mode` is not [`PersistenceMode::Disk`], then do not write this item to disk.
     pub(super) fn new(
         s: WString,
-        timestamps: Timestamps,
         id: HistoryItemId,
         persist_mode: PersistenceMode, /*=Disk*/
     ) -> Self {
         Self {
             id,
             contents: s,
-            timestamps,
             required_paths: vec![],
             persist_mode,
         }
@@ -285,14 +279,9 @@ impl HistoryItem {
         }
     }
 
-    /// Returns the timestamp of when this history item was last added.
-    pub fn last_added_timestamp(&self) -> SystemTime {
-        self.timestamps.last_added
-    }
-
     /// Returns the timestamp for creating this history item.
-    pub fn first_added_timestamp(&self) -> SystemTime {
-        self.timestamps.first_added
+    pub fn timestamp(&self) -> SystemTime {
+        self.id.timestamp()
     }
 
     /// Returns whether this item should be persisted (written to disk).
@@ -321,7 +310,6 @@ impl HistoryItem {
         }
 
         // Ok, merge this item.
-        self.timestamps.update_last_added(item.timestamps);
         if self.required_paths.len() < item.required_paths.len() {
             self.required_paths = item.required_paths;
         }
@@ -462,7 +450,7 @@ impl HistoryImpl {
     }
 
     /// Returns a timestamp for new items - see the implementation for a subtlety.
-    fn timestamps_as_of_now(&self) -> Timestamps {
+    fn timestamp_now(&self) -> SystemTime {
         let mut now = SystemTime::now();
         // Big hack: do not allow timestamps equal to our boundary date. This is because we include
         // items whose timestamps are equal to our boundary when reading old history, so we can catch
@@ -477,18 +465,21 @@ impl HistoryImpl {
         {
             now += Duration::from_secs(1);
         }
-        Timestamps {
-            last_added: now,
-            first_added: now,
-        }
+        now
     }
 
-    /// Generate a unique [`HistoryItemId`], incrementing our nonce each time. Not yet consulted by
-    /// anything - items are still identified by their contents and timestamps, as before.
+    /// Generate a unique [`HistoryItemId`], incrementing our nonce each time.
     fn next_item_id(&mut self) -> HistoryItemId {
         let nonce = self.next_item_id_nonce;
         self.next_item_id_nonce = self.next_item_id_nonce.wrapping_add(1);
-        HistoryItemId::new(self.timestamps_as_of_now().first_added, nonce)
+        HistoryItemId::new(self.timestamp_now(), nonce)
+    }
+
+    /// Create a new history item with a fresh ID.
+    // Not yet called from production code - wired up once add() writes items immediately.
+    #[allow(dead_code)]
+    fn new_item(&mut self) -> HistoryItem {
+        HistoryItem::with_id(self.next_item_id())
     }
 
     /// Loads old items if necessary.
@@ -597,7 +588,7 @@ impl HistoryImpl {
                 if let Some(&scope) = self.deleted_items.get(old_item.str()) {
                     // If old item is newer than session always erase if in deleted.
                     // If old item is older and in deleted items don't erase if added by clear_session.
-                    let delete = old_item.first_added_timestamp() > self.boundary_timestamp
+                    let delete = old_item.timestamp() > self.boundary_timestamp
                         || scope == DeletionScope::AllSessions;
                     if delete {
                         continue;
@@ -622,7 +613,7 @@ impl HistoryImpl {
         // This is because we may have read "old" items with a later timestamp than our "new" items
         // This is the essential step that roughly orders items by history
         let mut items: Vec<_> = lru.into_iter().map(|(_key, item)| item).collect();
-        items.sort_by_key(HistoryItem::last_added_timestamp);
+        items.sort_by_key(HistoryItem::timestamp);
 
         /// Default buffer size for flushing to the history file.
         const HISTORY_OUTPUT_BUFFER_SIZE: usize = 64 * 1024;
@@ -822,10 +813,6 @@ impl HistoryImpl {
     }
 
     fn new(name: WString, custom_directory: Option<WString>) -> Self {
-        // Randomize the starting nonce so that independent HistoryImpl instances (e.g. concurrent
-        // shells) writing items in the same millisecond are unlikely to allocate colliding
-        // HistoryItemIds.
-        let next_item_id_nonce = rand::rng().random_range(0..65536) as u16;
         Self {
             name,
             custom_directory,
@@ -837,7 +824,7 @@ impl HistoryImpl {
             file_contents: None,
             history_file_id: INVALID_FILE_ID,
             boundary_timestamp: SystemTime::now(),
-            next_item_id_nonce,
+            next_item_id_nonce: 0,
             countdown_to_vacuum: None,
             // Up to 8 threads, no soft min.
             thread_pool: ThreadPool::new(0, 8),
@@ -944,8 +931,6 @@ impl HistoryImpl {
     /// does not unambiguously encode multiline commands.
     fn populate_from_bash<R: BufRead>(&mut self, contents: R) {
         // Process the entire history file until EOF is observed.
-        // Pretend all items were created at this time.
-        let timestamps = self.timestamps_as_of_now();
         for line in contents.split(b'\n') {
             let Ok(line) = line else {
                 break;
@@ -956,7 +941,7 @@ impl HistoryImpl {
             if should_import_bash_history_line(&wide_line) {
                 let id = self.next_item_id();
                 self.add(
-                    HistoryItem::new(wide_line, timestamps.clone(), id, PersistenceMode::Disk),
+                    HistoryItem::new(wide_line, id, PersistenceMode::Disk),
                     /*pending=*/ false,
                     /*do_save=*/ false,
                 );
@@ -1053,9 +1038,7 @@ impl HistoryImpl {
     fn set_valid_file_paths(&mut self, valid_file_paths: Vec<WString>, snapshot: &HistoryItem) {
         // Look for an item with the given identifier. It is likely to be at the end of new_items.
         for item in self.new_items.iter_mut().rev() {
-            if item.last_added_timestamp() == snapshot.last_added_timestamp()
-                && item.contents == snapshot.contents
-            {
+            if item.timestamp() == snapshot.timestamp() && item.contents == snapshot.contents {
                 // found it
                 item.required_paths = valid_file_paths;
                 break;
@@ -1157,7 +1140,7 @@ fn format_history_record(
     color_enabled: bool,
 ) -> WString {
     let mut result = WString::new();
-    let seconds = time_to_seconds(item.last_added_timestamp());
+    let seconds = time_to_seconds(item.timestamp());
     // This warns for musl, but the warning is useless to us - there is nothing we can or should do.
     #[allow(deprecated)]
     let seconds = seconds as libc::time_t;
@@ -1247,9 +1230,8 @@ impl History {
 
     pub fn add_commandline(&self, s: WString) {
         let mut imp = self.imp();
-        let timestamps = imp.timestamps_as_of_now();
         let id = imp.next_item_id();
-        let item = HistoryItem::new(s, timestamps, id, PersistenceMode::Disk);
+        let item = HistoryItem::new(s, id, PersistenceMode::Disk);
         imp.add(item, false, true);
     }
 
@@ -1354,9 +1336,8 @@ impl History {
         let mut imp = self.imp();
 
         // Make our history item.
-        let timestamps = imp.timestamps_as_of_now();
         let id = imp.next_item_id();
-        let item = HistoryItem::new(s.to_owned(), timestamps, id, persist_mode);
+        let item = HistoryItem::new(s.to_owned(), id, persist_mode);
         let to_disk = persist_mode == PersistenceMode::Disk;
 
         if wants_file_detection {
@@ -1847,7 +1828,7 @@ mod tests {
         common::ESCAPE_TEST_CHAR,
         env::{EnvMode, EnvSetMode, EnvStack},
         fs::{LockedFile, WriteMethod},
-        history::{HistoryId, Timestamps},
+        history::HistoryId,
         prelude::*,
         tests::prelude::test_init,
     };
@@ -2027,13 +2008,8 @@ mod tests {
                 .collect();
 
             // Record this item.
-            let now = SystemTime::now();
-            let timestamps = Timestamps {
-                last_added: now,
-                first_added: now,
-            };
-            let id = HistoryItemId::new(now, i as u16);
-            let mut item = HistoryItem::new(value, timestamps, id, PersistenceMode::Disk);
+            let id = HistoryItemId::new(SystemTime::now(), i as u16);
+            let mut item = HistoryItem::new(value, id, PersistenceMode::Disk);
             item.set_required_paths(paths);
             before.push_back(item.clone());
             history.add(item, false);
@@ -2053,7 +2029,7 @@ mod tests {
             let bef = &before[i];
             let aft = &after[i];
             assert_eq!(bef.str(), aft.str());
-            assert_eq!(bef.timestamps, aft.timestamps);
+            assert_eq!(bef.timestamp(), aft.timestamp());
             assert_eq!(bef.get_required_paths(), aft.get_required_paths());
         }
 
@@ -2298,35 +2274,6 @@ mod tests {
         let one = hist.item_at_index(3).unwrap().id;
         assert!(one < two);
         assert!(two < three);
-    }
-
-    #[test]
-    fn test_history_external_rewrite_increases_last_added_timestamp() {
-        let mut test = Test::new(L!("interleave_test_3"));
-
-        // Write some history to disk.
-        let hist1 = test.create_history();
-        let needle = WString::from_str("needle");
-        hist1.add_commandline(needle.clone());
-        hist1.save();
-        assert!(history_contains(&hist1, &needle));
-        std::thread::sleep(Duration::from_secs(1));
-        let hist2 = test.create_history();
-        assert!(history_contains(&hist2, &needle));
-
-        // Increase needle's last-used timestamp.
-        std::thread::sleep(Duration::from_secs(1));
-        hist1.add_commandline("something to avoid merge() special case".into());
-        hist1.add_commandline(needle.clone());
-        test.trigger_vacuum(&hist1);
-
-        hist2.add_commandline("trigger-reload".into());
-        assert!(history_contains(&hist2, &needle));
-        let needle = hist2.item_at_index(2).unwrap();
-        assert!(needle.first_added_timestamp() < needle.last_added_timestamp());
-        assert!(
-            needle.first_added_timestamp() + Duration::from_secs(3) > needle.last_added_timestamp()
-        );
     }
 
     #[test]
