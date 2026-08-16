@@ -176,6 +176,8 @@ pub struct HistoryItem {
     pub contents: WString,
     /// Paths that we require to be valid for this item to be autosuggested.
     pub required_paths: Vec<WString>,
+    /// The exit code of the command.
+    pub exit_code: Option<i32>,
     /// Whether to write this item to disk.
     pub persist_mode: PersistenceMode,
 }
@@ -187,6 +189,7 @@ impl HistoryItem {
             id,
             contents: WString::new(),
             required_paths: Vec::new(),
+            exit_code: None,
             persist_mode: PersistenceMode::Disk,
         }
     }
@@ -202,6 +205,7 @@ impl HistoryItem {
             id,
             contents: s,
             required_paths: vec![],
+            exit_code: None,
             persist_mode,
         }
     }
@@ -286,6 +290,9 @@ impl HistoryItem {
         }
         if !other.required_paths.is_empty() {
             self.required_paths = other.required_paths;
+        }
+        if other.exit_code.is_some() {
+            self.exit_code = other.exit_code;
         }
     }
 }

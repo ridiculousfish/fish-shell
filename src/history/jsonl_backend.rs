@@ -62,6 +62,11 @@ impl HistoryItem {
                     wstring_set_utf8(&mut self.contents, cmd);
                 }
             }
+            "exit" => {
+                if let Some(exit) = value.as_i64().and_then(|exit| i32::try_from(exit).ok()) {
+                    self.exit_code = Some(exit);
+                }
+            }
             "paths" => {
                 if let Some(paths) = value.into_array_iter() {
                     self.required_paths.clear();
@@ -95,6 +100,9 @@ impl HistoryItem {
             if !self.required_paths.is_empty() {
                 let paths: Vec<String> = self.required_paths.iter().map(wstring_to_utf8).collect();
                 map.serialize_entry("paths", &paths)?;
+            }
+            if let Some(exit) = self.exit_code {
+                map.serialize_entry("exit", &exit)?;
             }
             map.end()
         })()
@@ -596,6 +604,48 @@ mod tests {
         .join("\n");
         let history = HistoryFile::from_data(data.as_bytes(), None);
         assert_eq!(history.item_count(), 3);
+    }
+
+    #[test]
+    fn test_exit_code_round_trip() {
+        use std::time::SystemTime;
+
+        // Single line with an exit code
+        let data = json_line(999, r#""cmd":"git commit","exit":1,"paths":["/repo/.git"]"#);
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.exit_code, Some(1));
+
+        // Negative exit code (signal)
+        let data = json_line(555, r#""cmd":"killed","exit":-9"#);
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.exit_code, Some(-9));
+
+        // No exit code present
+        let data = json_line(1, r#""cmd":"still running""#);
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.exit_code, None);
+
+        // Exit code arriving on a later line for the same item
+        let data = [
+            json_line(100, r#""cmd":"ls /tmp""#),
+            json_line(100, r#""exit":0"#),
+        ]
+        .join("\n");
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.exit_code, Some(0));
+
+        // Write then re-parse round-trip
+        let mut item = HistoryItem::with_id(HistoryItemId::new(SystemTime::now(), 0));
+        item.contents = WString::from("echo hi");
+        item.exit_code = Some(42);
+        let encoded = item.to_json_line();
+        let history = HistoryFile::from_data(encoded.as_slice(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.exit_code, Some(42));
     }
 
     #[test]
