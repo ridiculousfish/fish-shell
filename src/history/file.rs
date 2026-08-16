@@ -31,7 +31,7 @@ pub enum HistoryFileType {
 }
 
 /// A type wrapping up the logic around mmap and munmap.
-struct MmapRegion {
+pub(super) struct MmapRegion {
     ptr: NonNull<u8>,
     len: NonZeroUsize,
 }
@@ -90,6 +90,12 @@ impl Deref for MmapRegion {
 impl DerefMut for MmapRegion {
     fn deref_mut(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len.get()) }
+    }
+}
+
+impl AsRef<[u8]> for MmapRegion {
+    fn as_ref(&self) -> &[u8] {
+        self
     }
 }
 

@@ -195,9 +195,9 @@ pub struct HistoryItem {
     /// The unique identifier for this item, which includes a timestamp.
     pub id: HistoryItemId,
     /// The actual contents of the entry.
-    contents: WString,
+    pub contents: WString,
     /// Paths that we require to be valid for this item to be autosuggested.
-    required_paths: Vec<WString>,
+    pub required_paths: Vec<WString>,
     /// Whether to write this item to disk.
     persist_mode: PersistenceMode,
 }

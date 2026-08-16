@@ -116,6 +116,7 @@ readme = "README.rst"
 
 [dependencies]
 assert_matches.workspace = true
+base64 = "0.22.1"
 bitflags.workspace = true
 cfg-if.workspace = true
 fish-build-helper.workspace = true
