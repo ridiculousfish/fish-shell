@@ -178,6 +178,8 @@ pub struct HistoryItem {
     pub required_paths: Vec<WString>,
     /// The exit code of the command.
     pub exit_code: Option<i32>,
+    /// Duration of command execution in milliseconds.
+    pub duration: Option<u64>,
     /// Whether to write this item to disk.
     pub persist_mode: PersistenceMode,
 }
@@ -190,6 +192,7 @@ impl HistoryItem {
             contents: WString::new(),
             required_paths: Vec::new(),
             exit_code: None,
+            duration: None,
             persist_mode: PersistenceMode::Disk,
         }
     }
@@ -206,6 +209,7 @@ impl HistoryItem {
             contents: s,
             required_paths: vec![],
             exit_code: None,
+            duration: None,
             persist_mode,
         }
     }
@@ -293,6 +297,9 @@ impl HistoryItem {
         }
         if other.exit_code.is_some() {
             self.exit_code = other.exit_code;
+        }
+        if other.duration.is_some() {
+            self.duration = other.duration;
         }
     }
 }

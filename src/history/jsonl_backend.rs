@@ -67,6 +67,11 @@ impl HistoryItem {
                     self.exit_code = Some(exit);
                 }
             }
+            "dur" => {
+                if let Some(dur) = value.as_u64() {
+                    self.duration = Some(dur);
+                }
+            }
             "paths" => {
                 if let Some(paths) = value.into_array_iter() {
                     self.required_paths.clear();
@@ -103,6 +108,9 @@ impl HistoryItem {
             }
             if let Some(exit) = self.exit_code {
                 map.serialize_entry("exit", &exit)?;
+            }
+            if let Some(dur) = self.duration {
+                map.serialize_entry("dur", &dur)?;
             }
             map.end()
         })()
@@ -646,6 +654,42 @@ mod tests {
         let history = HistoryFile::from_data(encoded.as_slice(), None);
         let item = history.items().next().unwrap();
         assert_eq!(item.exit_code, Some(42));
+    }
+
+    #[test]
+    fn test_duration_round_trip() {
+        use std::time::SystemTime;
+
+        // Single line with a duration
+        let data = json_line(1, r#""cmd":"sleep 5","dur":5001"#);
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.duration, Some(5001));
+
+        // No duration present
+        let data = json_line(2, r#""cmd":"still running""#);
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.duration, None);
+
+        // Duration arriving on a later line for the same item
+        let data = [
+            json_line(100, r#""cmd":"ls /tmp""#),
+            json_line(100, r#""dur":12"#),
+        ]
+        .join("\n");
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.duration, Some(12));
+
+        // Write then re-parse round-trip
+        let mut item = HistoryItem::with_id(HistoryItemId::new(SystemTime::now(), 0));
+        item.contents = WString::from("echo hi");
+        item.duration = Some(1234);
+        let encoded = item.to_json_line();
+        let history = HistoryFile::from_data(encoded.as_slice(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.duration, Some(1234));
     }
 
     #[test]
