@@ -156,8 +156,42 @@ impl LruCacheExt for LruCache<WString, HistoryItem> {
 
 pub type PathList = Vec<WString>;
 
+/// History items are identified by a u64, where the high 48 bits are the number of milliseconds since the epoch and the low 16 bits are a nonce.
+/// Multiple records that all contribute to an item will have the same ID.
+/// Note this gives thousands of years at millisecond resolution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HistoryItemId(u64);
+
+impl HistoryItemId {
+    const NONCE_BITS: u32 = 16;
+
+    /// Create a new history item identifier from a timestamp and nonce.
+    pub fn new(timestamp: SystemTime, nonce: u16) -> Self {
+        // Note we are unconcerned with wraparound here: should the clock be set to thousands of years in the future
+        // the worst case is we get items with wrong timestamps.
+        let millis = timestamp
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_millis() as u64;
+        Self((millis << Self::NONCE_BITS) | u64::from(nonce))
+    }
+
+    /// Return the raw 64-bit representation.
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+
+    /// Construct directly from a raw 64-bit identifier.
+    pub fn from_raw(value: u64) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
+    /// The unique identifier for this item. Not yet used for anything - items are still
+    /// identified by their contents and timestamps, as before.
+    pub id: HistoryItemId,
     /// The actual contents of the entry.
     contents: WString,
     /// Creation times of this history entry.
@@ -188,9 +222,11 @@ impl HistoryItem {
     pub(super) fn new(
         s: WString,
         timestamps: Timestamps,
+        id: HistoryItemId,
         persist_mode: PersistenceMode, /*=Disk*/
     ) -> Self {
         Self {
+            id,
             contents: s,
             timestamps,
             required_paths: vec![],
@@ -342,6 +378,8 @@ struct HistoryImpl {
     /// ignored by this instance (unless they came from this instance). The timestamp may be adjusted
     /// by incorporate_external_changes().
     boundary_timestamp: SystemTime,
+    /// Next nonce used when constructing [`HistoryItemId`]s.
+    next_item_id_nonce: u16,
     /// How many items we add until the next vacuum. Initially a random value.
     countdown_to_vacuum: Option<usize>,
     /// Thread pool for background operations.
@@ -443,6 +481,14 @@ impl HistoryImpl {
             last_added: now,
             first_added: now,
         }
+    }
+
+    /// Generate a unique [`HistoryItemId`], incrementing our nonce each time. Not yet consulted by
+    /// anything - items are still identified by their contents and timestamps, as before.
+    fn next_item_id(&mut self) -> HistoryItemId {
+        let nonce = self.next_item_id_nonce;
+        self.next_item_id_nonce = self.next_item_id_nonce.wrapping_add(1);
+        HistoryItemId::new(self.timestamps_as_of_now().first_added, nonce)
     }
 
     /// Loads old items if necessary.
@@ -776,6 +822,10 @@ impl HistoryImpl {
     }
 
     fn new(name: WString, custom_directory: Option<WString>) -> Self {
+        // Randomize the starting nonce so that independent HistoryImpl instances (e.g. concurrent
+        // shells) writing items in the same millisecond are unlikely to allocate colliding
+        // HistoryItemIds.
+        let next_item_id_nonce = rand::rng().random_range(0..65536) as u16;
         Self {
             name,
             custom_directory,
@@ -787,6 +837,7 @@ impl HistoryImpl {
             file_contents: None,
             history_file_id: INVALID_FILE_ID,
             boundary_timestamp: SystemTime::now(),
+            next_item_id_nonce,
             countdown_to_vacuum: None,
             // Up to 8 threads, no soft min.
             thread_pool: ThreadPool::new(0, 8),
@@ -903,8 +954,9 @@ impl HistoryImpl {
             trim_in_place(&mut wide_line, None);
             // Add this line if it doesn't contain anything we know we can't handle.
             if should_import_bash_history_line(&wide_line) {
+                let id = self.next_item_id();
                 self.add(
-                    HistoryItem::new(wide_line, timestamps.clone(), PersistenceMode::Disk),
+                    HistoryItem::new(wide_line, timestamps.clone(), id, PersistenceMode::Disk),
                     /*pending=*/ false,
                     /*do_save=*/ false,
                 );
@@ -1196,7 +1248,8 @@ impl History {
     pub fn add_commandline(&self, s: WString) {
         let mut imp = self.imp();
         let timestamps = imp.timestamps_as_of_now();
-        let item = HistoryItem::new(s, timestamps, PersistenceMode::Disk);
+        let id = imp.next_item_id();
+        let item = HistoryItem::new(s, timestamps, id, PersistenceMode::Disk);
         imp.add(item, false, true);
     }
 
@@ -1301,7 +1354,9 @@ impl History {
         let mut imp = self.imp();
 
         // Make our history item.
-        let item = HistoryItem::new(s.to_owned(), imp.timestamps_as_of_now(), persist_mode);
+        let timestamps = imp.timestamps_as_of_now();
+        let id = imp.next_item_id();
+        let item = HistoryItem::new(s.to_owned(), timestamps, id, persist_mode);
         let to_disk = persist_mode == PersistenceMode::Disk;
 
         if wants_file_detection {
@@ -1785,8 +1840,8 @@ pub fn in_private_mode(vars: &dyn Environment) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        History, HistoryItem, HistorySearch, PathList, PersistenceMode, SearchDirection,
-        SearchFlags, SearchType, VACUUM_FREQUENCY,
+        History, HistoryItem, HistoryItemId, HistorySearch, PathList, PersistenceMode,
+        SearchDirection, SearchFlags, SearchType, VACUUM_FREQUENCY,
     };
     use crate::{
         common::ESCAPE_TEST_CHAR,
@@ -1977,7 +2032,8 @@ mod tests {
                 last_added: now,
                 first_added: now,
             };
-            let mut item = HistoryItem::new(value, timestamps, PersistenceMode::Disk);
+            let id = HistoryItemId::new(now, i as u16);
+            let mut item = HistoryItem::new(value, timestamps, id, PersistenceMode::Disk);
             item.set_required_paths(paths);
             before.push_back(item.clone());
             history.add(item, false);
@@ -2227,6 +2283,21 @@ mod tests {
         assert_eq!(hist2.item_at_index(3).unwrap().str(), item3);
         assert_eq!(hist2.item_at_index(4).unwrap().str(), item1);
         assert!(hist2.item_at_index(5).is_none());
+    }
+
+    #[test]
+    fn test_history_allocates_monotonic_ids() {
+        let test = Test::new(L!("monotonic_ids_test"));
+        let hist = test.create_history();
+        hist.add_commandline("one".into());
+        hist.add_commandline("two".into());
+        hist.add_commandline("three".into());
+        // item_at_index(1) is the most recently added item.
+        let three = hist.item_at_index(1).unwrap().id;
+        let two = hist.item_at_index(2).unwrap().id;
+        let one = hist.item_at_index(3).unwrap().id;
+        assert!(one < two);
+        assert!(two < three);
     }
 
     #[test]
