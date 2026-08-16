@@ -949,6 +949,9 @@ impl HistoryImpl {
         // Append old items.
         let file_contents = self.load_old_if_needed();
         for item in file_contents.items().rev() {
+            if item.is_empty() {
+                continue;
+            }
             if seen.insert(item.str().to_owned()) {
                 result.push(item.str().to_owned());
             }
