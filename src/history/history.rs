@@ -279,19 +279,14 @@ impl HistoryItem {
         self.required_paths = paths;
     }
 
-    /// We can merge two items if they are the same command. We use the more recent timestamp, more
-    /// recent identifier, and the longer list of required paths.
-    fn merge(&mut self, item: HistoryItem) -> Result<(), HistoryItem> {
-        // We can only merge items if they agree on their text and persistence mode.
-        if self.contents != item.contents || self.persist_mode != item.persist_mode {
-            return Err(item);
+    /// Merge fields from another item. Only updates fields that are non-empty.
+    pub fn merge(&mut self, other: HistoryItem) {
+        if !other.contents.is_empty() {
+            self.contents = other.contents;
         }
-
-        // Ok, merge this item.
-        if self.required_paths.len() < item.required_paths.len() {
-            self.required_paths = item.required_paths;
+        if !other.required_paths.is_empty() {
+            self.required_paths = other.required_paths;
         }
-        Ok(())
     }
 }
 
@@ -398,17 +393,16 @@ impl HistoryImpl {
             return;
         }
 
-        // Try merging with the last item.
+        // Try merging with the last item, if it agrees on text and persistence mode.
         let item = if let Some(last) = self.new_items.last_mut() {
-            match last.merge(item) {
-                Ok(()) => {
-                    // We merged, so we don't have to add anything. Maybe this item was pending, but it just got
-                    // merged with an item that is not pending, so pending just becomes false.
-                    self.has_pending_item = false;
-                    return;
-                }
-                Err(item) => item,
+            if last.contents == item.contents && last.persist_mode == item.persist_mode {
+                last.merge(item);
+                // We merged, so we don't have to add anything. Maybe this item was pending, but it just got
+                // merged with an item that is not pending, so pending just becomes false.
+                self.has_pending_item = false;
+                return;
             }
+            item
         } else {
             item
         };
