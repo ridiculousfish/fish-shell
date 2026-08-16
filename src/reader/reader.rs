@@ -6439,6 +6439,10 @@ fn reader_shell_test(parser: &Parser, bstr: &wstr) -> Result<(), ParseIssue> {
 impl<'a> Reader<'a> {
     // Import history from other shells
     fn import_history_if_necessary(&mut self) {
+        if self.history.is_empty() {
+            self.history.populate_from_legacy_paths();
+        }
+
         // Import history from bash, etc. if our current history is still empty and is the default
         // history.
         if !self.history.is_empty() || !self.history.is_default() {

@@ -19,21 +19,23 @@ use crate::{
     common::valid_var_name,
     env::{EnvMode, EnvSetMode, EnvStack, EnvVar, Environment},
     expand::{ExpandFlags, expand_one},
+    fds::wopen_cloexec,
     flog::{flog, flogf},
     fs::{
-        LockedFile, LockingMode, PotentialUpdate, WriteMethod, fsync, lock_and_load,
-        rewrite_via_temporary_file,
+        LOCKED_FILE_MODE, LockedFile, LockingMode, PotentialUpdate, WriteMethod, fsync,
+        lock_and_load, rewrite_via_temporary_file,
     },
     highlight::highlight_and_colorize,
     history::file::load_raw_history_file,
     history::jsonl_backend::HistoryFile,
+    history::yaml_compat,
     io::IoStreams,
     localization::wgettext_fmt,
     operation_context::{EXPANSION_LIMIT_BACKGROUND, OperationContext},
     parse_constants::ParseTreeFlags,
     parse_util::{detect_parse_errors, unescape_wildcards},
     parser::Parser,
-    path::{ValidatedPath, path_get_data, path_is_valid},
+    path::{ValidatedPath, path_get_config, path_get_data, path_is_valid},
     prelude::*,
     threads::{ThreadPool, assert_is_background_thread},
     wildcard::wildcard_match,
@@ -42,6 +44,7 @@ use crate::{
 use bitflags::bitflags;
 use fish_wcstringutil::{subsequence_in_string, trim_in_place};
 use fish_widestring::{ANY_STRING, bytes2wcstring, cstr2wcstring, subslice_position};
+use nix::{fcntl::OFlag, sys::stat::Mode};
 use rand::RngExt as _;
 use std::{
     borrow::Cow,
@@ -758,6 +761,118 @@ impl HistoryImpl {
         self.new_items.clear();
     }
 
+    // Return the path for the history file back when it was in the config path, if it exists.
+    fn get_legacy_config_history_path(&self) -> Option<WString> {
+        let ValidatedPath {
+            path: config_path,
+            ok,
+        } = path_get_config();
+        if !ok {
+            return None;
+        }
+        let mut old_file = config_path.to_owned();
+
+        old_file.push('/');
+        old_file.push_utfstr(&self.name);
+        old_file.push_str("_history");
+
+        Some(old_file)
+    }
+
+    // Return the path for the history file in the yaml format
+    // This is just the default path with no extension.
+    fn get_legacy_yaml_history_path(&self) -> Option<WString> {
+        let mut jsonl_path = self.history_file_path().ok()??;
+        if !jsonl_path.ends_with(".jsonl") {
+            return None;
+        }
+        jsonl_path.truncate(jsonl_path.len() - ".jsonl".len());
+        Some(jsonl_path)
+    }
+
+    /// Populate from a yaml history file at the given path, migrating it to the jsonl format at the given new path.
+    /// Returns true if successful.
+    fn populate_from_legacy_yaml_path(&mut self, old_path: &WString, new_path: &WString) -> bool {
+        let _profiler = TimeProfiler::new("migrate_legacy");
+        let Ok(old_file) = wopen_cloexec(old_path, OFlag::O_RDONLY, Mode::empty()) else {
+            return false;
+        };
+        let file_id = file_id_for_file(&old_file);
+        let src_file = match load_raw_history_file(&old_file, file_id) {
+            Ok(file) => file,
+            Err(err) => {
+                flog!(history_file, "Error when reading legacy history file:", err);
+                return false;
+            }
+        };
+
+        // Clear must come after we've retrieved the new_file name, and before we open
+        // destination file descriptor, since it destroys the name and the file.
+        self.clear();
+
+        let dst_file = match wopen_cloexec(
+            new_path,
+            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
+            LOCKED_FILE_MODE,
+        ) {
+            Ok(file) => file,
+            Err(err) => {
+                flog!(history_file, "Error when writing history file:", err);
+                return false;
+            }
+        };
+
+        let mut count = 0;
+        let result = || -> std::io::Result<()> {
+            let mut buffer = BufWriter::new(dst_file);
+            for item in yaml_compat::iterate_fish_2_0_history(src_file.as_ref()) {
+                if item.is_empty() {
+                    continue;
+                }
+                item.write_to(&mut buffer)?;
+                count += 1;
+            }
+            buffer.flush()
+        }();
+
+        if let Err(err) = result {
+            flog!(history_file, "Error when writing history file:", err);
+            return false;
+        }
+
+        let duration_ms = _profiler
+            .start
+            .elapsed()
+            .map_or(0, |d| d.as_millis() as u64);
+        flogf!(
+            history,
+            "Migrated history from legacy file '%s' to new jsonl file '%s': %u items in %u ms",
+            old_path,
+            new_path,
+            count,
+            duration_ms
+        );
+        true
+    }
+
+    /// Populates from older locations.
+    fn populate_from_legacy_paths(&mut self) {
+        let Ok(Some(new_path)) = self.history_file_path() else {
+            return;
+        };
+        let old_path_getters = [
+            Self::get_legacy_yaml_history_path,
+            Self::get_legacy_config_history_path,
+        ];
+        for get_old_path in old_path_getters {
+            if let Some(old_path) = get_old_path(self) {
+                if self.populate_from_legacy_yaml_path(&old_path, &new_path) {
+                    return;
+                }
+            }
+        }
+    }
+
     /// Import a bash command history file. Bash's history format is very simple: just lines with
     /// `#`s for comments. Ignore a few commands that are bash-specific. It makes no attempt to
     /// handle multiline commands. We can't actually parse bash syntax and the bash history file
@@ -1300,6 +1415,11 @@ impl History {
     /// Irreversibly clears history for the current session.
     pub fn clear_session(&self) {
         self.imp().clear_session();
+    }
+
+    /// Populates from older locations, migrating history.
+    pub fn populate_from_legacy_paths(&self) {
+        self.imp().populate_from_legacy_paths();
     }
 
     /// Populates from a bash history file.

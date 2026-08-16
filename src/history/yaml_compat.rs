@@ -1,7 +1,4 @@
 //! Support for reading legacy YAML-based history files (fish 2.0+ format).
-// Not called from production code yet - wired up by the legacy-migration commit. (Already
-// exercised by test_history_formats, which is why this doesn't show up in `cargo test`.)
-#![allow(dead_code)]
 
 use super::{HistoryItem, HistoryItemId};
 use crate::flog::flog;
