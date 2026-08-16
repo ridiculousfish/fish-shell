@@ -80,6 +80,11 @@ impl HistoryItem {
                     }
                 }
             }
+            "sid" => {
+                if let Some(sid) = value.as_str().and_then(|s| base64_decode_u64(s.as_bytes())) {
+                    self.session_id = Some(sid);
+                }
+            }
             "paths" => {
                 if let Some(paths) = value.into_array_iter() {
                     self.required_paths.clear();
@@ -123,6 +128,10 @@ impl HistoryItem {
             if let Some(cwd) = &self.cwd {
                 let cwd = wstring_to_utf8(cwd);
                 map.serialize_entry("cwd", cwd.as_str())?;
+            }
+            if let Some(sid) = self.session_id {
+                let sid = base64_encode_u64(sid);
+                map.serialize_entry("sid", sid.as_str())?;
             }
             map.end()
         })()
@@ -744,6 +753,39 @@ mod tests {
         let history = HistoryFile::from_data(encoded.as_slice(), None);
         let item = history.items().next().unwrap();
         assert_eq!(item.cwd, Some(WString::from("/tmp")));
+    }
+
+    #[test]
+    fn test_session_id_round_trip() {
+        use std::time::SystemTime;
+
+        // Single line with a session id
+        let sid_encoded = base64_encode_u64(12345);
+        let data = json_line(1, &format!(r#""cmd":"ls","sid":"{sid_encoded}""#));
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.session_id, Some(12345));
+
+        // No session id present
+        let data = json_line(2, r#""cmd":"still running""#);
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.session_id, None);
+
+        // Invalid base64 - field is simply not set
+        let data = json_line(3, r#""cmd":"ls","sid":"not valid base64!""#);
+        let history = HistoryFile::from_data(data.as_bytes(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.session_id, None);
+
+        // Write then re-parse round-trip
+        let mut item = HistoryItem::with_id(HistoryItemId::new(SystemTime::now(), 0));
+        item.contents = WString::from("echo hi");
+        item.session_id = Some(u64::MAX);
+        let encoded = item.to_json_line();
+        let history = HistoryFile::from_data(encoded.as_slice(), None);
+        let item = history.items().next().unwrap();
+        assert_eq!(item.session_id, Some(u64::MAX));
     }
 
     #[test]

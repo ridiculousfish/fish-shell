@@ -182,6 +182,8 @@ pub struct HistoryItem {
     pub duration: Option<u64>,
     /// Working directory where the command was executed.
     pub cwd: Option<WString>,
+    /// Session identifier.
+    pub session_id: Option<u64>,
     /// Whether to write this item to disk.
     pub persist_mode: PersistenceMode,
 }
@@ -196,6 +198,7 @@ impl HistoryItem {
             exit_code: None,
             duration: None,
             cwd: None,
+            session_id: None,
             persist_mode: PersistenceMode::Disk,
         }
     }
@@ -214,6 +217,7 @@ impl HistoryItem {
             exit_code: None,
             duration: None,
             cwd: None,
+            session_id: None,
             persist_mode,
         }
     }
@@ -307,6 +311,9 @@ impl HistoryItem {
         }
         if other.cwd.is_some() {
             self.cwd = other.cwd;
+        }
+        if other.session_id.is_some() {
+            self.session_id = other.session_id;
         }
     }
 }
