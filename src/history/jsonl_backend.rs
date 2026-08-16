@@ -1,7 +1,5 @@
 //! Implementation of the jsonlines history file format.
 //! See the internal docs fish-history-file-format.md for details.
-// Not wired into HistoryImpl yet - the whole module is inert until the backend-swap commit.
-#![allow(dead_code)]
 use super::file::MmapRegion;
 use super::history::{HistoryItem, HistoryItemId};
 use crate::prelude::*;
@@ -49,9 +47,11 @@ fn wstring_set_utf8(dest: &mut WString, src: &str) {
 
 impl HistoryItem {
     /// Encode this item as a JSON line string, with a trailing newline.
+    // Not yet called from production code - wired up once add()/emit_update() write immediately.
+    #[allow(dead_code)]
     pub(super) fn to_json_line(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        write_json_line(self, &mut buf).unwrap();
+        self.write_to(&mut buf).unwrap();
         buf
     }
 
@@ -75,34 +75,32 @@ impl HistoryItem {
             _ => {}
         }
     }
-}
 
-/// Append a history item to a buffer in JSON lines format.
-/// Free function for now, since `HistoryItem` still has an inherent `write_to` method for the
-/// legacy YAML format; once that's retired this becomes a method of the same name.
-fn write_json_line(item: &HistoryItem, buffer: &mut impl std::io::Write) -> std::io::Result<()> {
-    use serde_core::ser::{SerializeMap as _, Serializer as _};
+    /// Append this history item to a buffer in JSON lines format.
+    pub(super) fn write_to(&self, buffer: &mut impl std::io::Write) -> std::io::Result<()> {
+        use serde_core::ser::{SerializeMap as _, Serializer as _};
 
-    let mut buffer = sonic_rs::writer::BufferedWriter::new(buffer);
-    (|| -> Result<(), sonic_rs::Error> {
-        let mut serializer = sonic_rs::Serializer::new(&mut buffer);
-        let mut map = (&mut serializer).serialize_map(None)?;
+        let mut buffer = sonic_rs::writer::BufferedWriter::new(buffer);
+        (|| -> Result<(), sonic_rs::Error> {
+            let mut serializer = sonic_rs::Serializer::new(&mut buffer);
+            let mut map = (&mut serializer).serialize_map(None)?;
 
-        let id = base64_encode_u64(item.id.raw());
-        map.serialize_entry("id", id.as_str())?;
+            let id = base64_encode_u64(self.id.raw());
+            map.serialize_entry("id", id.as_str())?;
 
-        if !item.contents.is_empty() {
-            let cmd = wstring_to_utf8(&item.contents);
-            map.serialize_entry("cmd", cmd.as_str())?;
-        }
-        if !item.required_paths.is_empty() {
-            let paths: Vec<String> = item.required_paths.iter().map(wstring_to_utf8).collect();
-            map.serialize_entry("paths", &paths)?;
-        }
-        map.end()
-    })()
-    .map_err(|err| std::io::Error::other(format!("json encode error: {err}")))?;
-    buffer.write_all(b"\n")
+            if !self.contents.is_empty() {
+                let cmd = wstring_to_utf8(&self.contents);
+                map.serialize_entry("cmd", cmd.as_str())?;
+            }
+            if !self.required_paths.is_empty() {
+                let paths: Vec<String> = self.required_paths.iter().map(wstring_to_utf8).collect();
+                map.serialize_entry("paths", &paths)?;
+            }
+            map.end()
+        })()
+        .map_err(|err| std::io::Error::other(format!("json encode error: {err}")))?;
+        buffer.write_all(b"\n")
+    }
 }
 
 /// Offset to a specific line in the JSONL history file.

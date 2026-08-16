@@ -40,7 +40,7 @@ if sp.spawn.signalstatus != signal.SIGTERM:
     sys.exit(1)
 
 # Check history file for NUL bytes.
-histfile = os.path.join(os.environ["XDG_DATA_HOME"], "fish", "fish_history")
+histfile = os.path.join(os.environ["XDG_DATA_HOME"], "fish", "fish_history.jsonl")
 with open(histfile, "rb") as f:
     raw = f.read()
 assert len(raw) != 0, "history file is empty"

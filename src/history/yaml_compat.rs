@@ -1,8 +1,11 @@
-//! Implementation of the YAML-like history file format.
+//! Support for reading legacy YAML-based history files (fish 2.0+ format).
+// Not called from production code yet - wired up by the legacy-migration commit. (Already
+// exercised by test_history_formats, which is why this doesn't show up in `cargo test`.)
+#![allow(dead_code)]
 
-use super::{HistoryItem, HistoryItemId, PersistenceMode};
+use super::{HistoryItem, HistoryItemId};
 use crate::flog::flog;
-use fish_widestring::{bytes2wcstring, subslice_position};
+use fish_widestring::bytes2wcstring;
 use std::{
     borrow::Cow,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -12,7 +15,6 @@ use std::{
 //
 //   - cmd: ssh blah blah blah
 //     when: 2348237
-//     added_when: 2348238
 //     paths:
 //       - /path/to/something
 //       - /path/to/something_else
@@ -33,21 +35,6 @@ fn read_line(data: &[u8]) -> (usize, &[u8]) {
     }
 }
 
-/// Support for escaping and unescaping the nonstandard "yaml" format introduced in fish 2.0.
-pub fn escape_yaml_fish_2_0(s: &mut Vec<u8>) {
-    replace_all(s, b"\\", b"\\\\"); // replace one backslash with two
-    replace_all(s, b"\n", b"\\n"); // replace newline with backslash + literal n
-}
-
-fn replace_all(s: &mut Vec<u8>, needle: &[u8], replacement: &[u8]) {
-    let mut offset = 0;
-    while let Some(relpos) = subslice_position(&s[offset..], needle) {
-        offset += relpos;
-        s.splice(offset..(offset + needle.len()), replacement.iter().copied());
-        offset += replacement.len();
-    }
-}
-
 #[inline(always)]
 /// Unescapes the fish-specific yaml variant, if it requires it.
 fn maybe_unescape_yaml_fish_2_0(s: &[u8]) -> Cow<'_, [u8]> {
@@ -61,12 +48,6 @@ fn maybe_unescape_yaml_fish_2_0(s: &[u8]) -> Cow<'_, [u8]> {
 
 // Unescapes the fish-specific yaml variant. Use [`maybe_unescape_yaml_fish_2_0()`] if you're not
 // positive the input contains an escape.
-//
-// This function is called on every input event and shows up heavily in all flamegraphs.
-// Various approaches were benchmarked against real-world fish-history files on lines with escapes,
-// and this implementation (chunk_loop_box) won out. Make changes with care!
-//
-// Benchmarks and code: https://github.com/mqudsi/fish-yaml-unescape-benchmark
 pub fn unescape_yaml_fish_2_0(s: &[u8]) -> Vec<u8> {
     // This function is in a very hot loop and the usage of boxed uninit memory benchmarks around 8%
     // faster on real-world escaped yaml samples from the fish history file.
@@ -138,11 +119,9 @@ fn time_from_seconds(offset: i64) -> SystemTime {
     }
 }
 
-pub(super) const LAST_ADDED_TIMESTAMP_KEY: &str = "when";
-pub(super) const FIRST_ADDED_TIMESTAMP_KEY: &str = "added_when";
-
 /// Decode an item via the fish 2.0 format.
-pub fn decode_item_fish_2_0(mut data: &[u8]) -> Option<HistoryItem> {
+/// History item IDs are constructed synthetically using the given nonce.
+pub fn decode_item_fish_2_0(mut data: &[u8], nonce: u16) -> Option<HistoryItem> {
     let (advance, line) = read_line(data);
     let line = trim_start(line);
     if !line.starts_with(b"- cmd") {
@@ -156,8 +135,7 @@ pub fn decode_item_fish_2_0(mut data: &[u8]) -> Option<HistoryItem> {
 
     // Read the remaining lines.
     let mut indent = None;
-    let mut timestamp_last_added = None;
-    let mut timestamp_first_added = None;
+    let mut when = UNIX_EPOCH;
     let mut paths = Vec::new();
     loop {
         let (advance, line) = read_line(data);
@@ -175,18 +153,14 @@ pub fn decode_item_fish_2_0(mut data: &[u8]) -> Option<HistoryItem> {
         // We are definitely going to consume this line.
         data = &data[advance..];
 
-        let parse_timestamp_value = |value| {
-            std::str::from_utf8(value)
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .map(time_from_seconds)
-        };
-
-        if *key == *LAST_ADDED_TIMESTAMP_KEY.as_bytes() {
-            timestamp_last_added = parse_timestamp_value(&value);
-            timestamp_first_added = timestamp_first_added.or(timestamp_last_added);
-        } else if *key == *FIRST_ADDED_TIMESTAMP_KEY.as_bytes() {
-            timestamp_first_added = parse_timestamp_value(&value);
+        if *key == *b"when" {
+            // Parse an int from the timestamp. Should this fail, 0 is acceptable.
+            when = time_from_seconds(
+                std::str::from_utf8(&value)
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0),
+            );
         } else if *key == *b"paths" {
             // Read lines starting with " - " until we can't read any more.
             loop {
@@ -209,25 +183,13 @@ pub fn decode_item_fish_2_0(mut data: &[u8]) -> Option<HistoryItem> {
         }
     }
 
-    let when = timestamp_last_added
-        .or(timestamp_first_added)
-        .unwrap_or(UNIX_EPOCH);
-    let id = HistoryItemId::new(when, 0);
-    let mut result = HistoryItem::new(cmd, id, PersistenceMode::Disk);
+    let id = HistoryItemId::new(when, nonce);
+    let mut result = HistoryItem {
+        contents: cmd,
+        ..HistoryItem::with_id(id)
+    };
     result.set_required_paths(paths);
     Some(result)
-}
-
-/// Parse a timestamp line that looks like this: spaces, "$key:", spaces, timestamp, newline
-/// We know the string contains a newline, so stop when we reach it.
-fn parse_timestamp_line(key: &str, s: &[u8]) -> Option<SystemTime> {
-    let s = trim_start(s);
-    let s = s.strip_prefix(key.as_bytes())?;
-    let s = s.strip_prefix(b":")?;
-    let s = trim_start(s);
-
-    let t = std::str::from_utf8(s).ok()?.parse().ok()?;
-    Some(time_from_seconds(t))
 }
 
 fn complete_lines(s: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -242,13 +204,9 @@ fn complete_lines(s: &[u8]) -> impl Iterator<Item = &[u8]> {
 /// Pass the file contents and a mutable reference to a `cursor`, initially 0.
 /// If `cutoff_timestamp` is given, skip items created at or after that timestamp.
 /// Returns [`None`] when done.
-pub fn offset_of_next_item_fish_2_0(
-    contents: &[u8],
-    cursor: &mut usize,
-    cutoff_timestamp: Option<SystemTime>,
-) -> Option<usize> {
+fn offset_of_next_item_fish_2_0(contents: &[u8], cursor: &mut usize) -> Option<usize> {
     let mut lines = complete_lines(&contents[*cursor..]).peekable();
-    while let Some(line) = lines.next() {
+    while let Some(mut line) = lines.next() {
         // Skip lines with a leading space, since these are in the interior of one of our items.
         if line.starts_with(b" ") {
             continue;
@@ -256,6 +214,19 @@ pub fn offset_of_next_item_fish_2_0(
 
         // Try to be a little YAML compatible. Skip lines with leading %, ---, or ...
         if line.starts_with(b"%") || line.starts_with(b"---") || line.starts_with(b"...") {
+            continue;
+        }
+
+        // Hackish: fish 1.x rewriting a fish 2.0 history file can produce lines with lots of
+        // leading "- cmd: - cmd: - cmd:". Trim all but one leading "- cmd:".
+        while line.starts_with(b"- cmd: - cmd: ") {
+            // Skip over just one of the - cmd. In the end there will be just one left.
+            line = line.strip_prefix(b"- cmd: ").unwrap();
+        }
+
+        // Hackish: fish 1.x rewriting a fish 2.0 history file can produce commands like "when:
+        // 123456". Ignore those.
+        if line.starts_with(b"- cmd:    when:") {
             continue;
         }
 
@@ -277,39 +248,6 @@ pub fn offset_of_next_item_fish_2_0(
             continue;
         }
 
-        // At this point, we know `line` is at the beginning of an item. But maybe we want to
-        // skip this item because of timestamps. A `None` cutoff means we don't care; if we do care,
-        // then try parsing out a timestamp.
-        if let Some(cutoff_timestamp) = cutoff_timestamp {
-            // Hackish fast way to skip items created after our timestamp. This is the mechanism by
-            // which we avoid "seeing" commands from other sessions that started after we started.
-            // We try hard to ensure that our items are sorted by their timestamps, so in theory we
-            // could just break, but I don't think that works well if (for example) the clock
-            // changes. So we'll read all subsequent items.
-            // Walk over lines that we think are interior. These lines are not null terminated, but
-            // are guaranteed to contain a newline.
-            let mut timestamp_first_added = None;
-            let mut timestamp_last_added = None;
-            while let Some(interior_line) = lines.next_if(|l| l.starts_with(b" ")) {
-                // Try parsing a timestamp from this line. If we succeed, the loop will break.
-                timestamp_first_added = timestamp_first_added
-                    .or_else(|| parse_timestamp_line(FIRST_ADDED_TIMESTAMP_KEY, interior_line));
-                if timestamp_first_added.is_some() {
-                    break;
-                }
-                timestamp_last_added = timestamp_last_added
-                    .or_else(|| parse_timestamp_line(LAST_ADDED_TIMESTAMP_KEY, interior_line));
-            }
-
-            if let Some(timestamp_first_added) = timestamp_first_added.or(timestamp_last_added) {
-                if timestamp_first_added > cutoff_timestamp {
-                    continue;
-                }
-            }
-        }
-
-        // We made it through the gauntlet.
-
         /// # Safety
         ///
         /// Both `from` and `to` must be derived from the same slice.
@@ -322,7 +260,7 @@ pub fn offset_of_next_item_fish_2_0(
             offset.try_into().unwrap()
         }
 
-        // Advance the cursor past the first line of this entry
+        // Advance the cursor past the last line of this entry
         *cursor = match lines.next() {
             Some(next_line) => unsafe { offset(contents, next_line) },
             None => contents.len(),
@@ -332,4 +270,20 @@ pub fn offset_of_next_item_fish_2_0(
     }
 
     None
+}
+
+/// Iterate over all history items in the given fish 2.0+ history contents.
+/// Item IDs are constructed synthetically.
+pub fn iterate_fish_2_0_history(contents: &[u8]) -> impl Iterator<Item = HistoryItem> + '_ {
+    let mut cursor: usize = 0;
+    let mut nonce: u16 = 0;
+    std::iter::from_fn(move || {
+        while let Some(offset) = offset_of_next_item_fish_2_0(contents, &mut cursor) {
+            if let Some(item) = decode_item_fish_2_0(&contents[offset..], nonce) {
+                nonce = nonce.wrapping_add(1);
+                return Some(item);
+            }
+        }
+        None
+    })
 }

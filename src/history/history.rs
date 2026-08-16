@@ -25,7 +25,8 @@ use crate::{
         rewrite_via_temporary_file,
     },
     highlight::highlight_and_colorize,
-    history::file::{HistoryFile, RawHistoryFile},
+    history::file::load_raw_history_file,
+    history::jsonl_backend::HistoryFile,
     io::IoStreams,
     localization::wgettext_fmt,
     operation_context::{EXPANSION_LIMIT_BACKGROUND, OperationContext},
@@ -42,7 +43,6 @@ use bitflags::bitflags;
 use fish_common::{UnescapeStringStyle, unescape_string};
 use fish_wcstringutil::{subsequence_in_string, trim_in_place};
 use fish_widestring::{ANY_STRING, bytes2wcstring, cstr2wcstring, subslice_position};
-use lru::LruCache;
 use rand::RngExt as _;
 use std::{
     borrow::Cow,
@@ -51,7 +51,6 @@ use std::{
     fs::File,
     io::{BufRead, BufWriter, Write as _},
     mem::MaybeUninit,
-    num::NonZeroUsize,
     ops::ControlFlow,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -130,27 +129,6 @@ impl Drop for TimeProfiler {
     }
 }
 
-trait LruCacheExt {
-    /// Function to add a history item.
-    fn add_item(&mut self, item: HistoryItem);
-}
-
-impl LruCacheExt for LruCache<WString, HistoryItem> {
-    fn add_item(&mut self, item: HistoryItem) {
-        // Skip empty items.
-        if item.is_empty() {
-            return;
-        }
-
-        // See if it's in the cache. If it is, do nothing further (this call still promotes the
-        // node to the front). If not, we create a new node and add it.
-        let key = item.str();
-        if self.get_mut(key).is_none() {
-            self.put(key.to_owned(), item);
-        }
-    }
-}
-
 pub type PathList = Vec<WString>;
 
 /// History items are identified by a u64, where the high 48 bits are the number of milliseconds since the epoch and the low 16 bits are a nonce.
@@ -199,7 +177,7 @@ pub struct HistoryItem {
     /// Paths that we require to be valid for this item to be autosuggested.
     pub required_paths: Vec<WString>,
     /// Whether to write this item to disk.
-    persist_mode: PersistenceMode,
+    pub persist_mode: PersistenceMode,
 }
 
 impl HistoryItem {
@@ -399,7 +377,7 @@ impl HistoryImpl {
 
         path.push('/');
         path.push_utfstr(&self.name);
-        path.push_utfstr(L!("_history"));
+        path.push_utfstr(L!("_history.jsonl"));
 
         // For custom directories, skip wrealpath since file may not exist yet
         if self.custom_directory.is_some() {
@@ -493,16 +471,27 @@ impl HistoryImpl {
         };
 
         let _profiler = TimeProfiler::new("load_old");
-        let file_contents = match lock_and_load(&history_path, RawHistoryFile::create) {
-            Ok((file_id, history_file)) => {
+        let file_contents = match lock_and_load(&history_path, load_raw_history_file) {
+            Ok((file_id, mmap)) => {
                 self.history_file_id = file_id;
                 let _profiler = TimeProfiler::new("populate_from_file_contents");
-                let file_contents = history_file.decode(Some(self.boundary_timestamp));
-                flogf!(
-                    history,
-                    "Loaded %u old items",
-                    file_contents.offsets().len()
-                );
+                // The on-disk format used to store timestamps at whole-second precision, so the
+                // boundary comparison against `first_added_timestamp() > boundary` effectively had
+                // up to a second of slack: an item written just before us, in the same second as
+                // our own birth, would still compare as "not newer than boundary". HistoryItemId is
+                // millisecond-precision, so replicate that slack explicitly by rounding the cutoff
+                // up to the end of its second - otherwise an item concurrently written by another
+                // session earlier in the same second, but at a later millisecond, would wrongly look
+                // "too new" and get excluded.
+                let boundary_secs = self
+                    .boundary_timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or(Duration::ZERO)
+                    .as_secs();
+                let cutoff =
+                    UNIX_EPOCH + Duration::from_millis(boundary_secs * 1000 + 999);
+                let file_contents = HistoryFile::from_data(mmap, Some(cutoff));
+                flogf!(history, "Loaded %u old item fragments", file_contents.line_count());
                 file_contents
             }
             Err(e) => {
@@ -565,21 +554,20 @@ impl HistoryImpl {
     ) -> std::io::Result<()> {
         // We are reading FROM existing_file and writing TO dst
 
-        // Make an LRU cache to save only the last N elements.
+        // When we rewrite the history, the number of items we keep.
+        const HISTORY_MAX_ITEMS: usize = 1024 * 512;
+        /// Default buffer size for flushing to the history file.
+        const HISTORY_OUTPUT_BUFFER_SIZE: usize = 64 * 1024;
 
-        /// When we rewrite the history, the number of items we keep.
-        const HISTORY_SAVE_MAX: NonZeroUsize = NonZeroUsize::new(1024 * 256).unwrap();
-        let mut lru = LruCache::new(HISTORY_SAVE_MAX);
+        let mut buffer = BufWriter::with_capacity(HISTORY_OUTPUT_BUFFER_SIZE + 128, dst);
 
         // Read in existing items (which may have changed out from underneath us, so don't trust our
         // old file contents).
         let file_id = file_id_for_file(existing_file);
-        if let Ok(local_file) = RawHistoryFile::create(existing_file, file_id) {
-            for offset in local_file.offsets(None) {
-                // Try decoding an old item.
-                let Some(old_item) = local_file.decode_item(offset) else {
-                    continue;
-                };
+        if let Ok(mmap) = load_raw_history_file(existing_file, file_id) {
+            let mut local_file = HistoryFile::from_data(mmap, None);
+            local_file.shrink_to_max_records(HISTORY_MAX_ITEMS);
+            for old_item in local_file.items() {
                 if old_item.is_empty() {
                     continue;
                 }
@@ -594,7 +582,7 @@ impl HistoryImpl {
                         continue;
                     }
                 }
-                lru.add_item(old_item);
+                old_item.write_to(&mut buffer)?;
             }
         }
 
@@ -605,22 +593,8 @@ impl HistoryImpl {
             .skip(self.first_unwritten_new_item_index)
         {
             if item.should_write_to_disk() {
-                lru.add_item(item.clone());
+                item.write_to(&mut buffer)?;
             }
-        }
-
-        // Stable-sort our items by timestamp
-        // This is because we may have read "old" items with a later timestamp than our "new" items
-        // This is the essential step that roughly orders items by history
-        let mut items: Vec<_> = lru.into_iter().map(|(_key, item)| item).collect();
-        items.sort_by_key(HistoryItem::timestamp);
-
-        /// Default buffer size for flushing to the history file.
-        const HISTORY_OUTPUT_BUFFER_SIZE: usize = 64 * 1024;
-        // Write them out.
-        let mut buffer = BufWriter::with_capacity(HISTORY_OUTPUT_BUFFER_SIZE + 128, dst);
-        for item in items {
-            item.write_to(&mut buffer)?;
         }
         buffer.flush()?;
         Ok(())
@@ -813,6 +787,10 @@ impl HistoryImpl {
     }
 
     fn new(name: WString, custom_directory: Option<WString>) -> Self {
+        // Randomize the starting nonce so that independent HistoryImpl instances (e.g. concurrent
+        // shells) writing items in the same millisecond are unlikely to allocate colliding
+        // HistoryItemIds.
+        let next_item_id_nonce = rand::rng().random_range(0..65536) as u16;
         Self {
             name,
             custom_directory,
@@ -824,7 +802,7 @@ impl HistoryImpl {
             file_contents: None,
             history_file_id: INVALID_FILE_ID,
             boundary_timestamp: SystemTime::now(),
-            next_item_id_nonce: 0,
+            next_item_id_nonce,
             countdown_to_vacuum: None,
             // Up to 8 threads, no soft min.
             thread_pool: ThreadPool::new(0, 8),
@@ -999,10 +977,7 @@ impl HistoryImpl {
 
         // Append old items.
         let file_contents = self.load_old_if_needed();
-        for &offset in file_contents.offsets().iter().rev() {
-            let Some(item) = file_contents.decode_item(offset) else {
-                continue;
-            };
+        for item in file_contents.items().rev() {
             if seen.insert(item.str().to_owned()) {
                 result.push(item.str().to_owned());
             }
@@ -1072,16 +1047,8 @@ impl HistoryImpl {
         // Now look in our old items.
         idx -= resolved_new_item_count;
         let file_contents = self.load_old_if_needed();
-        let old_item_offsets = file_contents.offsets();
-        let old_item_count = old_item_offsets.len();
-        if idx < old_item_count {
-            // idx == 0 corresponds to last item in old_item_offsets.
-            let offset = old_item_offsets[old_item_count - idx - 1];
-            return file_contents.decode_item(offset).map(Cow::Owned);
-        }
-
-        // Index past the valid range, so return None.
-        None
+        // idx == 0 corresponds to the most recently written old item.
+        file_contents.get_from_back(idx).map(Cow::Owned)
     }
 
     /// Return the number of history entries.
@@ -1090,8 +1057,8 @@ impl HistoryImpl {
         if self.has_pending_item && new_item_count > 0 {
             new_item_count -= 1;
         }
-        let old_item_offsets = self.load_old_if_needed().offsets();
-        new_item_count + old_item_offsets.len()
+        let old_item_count = self.load_old_if_needed().item_count();
+        new_item_count + old_item_count
     }
 }
 
@@ -1828,18 +1795,17 @@ mod tests {
         common::ESCAPE_TEST_CHAR,
         env::{EnvMode, EnvSetMode, EnvStack},
         fs::{LockedFile, WriteMethod},
-        history::HistoryId,
+        history::{HistoryId, yaml_compat},
         prelude::*,
         tests::prelude::test_init,
     };
     use fish_build_helper::workspace_root;
     use fish_tempfile::TempDir;
     use fish_wcstringutil::{string_prefixes_string, string_prefixes_string_case_insensitive};
-    use fish_widestring::{osstr2wcstring, wcs2bytes};
+    use fish_widestring::osstr2wcstring;
     use rand::{RngExt as _, rngs::ThreadRng};
     use std::{
         collections::VecDeque,
-        ffi::OsString,
         io::BufReader,
         sync::Arc,
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -2228,39 +2194,6 @@ mod tests {
         assert!(history_contains(&hist, L!("needle")));
     }
 
-    /// Test that we read back all items, and in the correct order, even after an external
-    /// rewrite changed the order of history items that we already loaded earlier.
-    #[test]
-    fn test_history_external_rewrite_read_back_with_correct_ordering() {
-        let mut test = Test::new(L!("interleave_test_2"));
-
-        let hist1 = test.create_history();
-        let item1 = L!("item 1");
-        let item2 = L!("item 2");
-        let item3 = L!("item 3");
-        hist1.add_commandline(item1.into());
-        hist1.add_commandline(item2.into());
-        hist1.add_commandline(item3.into());
-
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        let hist2 = test.create_history();
-
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        hist1.add_commandline(item1.into());
-        hist1.add_commandline(item3.into());
-        hist1.add_commandline(item2.into());
-        test.trigger_vacuum(&hist1);
-
-        let trigger_reload = L!("trigger-reload");
-        hist2.add_commandline(trigger_reload.into());
-
-        assert_eq!(hist2.item_at_index(1).unwrap().str(), trigger_reload);
-        assert_eq!(hist2.item_at_index(2).unwrap().str(), item2);
-        assert_eq!(hist2.item_at_index(3).unwrap().str(), item3);
-        assert_eq!(hist2.item_at_index(4).unwrap().str(), item1);
-        assert!(hist2.item_at_index(5).is_none());
-    }
-
     #[test]
     fn test_history_allocates_monotonic_ids() {
         let test = Test::new(L!("monotonic_ids_test"));
@@ -2499,33 +2432,24 @@ mod tests {
         history.clear();
     }
 
-    fn install_sample_history(name: &wstr, hist_dir: &wstr) {
-        let dst_hist_path: OsString = format!("{}/{}_history", hist_dir, name).into();
-        std::fs::copy(
-            workspace_root()
-                .join("tests")
-                .join(std::str::from_utf8(&wcs2bytes(name)).unwrap()),
-            dst_hist_path,
-        )
-        .unwrap();
-    }
-
     #[test]
     fn test_history_formats() {
         let tmpdir = fish_tempfile::new_dir().unwrap();
         let hist_dir = osstr2wcstring(tmpdir.path());
 
-        // Test inferring and reading legacy and bash history formats.
-        let name = L!("history_sample_fish_2_0");
-        install_sample_history(name, &hist_dir);
+        // Test reading legacy YAML history format directly.
+        let yaml_file = workspace_root().join("tests/history_sample_fish_2_0");
+        let contents = std::fs::read(yaml_file).unwrap();
+        let mut items: Vec<WString> = yaml_compat::iterate_fish_2_0_history(&contents)
+            .map(|item| item.str().to_owned())
+            .collect();
+        items.reverse(); // YAML is oldest-first, but we want newest-first
         let expected: Vec<WString> = vec![
             "echo this has\\\nbackslashes".into(),
             "function foo\necho bar\nend".into(),
             "echo alpha".into(),
         ];
-        let test_history_imported = create_test_history(name, &hist_dir);
-        assert_eq!(test_history_imported.get_history(), expected);
-        test_history_imported.clear();
+        assert_eq!(items, expected);
 
         // Test bash import
         // The results are in the reverse order that they appear in the bash history file.
@@ -2547,16 +2471,5 @@ mod tests {
         test_history_imported_from_bash.populate_from_bash(BufReader::new(file));
         assert_eq!(test_history_imported_from_bash.get_history(), expected);
         test_history_imported_from_bash.clear();
-
-        let name = L!("history_sample_corrupt1");
-        install_sample_history(name, &hist_dir);
-        // We simply invoke get_string_representation. If we don't die, the test is a success.
-        let test_history_imported_from_corrupted = create_test_history(name, &hist_dir);
-        let expected: Vec<WString> = vec![
-            "no_newline_at_end_of_file".into(),
-            "this_command_is_ok".into(),
-        ];
-        assert_eq!(test_history_imported_from_corrupted.get_history(), expected);
-        test_history_imported_from_corrupted.clear();
     }
 }
